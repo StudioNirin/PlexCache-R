@@ -191,6 +191,9 @@ class PlexManager:
                 yield file_path
 
         def fetch_user_watchlist(user) -> List[str]:
+            # Delay 2 seconds before querying this user to reduce rate limiting
+            time.sleep(2)
+            
             current_username = self.plex.myPlexAccount().title if user is None else user.title
             available_sections = [section.key for section in self.plex.library.sections()]
             filtered_sections = list(set(available_sections) & set(valid_sections))
