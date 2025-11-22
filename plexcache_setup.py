@@ -130,16 +130,16 @@ def setup():
     while 'days_to_monitor' not in settings_data:
         prompt_user_for_number('\nMaximum age of the media onDeck to be fetched? (default: 99) ', '99', 'days_to_monitor')
 
-    # ---------------- Watchlist Settings ----------------
+    # ----------------Primary User Watchlist Settings ----------------
     while 'watchlist_toggle' not in settings_data:
-        watchlist = input('\nDo you want to fetch your watchlist media? [y/N] ') or 'no'
+        watchlist = input('\nDo you want to fetch your own watchlist media? [y/N] ') or 'no'
         if watchlist.lower() in ['n', 'no']:
             settings_data['watchlist_toggle'] = False
             settings_data['watchlist_episodes'] = 0
             settings_data['watchlist_cache_expiry'] = 1
         elif watchlist.lower() in ['y', 'yes']:
             settings_data['watchlist_toggle'] = True
-            prompt_user_for_number('\nHow many episodes do you want fetch (watchlist) (default: 1)? ', '1', 'watchlist_episodes')
+            prompt_user_for_number('\nHow many episodes do you want fetch (watchlist) (default: 3)? ', '3', 'watchlist_episodes')
             prompt_user_for_number('\nDefine the watchlist cache expiry duration in hours (default: 6) ', '6', 'watchlist_cache_expiry')
         else:
             print("Invalid choice. Please enter either yes or no")
