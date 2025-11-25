@@ -111,8 +111,7 @@ Please check out our [Wiki section](https://github.com/bexem/PlexCache/wiki) for
 
 ## Notes
 
-This script should be compatible with other systems, especially Linux-based ones, although I have primarily tested it on Unraid with plex as docker container running on Unraid. Work has been done to improve Windows interoperability.
-While I cannot  support every case, it's worth checking the GitHub issues to see if your specific case has already been discussed.
+This script might be compatible with other systems, especially Linux-based ones, although I have primarily tested it on Unraid with plex as docker container. While I cannot support every case, it's worth checking the GitHub issues to see if your specific case has already been discussed. Particularly worth checking the original Bexem repo issues page. 
 I will still try to help out, but please note that I make no promises in providing assistance for every scenario.
 **It is highly advised to use the setup script.**
 
