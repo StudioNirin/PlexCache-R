@@ -1,6 +1,10 @@
 # PlexCache: Automate Plex Media Management
 ### Updated 11/25
 
+## Current Bugs
+27th Nov '25  - So I -thought- this was in a pretty decent working state, at least for the major functions. However while trying to add in a new feature today I found that it -seems- like the PlexCache script is only caching movie files and not tv files. No idea why, cos it -used- to work, but seems it's not now for me. It could be an issue on my local machine, but I thought I'd add this here until I am able to squash the bug. I'll remove this note once it's all working again. 
+
+
 Automate Plex media management: Efficiently transfer media from the On Deck/Watchlist to the cache, and seamlessly move watched media back to their respective locations.
 An updated version of the "PlexCache-Refactored" script with various bugfixes and improvements. Hopefully fixed and improved anyway, time will tell!
 
