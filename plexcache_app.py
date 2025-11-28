@@ -280,9 +280,10 @@ class PlexCacheApp:
 
         # Fetch subtitles for OnDeck media (already using real paths)
         logging.debug("Finding subtitles for OnDeck media...")
-        subtitles = self.subtitle_finder.get_media_subtitles(list(self.ondeck_items), files_to_skip=set(self.files_to_skip))
-        modified_paths_set.update(subtitles)
-        logging.debug(f"Found {len(subtitles) - len(self.ondeck_items)} subtitle files for OnDeck media")
+        ondeck_with_subtitles = self.subtitle_finder.get_media_subtitles(list(self.ondeck_items), files_to_skip=set(self.files_to_skip))
+        subtitle_count = len(ondeck_with_subtitles) - len(self.ondeck_items)
+        modified_paths_set.update(ondeck_with_subtitles)
+        logging.debug(f"Found {subtitle_count} subtitle files for OnDeck media")
 
         # Process watchlist (returns already-modified paths)
         if self.config_manager.cache.watchlist_toggle:
