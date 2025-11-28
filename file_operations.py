@@ -5,6 +5,7 @@ Handles file moving, filtering, subtitle operations, and path modifications.
 
 import os
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Set, Optional, Tuple
 
@@ -25,9 +26,21 @@ class FilePathModifier:
             return []
 
         logging.info("Editing file paths...")
-        
+
+        # Validate that library folder lists have matching lengths
+        if len(self.plex_library_folders) != len(self.nas_library_folders):
+            logging.error(
+                f"Library folder mismatch: plex_library_folders has {len(self.plex_library_folders)} items, "
+                f"nas_library_folders has {len(self.nas_library_folders)} items"
+            )
+            raise ValueError("plex_library_folders and nas_library_folders must have the same length")
+
         # Filter the files based on those that start with the plex_source path
+        original_count = len(files)
         files = [file_path for file_path in files if file_path.startswith(self.plex_source)]
+        filtered_count = original_count - len(files)
+        if filtered_count > 0:
+            logging.debug(f"Filtered out {filtered_count} files that don't start with plex_source: {self.plex_source}")
 
         # Iterate over each file path and modify it accordingly
         for i, file_path in enumerate(files):
@@ -47,7 +60,7 @@ class FilePathModifier:
             files[i] = file_path
             logging.info(f"Edited path: {file_path}")
 
-        return files or []
+        return files
 
 
 class SubtitleFinder:
@@ -77,28 +90,29 @@ class SubtitleFinder:
                 all_media_files.extend(subtitle_files)
                 for subtitle_file in subtitle_files:
                     logging.info(f"Subtitle found: {subtitle_file}")
-        
-        return all_media_files or []
+
+        return all_media_files
     
     def _find_subtitle_files(self, directory_path: str, file: str) -> List[str]:
         """Find subtitle files in a directory for a given media file."""
-        file_name, _ = os.path.splitext(os.path.basename(file))
+        file_basename = os.path.basename(file)
+        file_name, _ = os.path.splitext(file_basename)
 
         try:
             subtitle_files = [
                 entry.path
                 for entry in os.scandir(directory_path)
-                if entry.is_file() and entry.name.startswith(file_name) and 
-                   entry.name != file and entry.name.endswith(tuple(self.subtitle_extensions))
+                if entry.is_file() and entry.name.startswith(file_name) and
+                   entry.name != file_basename and entry.name.endswith(tuple(self.subtitle_extensions))
             ]
         except PermissionError as e:
-            logging.error(f"Cannot access directory {directory_path}. Permission denied. Error: {e}")
+            logging.error(f"Cannot access directory {directory_path}. Permission denied. {type(e).__name__}: {e}")
             subtitle_files = []
         except OSError as e:
-            logging.error(f"Cannot access directory {directory_path}. Error: {e}")
+            logging.error(f"Cannot access directory {directory_path}. {type(e).__name__}: {e}")
             subtitle_files = []
 
-        return subtitle_files or []
+        return subtitle_files
 
 
 class FileFilter:
@@ -143,7 +157,7 @@ class FileFilter:
                     media_to.append(file)
                     logging.info(f"Adding file to cache: {file}")
 
-        return media_to or []
+        return media_to
     
     def _should_add_to_array(self, file: str, cache_file_name: str, media_to_cache: List[str]) -> bool:
         """Determine if a file should be added to the array."""
@@ -153,10 +167,14 @@ class FileFilter:
         array_file = file.replace("/mnt/user/", "/mnt/user0/", 1) if self.is_unraid else file
 
         if os.path.isfile(array_file):
-            # File already exists in the array
-            if os.path.isfile(cache_file_name):
+            # File already exists in the array, try to remove cache version
+            try:
                 os.remove(cache_file_name)
                 logging.info(f"Removed cache version of file: {cache_file_name}")
+            except FileNotFoundError:
+                pass  # File already removed or never existed
+            except OSError as e:
+                logging.error(f"Failed to remove cache file {cache_file_name}: {type(e).__name__}: {e}")
             return False  # No need to add to array
         return True  # Otherwise, the file should be added to the array
 
@@ -165,11 +183,16 @@ class FileFilter:
         array_file = file.replace("/mnt/user/", "/mnt/user0/", 1) if self.is_unraid else file
 
         if os.path.isfile(cache_file_name) and os.path.isfile(array_file):
-            # Uncomment the following line if you want to remove the array version when the file exists in the cache
-            os.remove(array_file)
-            logging.info(f"Removed array version of file: {array_file}")
+            # Remove the array version when the file exists in the cache
+            try:
+                os.remove(array_file)
+                logging.info(f"Removed array version of file: {array_file}")
+            except FileNotFoundError:
+                pass  # File already removed
+            except OSError as e:
+                logging.error(f"Failed to remove array file {array_file}: {type(e).__name__}: {e}")
             return False
-        
+
         return not os.path.isfile(cache_file_name)
     
     def _get_cache_paths(self, file: str) -> Tuple[str, str]:
@@ -204,7 +227,7 @@ class FileFilter:
             for item in current_ondeck_items | current_watchlist_items:
                 # Extract show name from path (e.g., "House Hunters (1999)" from "/path/to/House Hunters (1999) {imdb-tt0369117}/Season 263/...")
                 show_name = self._extract_show_name(item)
-                if show_name:
+                if show_name is not None:
                     needed_shows.add(show_name)
             
             # Check each file in cache
@@ -216,7 +239,7 @@ class FileFilter:
                 
                 # Extract show name from cache file
                 show_name = self._extract_show_name(cache_file)
-                if not show_name:
+                if show_name is None:
                     continue
                 
                 # If show is still needed, keep this file in cache
@@ -232,55 +255,61 @@ class FileFilter:
                 cache_paths_to_remove.append(cache_file)
             
             logging.info(f"Found {len(files_to_move_back)} files to move back to array")
-            
+
         except Exception as e:
-            logging.error(f"Error getting files to move back to array: {str(e)}")
-        
+            logging.exception(f"Error getting files to move back to array: {type(e).__name__}: {e}")
+
         return files_to_move_back, cache_paths_to_remove
 
-    def _extract_show_name(self, file_path: str) -> str:
-        """Extract show name from file path."""
+    def _extract_show_name(self, file_path: str) -> Optional[str]:
+        """Extract show name from file path. Returns None if not found."""
         try:
-            # Split path and find the show directory (usually the last directory before Season)
-            path_parts = file_path.split('/')
+            # Normalize path and split using OS separator
+            normalized_path = os.path.normpath(file_path)
+            path_parts = normalized_path.split(os.sep)
             for i, part in enumerate(path_parts):
                 if part.startswith('Season') or part.isdigit():
                     if i > 0:
                         return path_parts[i-1]
                     break
-            return ""
+            return None
         except Exception:
-            return ""
+            return None
 
-    def remove_files_from_exclude_list(self, cache_paths_to_remove: List[str]) -> None:
-        """Remove specified files from the exclude list."""
+    def remove_files_from_exclude_list(self, cache_paths_to_remove: List[str]) -> bool:
+        """Remove specified files from the exclude list. Returns True on success."""
         try:
             if not os.path.exists(self.mover_cache_exclude_file):
                 logging.warning("Exclude file does not exist, cannot remove files")
-                return
-            
+                return False
+
             # Read current exclude list
             with open(self.mover_cache_exclude_file, 'r') as f:
                 current_files = [line.strip() for line in f if line.strip()]
-            
+
+            # Convert to set for O(1) lookup instead of O(n)
+            paths_to_remove_set = set(cache_paths_to_remove)
+
             # Remove specified files
-            updated_files = [f for f in current_files if f not in cache_paths_to_remove]
-            
+            updated_files = [f for f in current_files if f not in paths_to_remove_set]
+
             # Write back updated list
             with open(self.mover_cache_exclude_file, 'w') as f:
                 for file_path in updated_files:
                     f.write(f"{file_path}\n")
-            
+
             logging.info(f"Removed {len(cache_paths_to_remove)} files from exclude list")
-            
+            return True
+
         except Exception as e:
-            logging.error(f"Error removing files from exclude list: {str(e)}")
+            logging.exception(f"Error removing files from exclude list: {type(e).__name__}: {e}")
+            return False
 
 
 class FileMover:
     """Handles file moving operations."""
-    
-    def __init__(self, real_source: str, cache_dir: str, is_unraid: bool, 
+
+    def __init__(self, real_source: str, cache_dir: str, is_unraid: bool,
                  file_utils, debug: bool = False, mover_cache_exclude_file: Optional[str] = None):
         self.real_source = real_source
         self.cache_dir = cache_dir
@@ -288,6 +317,7 @@ class FileMover:
         self.file_utils = file_utils
         self.debug = debug
         self.mover_cache_exclude_file = mover_cache_exclude_file
+        self._exclude_file_lock = threading.Lock()
     
     def move_media_files(self, files: List[str], destination: str, 
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int) -> None:
@@ -383,19 +413,31 @@ class FileMover:
             self.file_utils.move_file(src, dest)
             logging.info(f"Moved file from {src} to {dest} with original permissions and owner.")
             # Only append to exclude file if moving to cache and move succeeded
+            # Use lock to prevent concurrent writes from corrupting the file
             if destination == 'cache' and self.mover_cache_exclude_file:
-                with open(self.mover_cache_exclude_file, "a") as f:
-                    f.write(f"{cache_file_name}\n")
+                with self._exclude_file_lock:
+                    with open(self.mover_cache_exclude_file, "a") as f:
+                        f.write(f"{cache_file_name}\n")
             return 0
         except Exception as e:
-            logging.error(f"Error moving file: {str(e)}")
-            return 1 
+            logging.error(f"Error moving file: {type(e).__name__}: {e}")
+            return 1
 
 
 class CacheCleanup:
     """Handles cleanup of empty folders in cache directories."""
-    
+
+    # Directories that should never be cleaned (safety check)
+    _PROTECTED_PATHS = {'/', '/mnt', '/mnt/user', '/mnt/user0', '/home', '/var', '/etc', '/usr'}
+
     def __init__(self, cache_dir: str):
+        if not cache_dir or not cache_dir.strip():
+            raise ValueError("cache_dir cannot be empty")
+
+        normalized_cache_dir = os.path.normpath(cache_dir)
+        if normalized_cache_dir in self._PROTECTED_PATHS:
+            raise ValueError(f"cache_dir cannot be a protected system directory: {cache_dir}")
+
         self.cache_dir = cache_dir
     
     def cleanup_empty_folders(self) -> None:
@@ -433,8 +475,8 @@ class CacheCleanup:
                             logging.debug(f"Removed empty folder: {dir_path}")
                             cleaned_count += 1
                     except OSError as e:
-                        logging.debug(f"Could not remove directory {dir_path}: {e}")
+                        logging.debug(f"Could not remove directory {dir_path}: {type(e).__name__}: {e}")
         except Exception as e:
-            logging.error(f"Error cleaning up directory {directory_path}: {e}")
+            logging.error(f"Error cleaning up directory {directory_path}: {type(e).__name__}: {e}")
         
         return cleaned_count 
