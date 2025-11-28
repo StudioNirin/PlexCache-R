@@ -562,11 +562,9 @@ def main():
     skip_cache = "--skip-cache" in sys.argv
     debug = "--debug" in sys.argv
 
-    # Use the script_folder from the config system
-    temp_cfg = ConfigManager("dummy")   # ConfigManager constructs PathConfig internally
-
-    # Build the correct path using the internally defined script_folder
-    config_file = str(Path(temp_cfg.paths.script_folder) / "plexcache_settings.json")
+    # Derive config path from the script's actual location (matches plexcache_setup.py behavior)
+    script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+    config_file = str(script_dir / "plexcache_settings.json")
 
     app = PlexCacheApp(config_file, skip_cache, debug)
     app.run()

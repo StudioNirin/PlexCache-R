@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 
+# Get the directory where config.py is located
+_SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+
 
 @dataclass
 class NotificationConfig:
@@ -28,8 +31,8 @@ class NotificationConfig:
 @dataclass
 class PathConfig:
     """Configuration for file paths and directories."""
-    script_folder: str = "/mnt/user/appdata/plexcache/"
-    logs_folder: str = "/mnt/user/appdata/plexcache/logs"
+    script_folder: str = str(_SCRIPT_DIR)
+    logs_folder: str = str(_SCRIPT_DIR / "logs")
     plex_source: str = ""
     real_source: str = ""
     cache_dir: str = ""
