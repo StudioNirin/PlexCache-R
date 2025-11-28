@@ -304,6 +304,21 @@ class PlexCacheApp:
                 logging.debug(f"Cache expired: {cache_expired}")
 
                 if cache_expired:
+                    logging.info(f"Cache expired: {watchlist_cache}")
+                    
+                    # Delete old cache file if it exists
+                    if watchlist_cache.exists():
+                        try:
+                            watchlist_cache.unlink()
+                            logging.info(f"Cache file deleted: {watchlist_cache}")
+                        except Exception as e:
+                            logging.error(f"Failed to delete cache file {watchlist_cache}: {e}")
+                    
+                    # Reset memory sets to avoid old data
+                    watchlist_media_set.clear()
+                    current_watchlist_set.clear()
+                    result_set.clear()
+                    
                     # --- Local Plex users ---
                     fetched_watchlist = list(self.plex_manager.get_watchlist_media(
                         self.config_manager.plex.valid_sections,
