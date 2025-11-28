@@ -303,9 +303,10 @@ class PlexCacheApp:
         else:
             logging.info("Watched media processing is disabled")
 
-        # All paths in modified_paths_set are already real source paths, no need to modify again
+        # Run modify_file_paths on all collected paths to ensure consistent path format
+        # (some sources like _process_watchlist may return a mix of modified and unmodified paths)
         logging.debug("Finalizing media to cache list...")
-        self.media_to_cache = list(modified_paths_set)
+        self.media_to_cache = self.file_path_modifier.modify_file_paths(list(modified_paths_set))
         logging.info(f"Total media items to cache: {len(self.media_to_cache)}")
 
         # Check for files that should be moved back to array (no longer needed in cache)
