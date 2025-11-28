@@ -172,10 +172,10 @@ class PlexManager:
         next_episodes = []
         for episode in episodes:
             if (episode.parentIndex > current_season or
-                (episode.parentIndex == current_season and episode.index > current_episode_index)):
+                (episode.parentIndex == current_season and episode.index > current_episode_index)) and len(next_episodes) < number_episodes:
                 next_episodes.append(episode)
-                if len(next_episodes) >= number_episodes:
-                    break
+            if len(next_episodes) == number_episodes:
+                break
         return next_episodes
 
     def clean_rss_title(self, title: str) -> str:
