@@ -4,7 +4,7 @@ from plexapi.server import PlexServer
 from plexapi.exceptions import BadRequest
 
 # Script folder and settings file
-script_folder = "."
+script_folder = os.path.dirname(os.path.abspath(__file__))
 settings_filename = os.path.join(script_folder, "plexcache_settings.json")
 
 # ensure a settings container exists early so helper functions can reference it
@@ -17,12 +17,20 @@ def check_directory_exists(folder):
         raise FileNotFoundError(f'Wrong path given, please edit the "{folder}" variable accordingly.')
 
 def read_existing_settings(filename):
-    with open(filename, 'r') as f:
-        return json.load(f)
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (IOError, OSError) as e:
+        print(f"Error reading settings file: {e}")
+        raise
 
 def write_settings(filename, data):
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=4)
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+    except (IOError, OSError) as e:
+        print(f"Error writing settings file: {e}")
+        raise
 
 def convert_path_to_posix(path):
     path = path.replace(ntpath.sep, posixpath.sep)
@@ -35,11 +43,15 @@ def convert_path_to_nt(path):
 def prompt_user_for_number(prompt_message, default_value, data_key, data_type=int):
     while True:
         user_input = input(prompt_message) or default_value
-        if user_input.isdigit():
-            settings_data[data_key] = data_type(user_input)
+        try:
+            value = data_type(user_input)
+            if value < 0:
+                print("Please enter a non-negative number")
+                continue
+            settings_data[data_key] = value
             break
-        else:
-            print("User input is not a number")
+        except ValueError:
+            print("User input is not a valid number")
 
 def is_valid_plex_url(url):
     try:
@@ -115,7 +127,8 @@ def setup():
                     if include.lower() in ['n', 'no']:
                         continue
                     elif include.lower() in ['y', 'yes']:
-                        valid_sections.append(library.key)
+                        if library.key not in valid_sections:
+                            valid_sections.append(library.key)
 
                         # Compute plex_source only once
                         if 'plex_source' not in settings_data:
@@ -128,7 +141,8 @@ def setup():
                                         all_locations.extend(locs)
                                     elif isinstance(locs, str):
                                         all_locations.append(locs)
-                                except Exception:
+                                except Exception as e:
+                                    print(f"Warning: Could not get locations for library '{lib.title}': {e}")
                                     continue
 
                             # Compute the true common directory (e.g. /media)
@@ -153,12 +167,12 @@ def setup():
             settings_data['valid_sections'] = valid_sections
 
 
-        except (BadRequest, requests.exceptions.RequestException):
-            print('Unable to connect to Plex server. Please check your token.')
-        except ValueError:
-            print('Token is not valid. It cannot be empty.')
-        except TypeError:
-            print('An unexpected error occurred.')
+        except (BadRequest, requests.exceptions.RequestException) as e:
+            print(f'Unable to connect to Plex server. Please check your token. Error: {e}')
+        except ValueError as e:
+            print(f'Token is not valid. Error: {e}')
+        except TypeError as e:
+            print(f'An unexpected error occurred: {e}')
 
     # ---------------- OnDeck Settings ----------------
     while 'number_episodes' not in settings_data:
@@ -200,7 +214,11 @@ def setup():
                 name = user.title
                 username = getattr(user, "username", None)
                 is_local = username is None
-                token = user.get_token(plex.machineIdentifier)
+                try:
+                    token = user.get_token(plex.machineIdentifier)
+                except Exception as e:
+                    print(f"\nSkipping user '{name}' (error getting token: {e})")
+                    continue
 
                 if token is None:
                     print(f"\nSkipping user '{name}' (no token available).")
@@ -389,18 +407,20 @@ if os.path.exists(settings_filename):
             setup()
         else:
             print("Configuration exists and appears to be valid, you can now run the plexcache.py script.\n")
-    except json.decoder.JSONDecodeError:
-        print("Settings file initialized successfully!\n")
+    except json.decoder.JSONDecodeError as e:
+        print(f"Settings file appears to be corrupted (JSON error: {e}). Re-initializing...\n")
         settings_data = {}
         setup()
 else:
     print(f"Settings file {settings_filename} doesn't exist, please check the path:\n")
-    creation = input("\nIf the path is correct, do you want to create the file? [Y/n] ") or 'yes'
-    if creation.lower() in ['y', 'yes']:
-        print("Settings file created successfully!\n")
-        settings_data = {}
-        setup()
-    elif creation.lower() in ['n', 'no']:
-        exit("Exiting as requested, setting file not created.")
-    else:
-        print("Invalid choice. Please enter either 'yes' or 'no'")
+    while True:
+        creation = input("\nIf the path is correct, do you want to create the file? [Y/n] ") or 'yes'
+        if creation.lower() in ['y', 'yes']:
+            print("Settings file created successfully!\n")
+            settings_data = {}
+            setup()
+            break
+        elif creation.lower() in ['n', 'no']:
+            exit("Exiting as requested, setting file not created.")
+        else:
+            print("Invalid choice. Please enter either 'yes' or 'no'")
