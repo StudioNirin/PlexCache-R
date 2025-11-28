@@ -27,23 +27,13 @@ class FilePathModifier:
 
         logging.info("Editing file paths...")
 
-        # Validate that library folder lists have matching lengths
-        if len(self.plex_library_folders) != len(self.nas_library_folders):
-            logging.error(
-                f"Library folder mismatch: plex_library_folders has {len(self.plex_library_folders)} items, "
-                f"nas_library_folders has {len(self.nas_library_folders)} items"
-            )
-            raise ValueError("plex_library_folders and nas_library_folders must have the same length")
+        result = []
+        for file_path in files:
+            # Pass through paths that are already converted (don't start with plex_source)
+            if not file_path.startswith(self.plex_source):
+                result.append(file_path)
+                continue
 
-        # Filter the files based on those that start with the plex_source path
-        original_count = len(files)
-        files = [file_path for file_path in files if file_path.startswith(self.plex_source)]
-        filtered_count = original_count - len(files)
-        if filtered_count > 0:
-            logging.debug(f"Filtered out {filtered_count} files that don't start with plex_source: {self.plex_source}")
-
-        # Iterate over each file path and modify it accordingly
-        for i, file_path in enumerate(files):
             logging.info(f"Original path: {file_path}")
 
             # Replace the plex_source with the real_source in the file path
@@ -56,11 +46,10 @@ class FilePathModifier:
                     file_path = file_path.replace(folder, self.nas_library_folders[j])
                     break
 
-            # Update the modified file path in the files list
-            files[i] = file_path
+            result.append(file_path)
             logging.info(f"Edited path: {file_path}")
 
-        return files
+        return result
 
 
 class SubtitleFinder:
