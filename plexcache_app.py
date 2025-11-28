@@ -6,9 +6,10 @@ Orchestrates all components and provides the main business logic.
 import sys
 import time
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Set
+from typing import List, Set, Optional
 import os
 
 from config import ConfigManager
@@ -50,11 +51,10 @@ class PlexCacheApp:
     def run(self) -> None:
         """Run the main application."""
         try:
-            logging.info("Starting PlexCache application...")
-            
-            # Setup logging
+            # Setup logging first before any log messages
             self._setup_logging()
-            logging.info("Phase 1: Setting up logging")
+            logging.info("Starting PlexCache application...")
+            logging.info("Phase 1: Logging setup complete")
 
             # Load configuration
             logging.info("Phase 2: Loading configuration")
@@ -96,9 +96,9 @@ class PlexCacheApp:
             
         except Exception as e:
             if self.logging_manager:
-                logging.critical(f"Application error: {e}")
+                logging.critical(f"Application error: {type(e).__name__}: {e}", exc_info=True)
             else:
-                print(f"Application error: {e}")
+                print(f"Application error: {type(e).__name__}: {e}")
             raise
     
     def _setup_logging(self) -> None:
@@ -188,25 +188,61 @@ class PlexCacheApp:
         """Process active sessions and add files to skip list."""
         for session in sessions:
             try:
-                media = str(session.source())
-                media_id = media[media.find(":") + 1:media.find(":", media.find(":") + 1)]
-                media_item = self.plex_manager.plex.fetchItem(int(media_id))
-                media_title = media_item.title
-                media_type = media_item.type
-                
-                if media_type == "episode":
-                    show_title = media_item.grandparentTitle
-                    logging.warning(f"Active session detected, skipping: {show_title} - {media_title}")
-                elif media_type == "movie":
-                    logging.warning(f"Active session detected, skipping: {media_title}")
-                
-                media_path = media_item.media[0].parts[0].file
-                logging.info(f"Skipping: {media_path}")
-                self.files_to_skip.append(media_path)
-                
+                media_path = self._get_media_path_from_session(session)
+                if media_path:
+                    logging.info(f"Skipping active session file: {media_path}")
+                    self.files_to_skip.append(media_path)
             except Exception as e:
-                logging.error(f"Error occurred while processing session: {session} - {e}")
+                logging.error(f"Error processing session {session}: {type(e).__name__}: {e}")
+
+    def _get_media_path_from_session(self, session) -> Optional[str]:
+        """Extract media file path from a Plex session. Returns None if unable to extract."""
+        try:
+            media = str(session.source())
+            # Use regex for safer parsing: extract ID between first two colons
+            match = re.search(r':(\d+):', media)
+            if not match:
+                logging.warning(f"Could not parse media ID from session source: {media}")
+                return None
+
+            media_id = int(match.group(1))
+            media_item = self.plex_manager.plex.fetchItem(media_id)
+            media_title = media_item.title
+            media_type = media_item.type
+
+            if media_type == "episode":
+                show_title = media_item.grandparentTitle
+                logging.warning(f"Active session detected, skipping: {show_title} - {media_title}")
+            elif media_type == "movie":
+                logging.warning(f"Active session detected, skipping: {media_title}")
+
+            # Safely access media parts with bounds checking
+            if not media_item.media:
+                logging.warning(f"Media item '{media_title}' has no media entries")
+                return None
+            if not media_item.media[0].parts:
+                logging.warning(f"Media item '{media_title}' has no parts")
+                return None
+
+            return media_item.media[0].parts[0].file
+
+        except (ValueError, AttributeError) as e:
+            logging.error(f"Error extracting media path: {type(e).__name__}: {e}")
+            return None
     
+    def _is_cache_expired(self, cache_file: Path, expiry_hours: int) -> bool:
+        """Check if a cache file is expired. Returns True if expired or file doesn't exist."""
+        if self.skip_cache or self.debug:
+            return True
+        try:
+            if not cache_file.exists():
+                return True
+            mtime = datetime.fromtimestamp(cache_file.stat().st_mtime)
+            return datetime.now() - mtime > timedelta(hours=expiry_hours)
+        except (OSError, FileNotFoundError):
+            # File was deleted between exists() check and stat() call
+            return True
+
     def _set_debug_mode(self) -> None:
         """Set debug mode if enabled."""
         if self.debug:
@@ -218,9 +254,9 @@ class PlexCacheApp:
     def _process_media(self) -> None:
         """Process all media types (onDeck, watchlist, watched)."""
         logging.info("Starting media processing...")
-        
-        # Use a set to collect all unique media items
-        media_to_cache_set = set()
+
+        # Use a set to collect already-modified paths (real source paths)
+        modified_paths_set = set()
 
         # Fetch OnDeck Media
         logging.info("Fetching OnDeck media...")
@@ -231,34 +267,30 @@ class PlexCacheApp:
             self.config_manager.plex.users_toggle,
             self.config_manager.plex.skip_ondeck or []
         )
-        
-        # Store OnDeck items separately for filtering
-        self.ondeck_items = set(ondeck_media)
-        logging.info(f"Found {len(self.ondeck_items)} OnDeck items")
-        
-        # Add OnDeck items to set
-        media_to_cache_set.update(ondeck_media)
 
-        # Edit file paths for the above fetched media
+        logging.info(f"Found {len(ondeck_media)} OnDeck items")
+
+        # Edit file paths for OnDeck media (convert plex paths to real paths)
         logging.debug("Modifying file paths for OnDeck media...")
-        modified_ondeck = self.file_path_modifier.modify_file_paths(list(self.ondeck_items))
-        
-        # Update ondeck_items with modified paths
+        modified_ondeck = self.file_path_modifier.modify_file_paths(list(ondeck_media))
+
+        # Store modified OnDeck items for filtering later
         self.ondeck_items = set(modified_ondeck)
-        media_to_cache_set.update(self.ondeck_items)
+        modified_paths_set.update(self.ondeck_items)
 
-        # Fetches subtitles for the above fetched media
+        # Fetch subtitles for OnDeck media (already using real paths)
         logging.debug("Finding subtitles for OnDeck media...")
-        subtitles = self.subtitle_finder.get_media_subtitles(list(self.ondeck_items), files_to_skip=set(self.files_to_skip))
-        media_to_cache_set.update(subtitles)
-        logging.debug(f"Found {len(subtitles)} subtitle files for OnDeck media")
+        ondeck_with_subtitles = self.subtitle_finder.get_media_subtitles(list(self.ondeck_items), files_to_skip=set(self.files_to_skip))
+        subtitle_count = len(ondeck_with_subtitles) - len(self.ondeck_items)
+        modified_paths_set.update(ondeck_with_subtitles)
+        logging.debug(f"Found {subtitle_count} subtitle files for OnDeck media")
 
-        # Process watchlist
+        # Process watchlist (returns already-modified paths)
         if self.config_manager.cache.watchlist_toggle:
             logging.info("Processing watchlist media...")
             watchlist_items = self._process_watchlist()
             if watchlist_items:
-                media_to_cache_set.update(watchlist_items)
+                modified_paths_set.update(watchlist_items)
                 logging.info(f"Added {len(watchlist_items)} watchlist items to cache set")
         else:
             logging.info("Watchlist processing is disabled")
@@ -271,9 +303,10 @@ class PlexCacheApp:
         else:
             logging.info("Watched media processing is disabled")
 
-        # Set the final media_to_cache as a list of modified (real source) paths
+        # Run modify_file_paths on all collected paths to ensure consistent path format
+        # (some sources like _process_watchlist may return a mix of modified and unmodified paths)
         logging.debug("Finalizing media to cache list...")
-        self.media_to_cache = self.file_path_modifier.modify_file_paths(list(media_to_cache_set))
+        self.media_to_cache = self.file_path_modifier.modify_file_paths(list(modified_paths_set))
         logging.info(f"Total media items to cache: {len(self.media_to_cache)}")
 
         # Check for files that should be moved back to array (no longer needed in cache)
@@ -294,12 +327,9 @@ class PlexCacheApp:
 
             if self.system_detector.is_connected():
                 # Determine if cache should be refreshed
-                cache_expired = (
-                    self.skip_cache or
-                    (not watchlist_cache.exists()) or
-                    self.debug or
-                    (datetime.now() - datetime.fromtimestamp(watchlist_cache.stat().st_mtime) >
-                    timedelta(hours=self.config_manager.cache.watchlist_cache_expiry))
+                cache_expired = self._is_cache_expired(
+                    watchlist_cache,
+                    self.config_manager.cache.watchlist_cache_expiry
                 )
                 logging.debug(f"Cache expired: {cache_expired}")
 
@@ -373,7 +403,7 @@ class PlexCacheApp:
                 result_set.update(watchlist_media_set)
 
         except Exception as e:
-            logging.error(f"An error occurred while processing the watchlist: {str(e)}")
+            logging.exception(f"An error occurred while processing the watchlist: {type(e).__name__}: {e}")
 
         return result_set
 
@@ -386,12 +416,9 @@ class PlexCacheApp:
             current_media_set = set()
 
             # Check if cache should be refreshed
-            cache_expired = (
-                self.skip_cache or 
-                not watched_cache.exists() or 
-                self.debug or 
-                (datetime.now() - datetime.fromtimestamp(watched_cache.stat().st_mtime) > 
-                 timedelta(hours=self.config_manager.cache.watched_cache_expiry))
+            cache_expired = self._is_cache_expired(
+                watched_cache,
+                self.config_manager.cache.watched_cache_expiry
             )
             
             if cache_expired:
@@ -430,41 +457,33 @@ class PlexCacheApp:
                 self.media_to_array.extend(watched_media_set)
 
         except Exception as e:
-            logging.error(f"An error occurred while processing the watched media: {str(e)}")
+            logging.exception(f"An error occurred while processing the watched media: {type(e).__name__}: {e}")
     
     def _move_files(self) -> None:
         """Move files to their destinations."""
         # Move watched files to array
         if self.config_manager.cache.watched_move:
-            try:
-                self._check_free_space_and_move_files(
-                    self.media_to_array, 'array', 
-                    self.config_manager.paths.real_source, 
-                    self.config_manager.paths.cache_dir
-                )
-            except Exception as e:
-                if not self.debug:
-                    logging.critical(f"Error checking free space and moving media files to the array: {str(e)}")
-                    sys.exit(f"Error: {str(e)}")
-                else:
-                    logging.error(f"Error checking free space and moving media files to the array: {str(e)}")
-                    print(f"Error: {str(e)}")
+            self._safe_move_files(self.media_to_array, 'array')
 
         # Move files to cache
+        logging.debug(f"Files being passed to cache move: {self.media_to_cache}")
+        self._safe_move_files(self.media_to_cache, 'cache')
+
+    def _safe_move_files(self, files: List[str], destination: str) -> None:
+        """Safely move files with consistent error handling."""
         try:
-            logging.debug(f"Files being passed to cache move: {self.media_to_cache}")
             self._check_free_space_and_move_files(
-                self.media_to_cache, 'cache', 
-                self.config_manager.paths.real_source, 
+                files, destination,
+                self.config_manager.paths.real_source,
                 self.config_manager.paths.cache_dir
             )
         except Exception as e:
-            if not self.debug:
-                logging.critical(f"Error checking free space and moving media files to the cache: {str(e)}")
-                sys.exit(f"Error: {str(e)}")
+            error_msg = f"Error moving media files to {destination}: {type(e).__name__}: {e}"
+            if self.debug:
+                logging.error(error_msg)
             else:
-                logging.error(f"Error checking free space and moving media files to the cache: {str(e)}")
-                print(f"Error: {str(e)}")
+                logging.critical(error_msg)
+                sys.exit(1)
     
     def _check_free_space_and_move_files(self, media_files: List[str], destination: str, 
                                         real_source: str, cache_dir: str) -> None:
@@ -486,11 +505,12 @@ class PlexCacheApp:
             )
             
             # Check if enough space
-            size_multipliers = {'KB': 0, 'MB': 1, 'GB': 2, 'TB': 3}
-            total_size_bytes = total_size * (1024 ** size_multipliers[total_size_unit])
-            free_space_bytes = free_space * (1024 ** size_multipliers[free_space_unit])
+            # Multipliers convert to KB as base unit (KB=1, MB=1024, GB=1024^2, TB=1024^3)
+            size_multipliers = {'KB': 1, 'MB': 1024, 'GB': 1024**2, 'TB': 1024**3}
+            total_size_kb = total_size * size_multipliers.get(total_size_unit, 1)
+            free_space_kb = free_space * size_multipliers.get(free_space_unit, 1)
             
-            if total_size_bytes > free_space_bytes:
+            if total_size_kb > free_space_kb:
                 if not self.debug:
                     sys.exit(f"Not enough space on {destination} drive.")
                 else:
@@ -532,7 +552,7 @@ class PlexCacheApp:
             else:
                 logging.info("No files need to be moved back to array")
         except Exception as e:
-            logging.error(f"Error checking files to move back to array: {str(e)}")
+            logging.exception(f"Error checking files to move back to array: {type(e).__name__}: {e}")
     
     def _finish(self) -> None:
         """Finish the application and log summary."""
@@ -569,7 +589,7 @@ class PlexCacheApp:
         if seconds > 0:
             result_str += f"{int(seconds)} second{'s' if seconds > 1 else ''}"
 
-        return result_str.rstrip(", ")
+        return result_str.rstrip(", ") or "less than 1 second"
 
 
 def main():

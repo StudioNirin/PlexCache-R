@@ -137,13 +137,18 @@ class LoggingManager:
         latest_log_file = self.logs_folder / "plexcache_log_latest.log"
 
         # Configure the rotating file handler
-        handler = RotatingFileHandler(
-            log_file, 
-            maxBytes=20*1024*1024, 
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=20*1024*1024,
             backupCount=self.max_log_files
         )
-        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        self.logger.addHandler(handler)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        self.logger.addHandler(file_handler)
+
+        # Add console handler for stdout output
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        self.logger.addHandler(console_handler)
 
         # Ensure the logs folder exists
         if not self.logs_folder.exists():
