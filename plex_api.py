@@ -385,6 +385,10 @@ class PlexManager:
 
                 for section_key in available_sections:
                     section = plex_instance.library.sectionByID(section_key)
+                    # Skip non-video sections (music, photos) - they don't support 'unwatched' filter
+                    if section.type not in ('movie', 'show'):
+                        logging.debug(f"Skipping non-video section '{section.title}' (type: {section.type})")
+                        continue
                     for video in section.search(unwatched=False):
                         if last_updated and video.lastViewedAt and video.lastViewedAt < datetime.fromtimestamp(last_updated):
                             continue
