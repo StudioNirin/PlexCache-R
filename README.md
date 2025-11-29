@@ -1,9 +1,9 @@
 # PlexCache: Automate Plex Media Management
 ### Updated 11/25
 
-## Current Bugs
+## Current Bugs / Todo List
 
-Probably several, but I fixed the really bad one. So should be good to go now. 
+1. Some of the Episode/Show logic looks for 'Season X' as a folder marker, but with sonarr some episodes are also in 'Specials' so the logic needs to be updated to account for it. Maybe add 'Series X' as another option too. 
 
 
 ## Overview
