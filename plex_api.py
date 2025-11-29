@@ -146,13 +146,18 @@ class PlexManager:
         """Process an episode from onDeck."""
         for media in video.media:
             on_deck_files.extend(part.file for part in media.parts)
-        
+
+        # Skip fetching next episodes if current episode has missing index data
+        if video.parentIndex is None or video.index is None:
+            logging.warning(f"Skipping next episode fetch for '{video.grandparentTitle}' - missing index data (parentIndex={video.parentIndex}, index={video.index})")
+            return
+
         show = video.grandparentTitle
         library_section = video.section()
         episodes = list(library_section.search(show)[0].episodes())
         current_season = video.parentIndex
         next_episodes = self._get_next_episodes(episodes, current_season, video.index, number_episodes)
-        
+
         for episode in next_episodes:
             for media in episode.media:
                 on_deck_files.extend(part.file for part in media.parts)
@@ -171,6 +176,9 @@ class PlexManager:
         """Get the next episodes after the current one."""
         next_episodes = []
         for episode in episodes:
+            # Skip episodes with missing index data
+            if episode.parentIndex is None or episode.index is None:
+                continue
             if (episode.parentIndex > current_season or
                 (episode.parentIndex == current_season and episode.index > current_episode_index)) and len(next_episodes) < number_episodes:
                 next_episodes.append(episode)
