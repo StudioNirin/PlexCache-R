@@ -1,4 +1,4 @@
-import json, os, requests, ntpath, posixpath
+import json, os, requests, ntpath, posixpath, subprocess, re
 from urllib.parse import urlparse
 from plexapi.server import PlexServer
 from plexapi.exceptions import BadRequest
@@ -84,6 +84,83 @@ def find_common_root(paths):
         return "/" + "/".join(common_parts[1:])
     return "/" + "/".join(common_parts) if common_parts else "/"
 
+
+def is_unraid():
+    """Check if running on Unraid."""
+    return os.path.exists('/etc/unraid-version')
+
+
+def auto_detect_plex_token():
+    """
+    Auto-detect Plex token from Preferences.xml on Unraid.
+    Uses optimized search: finds appdata/apps folders first, then searches within.
+    Returns tuple of (token, preferences_path) or (None, None) if not found.
+    """
+    if not is_unraid():
+        return None, None
+
+    print("Searching for Plex installation...")
+
+    # Step 1: Find appdata/apps folders first (fast, limited scope)
+    try:
+        result = subprocess.run(
+            ['find', '/mnt', '-maxdepth', '4', '-type', 'd', '(', '-name', 'appdata', '-o', '-name', 'apps', ')'],
+            capture_output=True, text=True, timeout=30
+        )
+        app_folders = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
+        print(f"Error searching for app folders: {e}")
+        return None, None
+
+    # Step 2: Search for Plex Preferences.xml within those folders
+    preferences_path = None
+    for folder in app_folders:
+        try:
+            result = subprocess.run(
+                ['find', folder, '-maxdepth', '5', '-path', '*/Library/Application Support/Plex Media Server/Preferences.xml'],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.stdout.strip():
+                preferences_path = result.stdout.strip().split('\n')[0]
+                break
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            continue
+
+    # Step 3: Fallback to broader search if not found
+    if not preferences_path:
+        print("Not found in common locations, searching /mnt (this may take a moment)...")
+        try:
+            result = subprocess.run(
+                ['find', '/mnt', '-maxdepth', '8', '-path', '*/Library/Application Support/Plex Media Server/Preferences.xml'],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.stdout.strip():
+                preferences_path = result.stdout.strip().split('\n')[0]
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
+            print(f"Error during fallback search: {e}")
+            return None, None
+
+    if not preferences_path:
+        print("Could not find Plex Preferences.xml")
+        return None, None
+
+    print(f"Found: {preferences_path}")
+
+    # Step 4: Extract token from Preferences.xml
+    try:
+        with open(preferences_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        match = re.search(r'PlexOnlineToken="([^"]+)"', content)
+        if match:
+            return match.group(1), preferences_path
+        else:
+            print("Could not find PlexOnlineToken in Preferences.xml")
+            return None, None
+    except (IOError, OSError) as e:
+        print(f"Error reading Preferences.xml: {e}")
+        return None, None
+
+
 # ---------------- Setup Function ----------------
 
 def setup():
@@ -103,7 +180,35 @@ def setup():
 
     # ---------------- Plex Token ----------------
     while 'PLEX_TOKEN' not in settings_data:
-        token = input('\nEnter your plex token: ')
+        token = None
+
+        # Offer auto-detection on Unraid
+        if is_unraid():
+            while True:
+                auto_detect = input('\nWould you like to auto-detect your Plex token? [Y/n] ') or 'yes'
+                if auto_detect.lower() in ['y', 'yes']:
+                    detected_token, plex_path = auto_detect_plex_token()
+                    if detected_token:
+                        while True:
+                            use_token = input(f'Token detected! Use this token? [Y/n] ') or 'yes'
+                            if use_token.lower() in ['y', 'yes']:
+                                token = detected_token
+                                break
+                            elif use_token.lower() in ['n', 'no']:
+                                print("Token not used. Please enter manually.")
+                                break
+                            else:
+                                print("Invalid choice. Please enter either yes or no")
+                    break
+                elif auto_detect.lower() in ['n', 'no']:
+                    break
+                else:
+                    print("Invalid choice. Please enter either yes or no")
+
+        # Manual entry if no token yet
+        if not token:
+            token = input('\nEnter your plex token: ')
+
         if not token.strip():
             print("Token is not valid. It cannot be empty.")
             continue
