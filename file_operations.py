@@ -366,16 +366,20 @@ class FileMover:
         
         return user_path, cache_path, cache_file_name, user_file_name
     
-    def _get_move_command(self, destination: str, cache_file_name: str, 
+    def _get_move_command(self, destination: str, cache_file_name: str,
                          user_path: str, user_file_name: str, cache_path: str) -> Optional[Tuple[str, str]]:
         """Get the move command for a file."""
         move = None
         if destination == 'array':
-            self.file_utils.create_directory_with_permissions(user_path, cache_file_name)
+            # Only create directories if not in debug mode (true dry-run)
+            if not self.debug:
+                self.file_utils.create_directory_with_permissions(user_path, cache_file_name)
             if os.path.isfile(cache_file_name):
                 move = (cache_file_name, user_path)
         elif destination == 'cache':
-            self.file_utils.create_directory_with_permissions(cache_path, user_file_name)
+            # Only create directories if not in debug mode (true dry-run)
+            if not self.debug:
+                self.file_utils.create_directory_with_permissions(cache_path, user_file_name)
             if not os.path.isfile(cache_file_name):
                 move = (user_file_name, cache_path)
         return move
