@@ -118,8 +118,10 @@ def setup():
             print(f"Plex is running on {operating_system}")
 
             valid_sections = []
+            selected_libraries = []
             plex_library_folders = []
 
+            # Step 1: Collect library selections from user
             while not valid_sections:
                 for library in libraries:
                     print(f"\nYour plex library name: {library.title}")
@@ -129,35 +131,7 @@ def setup():
                     elif include.lower() in ['y', 'yes']:
                         if library.key not in valid_sections:
                             valid_sections.append(library.key)
-
-                        # Compute plex_source only once
-                        if 'plex_source' not in settings_data:
-                            # Collect the root folder for every library in Plex
-                            all_locations = []
-                            for lib in plex.library.sections():
-                                try:
-                                    locs = lib.locations
-                                    if isinstance(locs, list):
-                                        all_locations.extend(locs)
-                                    elif isinstance(locs, str):
-                                        all_locations.append(locs)
-                                except Exception as e:
-                                    print(f"Warning: Could not get locations for library '{lib.title}': {e}")
-                                    continue
-
-                            # Compute the true common directory (e.g. /media)
-                            plex_source = find_common_root(all_locations)
-                            print(f"\nPlex source path autoselected and set to: {plex_source}")
-                            settings_data['plex_source'] = plex_source
-
-                        # Append relative paths for this library (deduplicated)
-                        for location in library.locations:
-                            rel = os.path.relpath(location, settings_data['plex_source']).strip('/')
-                            rel = rel.replace('\\', '/')
-                            if rel not in plex_library_folders:
-                                plex_library_folders.append(rel)
-
-                        settings_data['plex_library_folders'] = plex_library_folders
+                            selected_libraries.append(library)
                     else:
                         print("Invalid choice. Please enter either yes or no")
 
@@ -165,6 +139,54 @@ def setup():
                     print("You must select at least one library to include. Please try again.")
 
             settings_data['valid_sections'] = valid_sections
+
+            # Step 2: Compute plex_source from ONLY selected libraries (fixes Issue #12)
+            if 'plex_source' not in settings_data:
+                selected_locations = []
+                for lib in selected_libraries:
+                    try:
+                        locs = lib.locations
+                        if isinstance(locs, list):
+                            selected_locations.extend(locs)
+                        elif isinstance(locs, str):
+                            selected_locations.append(locs)
+                    except Exception as e:
+                        print(f"Warning: Could not get locations for library '{lib.title}': {e}")
+                        continue
+
+                plex_source = find_common_root(selected_locations)
+
+                # Warn user if plex_source is just "/" and allow manual override
+                if plex_source == "/":
+                    print(f"\nWarning: The computed plex_source is '/' (root).")
+                    print("This usually happens when your selected libraries have different base paths.")
+                    print(f"Selected library paths: {selected_locations}")
+                    print("\nUsing '/' as plex_source will likely cause path issues.")
+
+                    while True:
+                        manual_source = input("\nEnter the correct plex_source path (e.g., '/data') or press Enter to keep '/': ").strip()
+                        if manual_source == "":
+                            print("Keeping plex_source as '/' - please verify your settings work correctly.")
+                            break
+                        elif manual_source.startswith("/"):
+                            plex_source = manual_source.rstrip("/")
+                            print(f"plex_source set to: {plex_source}")
+                            break
+                        else:
+                            print("Path must start with '/'")
+
+                print(f"\nPlex source path set to: {plex_source}")
+                settings_data['plex_source'] = plex_source
+
+            # Step 3: Compute relative library folders from selected libraries
+            for lib in selected_libraries:
+                for location in lib.locations:
+                    rel = os.path.relpath(location, settings_data['plex_source']).strip('/')
+                    rel = rel.replace('\\', '/')
+                    if rel not in plex_library_folders:
+                        plex_library_folders.append(rel)
+
+            settings_data['plex_library_folders'] = plex_library_folders
 
 
         except (BadRequest, requests.exceptions.RequestException) as e:
