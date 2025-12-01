@@ -447,7 +447,7 @@ def setup():
 
     # ---------------- Cache / Array Paths ----------------
     if 'cache_dir' not in settings_data:
-        cache_dir = input('\nInsert the path of your cache drive: (default: "/mnt/cache/media") ').replace('"', '').replace("'", '') or '/mnt/cache/media'
+        cache_dir = input('\nInsert the path of your cache drive: (default: "/mnt/cache") ').replace('"', '').replace("'", '') or '/mnt/cache'
         while True:
             test_path = input('\nDo you want to test the given path? [y/N]  ') or 'no'
             if test_path.lower() in ['y', 'yes']:
@@ -458,7 +458,7 @@ def setup():
                     print('The path appears to be invalid.')
                     edit_path = input('\nDo you want to edit the path? [y/N]  ') or 'no'
                     if edit_path.lower() in ['y', 'yes']:
-                        cache_dir = input('\nInsert the path of your cache drive: (default: "/mnt/cache/media") ').replace('"', '').replace("'", '') or '/mnt/cache/media'
+                        cache_dir = input('\nInsert the path of your cache drive: (default: "/mnt/cache") ').replace('"', '').replace("'", '') or '/mnt/cache'
                     elif edit_path.lower() in ['n', 'no']:
                         break
                     else:
@@ -473,7 +473,7 @@ def setup():
         settings_data['cache_dir'] = cache_dir
 
     if 'real_source' not in settings_data:
-        real_source = input('\nInsert the path where your media folders are located?: (default: "/mnt/user/media") ').replace('"', '').replace("'", '') or '/mnt/user/media'
+        real_source = input('\nInsert the path where your media folders are located?: (default: "/mnt/user") ').replace('"', '').replace("'", '') or '/mnt/user'
         while True:
             test_path = input('\nDo you want to test the given path? [y/N]  ') or 'no'
             if test_path.lower() in ['y', 'yes']:
@@ -484,7 +484,7 @@ def setup():
                     print('The path appears to be invalid.')
                     edit_path = input('\nDo you want to edit the path? [y/N]  ') or 'no'
                     if edit_path.lower() in ['y', 'yes']:
-                        real_source = input('\nInsert the path where your media folders are located?: (default: "/mnt/user/media") ').replace('"', '').replace("'", '') or '/mnt/user/media'
+                        real_source = input('\nInsert the path where your media folders are located?: (default: "/mnt/user") ').replace('"', '').replace("'", '') or '/mnt/user'
                     elif edit_path.lower() in ['n', 'no']:
                         break
                     else:
