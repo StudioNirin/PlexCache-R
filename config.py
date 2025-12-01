@@ -115,17 +115,19 @@ class ConfigManager:
             raise FileNotFoundError(f"Settings file not found: {self.config_file}")
         
         try:
-            with open(self.config_file, 'r') as f:
+            with open(self.config_file, 'r', encoding='utf-8') as f:
                 self.settings_data = json.load(f)
             logging.debug("Configuration file loaded successfully")
         except json.JSONDecodeError as e:
-            logging.error(f"Invalid JSON in settings file: {e}")
+            logging.error(f"Invalid JSON in settings file: {type(e).__name__}: {e}")
             raise ValueError(f"Invalid JSON in settings file: {e}")
         
         logging.debug("Processing configuration...")
+        self._validate_required_fields()
+        self._validate_types()
         self._process_first_start()
         self._load_all_configs()
-        self._validate_config()
+        self._validate_values()
         self._save_updated_config()
         logging.info("Configuration loaded and validated successfully")
     
@@ -206,10 +208,10 @@ class ConfigManager:
         if 'unraid' in self.settings_data:
             del self.settings_data['unraid']
     
-    def _validate_config(self) -> None:
-        """Validate the loaded configuration."""
-        logging.debug("Validating configuration...")
-        
+    def _validate_required_fields(self) -> None:
+        """Validate that all required fields exist in the configuration."""
+        logging.debug("Validating required fields...")
+
         required_fields = [
             'PLEX_URL', 'PLEX_TOKEN', 'number_episodes', 'valid_sections',
             'days_to_monitor', 'users_toggle', 'watchlist_toggle',
@@ -218,13 +220,89 @@ class ConfigManager:
             'nas_library_folders', 'plex_library_folders',
             'max_concurrent_moves_array', 'max_concurrent_moves_cache'
         ]
-        
+
         missing_fields = [field for field in required_fields if field not in self.settings_data]
         if missing_fields:
             logging.error(f"Missing required fields in settings: {missing_fields}")
             raise ValueError(f"Missing required fields in settings: {missing_fields}")
-        
-        logging.debug("Configuration validation successful")
+
+        logging.debug("Required fields validation successful")
+
+    def _validate_types(self) -> None:
+        """Validate that configuration values have correct types."""
+        logging.debug("Validating configuration types...")
+
+        type_checks = {
+            'PLEX_URL': str,
+            'PLEX_TOKEN': str,
+            'number_episodes': int,
+            'valid_sections': list,
+            'days_to_monitor': int,
+            'users_toggle': bool,
+            'watchlist_toggle': bool,
+            'watchlist_episodes': int,
+            'watchlist_cache_expiry': int,
+            'watched_cache_expiry': int,
+            'watched_move': bool,
+            'plex_source': str,
+            'cache_dir': str,
+            'real_source': str,
+            'nas_library_folders': list,
+            'plex_library_folders': list,
+            'max_concurrent_moves_array': int,
+            'max_concurrent_moves_cache': int,
+        }
+
+        type_errors = []
+        for field, expected_type in type_checks.items():
+            if field in self.settings_data:
+                value = self.settings_data[field]
+                if not isinstance(value, expected_type):
+                    type_errors.append(
+                        f"'{field}' expected {expected_type.__name__}, got {type(value).__name__}"
+                    )
+
+        if type_errors:
+            error_msg = "Type validation errors: " + "; ".join(type_errors)
+            logging.error(error_msg)
+            raise TypeError(error_msg)
+
+        logging.debug("Type validation successful")
+
+    def _validate_values(self) -> None:
+        """Validate configuration value ranges and constraints."""
+        logging.debug("Validating configuration values...")
+        errors = []
+
+        # Validate non-empty paths
+        path_fields = ['plex_source', 'real_source', 'cache_dir']
+        for field in path_fields:
+            if not self.settings_data.get(field, '').strip():
+                errors.append(f"'{field}' cannot be empty")
+
+        # Validate positive integers
+        positive_int_fields = [
+            'number_episodes', 'days_to_monitor', 'watchlist_episodes',
+            'watchlist_cache_expiry', 'watched_cache_expiry',
+            'max_concurrent_moves_array', 'max_concurrent_moves_cache'
+        ]
+        for field in positive_int_fields:
+            value = self.settings_data.get(field, 0)
+            if value < 0:
+                errors.append(f"'{field}' must be non-negative, got {value}")
+
+        # Validate non-empty URL and token
+        if not self.settings_data.get('PLEX_URL', '').strip():
+            errors.append("'PLEX_URL' cannot be empty")
+        if not self.settings_data.get('PLEX_TOKEN', '').strip():
+            errors.append("'PLEX_TOKEN' cannot be empty")
+
+        if errors:
+            error_msg = "Configuration validation errors: " + "; ".join(errors)
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+
+        logging.debug("Value validation successful")
     
     def _save_updated_config(self) -> None:
         """Save updated configuration back to file."""
@@ -239,11 +317,11 @@ class ConfigManager:
                 'skip_watchlist': self.plex.skip_watchlist,
                 'exit_if_active_session': self.exit_if_active_session,
             })
-            
-            with open(self.config_file, 'w') as f:
+
+            with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.settings_data, f, indent=4)
         except Exception as e:
-            logging.error(f"Error saving settings: {e}")
+            logging.error(f"Error saving settings: {type(e).__name__}: {e}")
             raise
     
     @staticmethod
