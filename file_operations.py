@@ -260,6 +260,7 @@ class PlexcachedMigration:
 
                 # Copy cache file to array as .plexcached
                 filename = os.path.basename(cache_file)
+                logging.info(f"Copying ({i}/{len(files_needing_migration)}): {filename} ({self._format_bytes(file_size)})")
                 shutil.copy2(cache_file, plexcached_file)
 
                 # Verify copy succeeded
