@@ -497,8 +497,9 @@ class FileMover:
         plexcached_file = array_file + PLEXCACHED_EXTENSION
         try:
             # Step 1: Copy file from array to cache (preserving metadata)
+            logging.info(f"Starting copy: {array_file} -> {cache_file_name}")
             shutil.copy2(array_file, cache_file_name)
-            logging.info(f"Copied file to cache: {array_file} -> {cache_file_name}")
+            logging.info(f"Copy complete: {os.path.basename(array_file)}")
 
             # Validate copy succeeded
             if not os.path.isfile(cache_file_name):

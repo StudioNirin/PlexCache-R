@@ -199,8 +199,12 @@ class PlexCacheApp:
             try:
                 media_path = self._get_media_path_from_session(session)
                 if media_path:
-                    logging.info(f"Skipping active session file: {media_path}")
-                    self.files_to_skip.append(media_path)
+                    # Convert Plex path to real path so it matches during filtering
+                    converted_paths = self.file_path_modifier.modify_file_paths([media_path])
+                    if converted_paths:
+                        converted_path = converted_paths[0]
+                        logging.info(f"Skipping active session file: {converted_path}")
+                        self.files_to_skip.append(converted_path)
             except Exception as e:
                 logging.error(f"Error processing session {session}: {type(e).__name__}: {e}")
 
