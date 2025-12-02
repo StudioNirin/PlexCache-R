@@ -8,6 +8,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Set, Optional, Tuple
+import re
 
 
 class FilePathModifier:
@@ -253,14 +254,20 @@ class FileFilter:
     def _extract_show_name(self, file_path: str) -> Optional[str]:
         """Extract show name from file path. Returns None if not found."""
         try:
-            # Normalize path and split using OS separator
             normalized_path = os.path.normpath(file_path)
             path_parts = normalized_path.split(os.sep)
+
             for i, part in enumerate(path_parts):
-                if part.startswith('Season') or part.isdigit():
+                # Match - Season/Series (+ number) and Specials as possible folder names for TV Shows. 
+                if (
+                    re.match(r'^(Season|Series)\s*\d+$', part, re.IGNORECASE)
+                    or re.match(r'^\d+$', part)
+                    or re.match(r'^Specials$', part, re.IGNORECASE)
+                ):
                     if i > 0:
-                        return path_parts[i-1]
+                        return path_parts[i - 1]
                     break
+
             return None
         except Exception:
             return None
