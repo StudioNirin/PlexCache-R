@@ -160,6 +160,7 @@ class ConfigManager:
         self._load_cache_config()
         self._load_path_config()
         self._load_performance_config()
+        self._load_notification_config()
         self._load_misc_config()
     
     def _load_plex_config(self) -> None:
@@ -213,7 +214,15 @@ class ConfigManager:
         """Load performance-related configuration."""
         self.performance.max_concurrent_moves_array = self.settings_data['max_concurrent_moves_array']
         self.performance.max_concurrent_moves_cache = self.settings_data['max_concurrent_moves_cache']
-    
+
+    def _load_notification_config(self) -> None:
+        """Load notification-related configuration."""
+        self.notification.notification_type = self.settings_data.get('notification_type', 'system')
+        self.notification.unraid_level = self.settings_data.get('unraid_level', 'summary')
+        self.notification.webhook_level = self.settings_data.get('webhook_level', '')
+        self.notification.webhook_url = self.settings_data.get('webhook_url', '')
+        self.notification.webhook_headers = self.settings_data.get('webhook_headers', {})
+
     def _load_misc_config(self) -> None:
         """Load miscellaneous configuration."""
         self.exit_if_active_session = self.settings_data.get('exit_if_active_session')
