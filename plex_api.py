@@ -197,11 +197,15 @@ class PlexManager:
             users = account.users()
             logging.info(f"[PLEX API] Found {len(users)} additional users")
 
+            # Count remote vs home users for logging
+            remote_users = 0
             for user in users:
                 username = user.title
 
                 # Skip remote users (they have a username attribute set)
+                # Remote users must use RSS for watchlist - API won't work
                 if getattr(user, "username", None) is not None:
+                    remote_users += 1
                     logging.debug(f"[PLEX API] Skipping remote user: {username}")
                     continue
 
@@ -238,7 +242,8 @@ class PlexManager:
                     _log_api_error(f"get token for {username}", e)
 
             self._users_loaded = True
-            logging.info(f"[PLEX API] Loaded tokens for {len(self._user_tokens)} users")
+            home_users = len(self._user_tokens) - 1  # Subtract main account
+            logging.info(f"[PLEX API] Loaded tokens for {len(self._user_tokens)} users ({home_users} home users, {remote_users} remote users skipped)")
             return self._user_tokens
 
         except Exception as e:
