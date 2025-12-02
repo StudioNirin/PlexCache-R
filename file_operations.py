@@ -888,7 +888,8 @@ class FileMover:
                 except OSError:
                     file_size = 0
                 total_bytes += file_size
-                move_commands.append((move, cache_file_name, file_size))
+                # Include original file_to_move path for source map lookup
+                move_commands.append((move, cache_file_name, file_size, file_to_move))
                 logging.debug(f"Added move command for: {file_to_move}")
             else:
                 logging.debug(f"No move command generated for: {file_to_move}")
@@ -1039,7 +1040,7 @@ class FileMover:
                 else:
                     logging.info(f"Finished moving files with {len(errors)} errors.")
     
-    def _move_file(self, move_cmd_with_cache: Tuple[Tuple[str, str], str, int], destination: str) -> int:
+    def _move_file(self, move_cmd_with_cache: Tuple[Tuple[str, str], str, int, str], destination: str) -> int:
         """Move a single file using the .plexcached approach.
 
         For cache destination:
@@ -1052,7 +1053,7 @@ class FileMover:
         2. Delete cache copy
         3. (Exclude file update handled separately by caller)
         """
-        (src, dest), cache_file_name, file_size = move_cmd_with_cache
+        (src, dest), cache_file_name, file_size, original_path = move_cmd_with_cache
         thread_id = threading.get_ident()
         filename = os.path.basename(src)
 
@@ -1063,7 +1064,7 @@ class FileMover:
                 self._print_move_progress(destination)
 
             if destination == 'cache':
-                result = self._move_to_cache(src, dest, cache_file_name)
+                result = self._move_to_cache(src, dest, cache_file_name, original_path)
             elif destination == 'array':
                 result = self._move_to_array(src, dest, cache_file_name)
             else:
@@ -1086,7 +1087,8 @@ class FileMover:
             logging.error(f"Error moving file: {type(e).__name__}: {e}")
             return 1
 
-    def _move_to_cache(self, array_file: str, cache_path: str, cache_file_name: str) -> int:
+    def _move_to_cache(self, array_file: str, cache_path: str, cache_file_name: str,
+                       original_path: str = None) -> int:
         """Copy file to cache and rename array original to .plexcached.
 
         Order of operations ensures data safety:
@@ -1125,9 +1127,8 @@ class FileMover:
 
             # Step 4: Record timestamp for cache retention with source info
             if self.timestamp_tracker:
-                # Look up source from the source map (try both cache path and array path)
-                source = self._source_map.get(cache_file_name,
-                         self._source_map.get(array_file, "unknown"))
+                # Look up source from the source map using the original path (e.g., /mnt/user/...)
+                source = self._source_map.get(original_path, "unknown") if original_path else "unknown"
                 self.timestamp_tracker.record_cache_time(cache_file_name, source)
 
             # Log successful move
