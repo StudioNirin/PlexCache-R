@@ -16,7 +16,7 @@ from config import ConfigManager
 from logging_config import LoggingManager
 from system_utils import SystemDetector, PathConverter, FileUtils
 from plex_api import PlexManager, CacheManager
-from file_operations import FilePathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup
+from file_operations import FilePathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer
 
 
 class PlexCacheApp:
@@ -143,6 +143,12 @@ class PlexCacheApp:
         # Get cache files
         watchlist_cache, watched_cache, mover_exclude = self.config_manager.get_cache_files()
         logging.debug(f"Cache files: watchlist={watchlist_cache}, watched={watched_cache}, exclude={mover_exclude}")
+
+        # Create exclude file on startup if it doesn't exist
+        # This allows users to configure Mover settings before any files are moved
+        if not mover_exclude.exists():
+            mover_exclude.touch()
+            logging.info(f"Created mover exclude file: {mover_exclude}")
         
         self.file_filter = FileFilter(
             real_source=self.config_manager.paths.real_source,
@@ -599,13 +605,71 @@ def main():
     """Main entry point."""
     skip_cache = "--skip-cache" in sys.argv
     debug = "--debug" in sys.argv
+    restore_plexcached = "--restore-plexcached" in sys.argv
 
     # Derive config path from the script's actual location (matches plexcache_setup.py behavior)
     script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
     config_file = str(script_dir / "plexcache_settings.json")
 
+    # Handle emergency restore mode
+    if restore_plexcached:
+        _run_plexcached_restore(config_file, debug)
+        return
+
     app = PlexCacheApp(config_file, skip_cache, debug)
     app.run()
+
+
+def _run_plexcached_restore(config_file: str, debug: bool) -> None:
+    """Run the emergency .plexcached restore process."""
+    import logging
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
+    logging.info("*** PlexCache Emergency Restore Mode ***")
+    logging.info("This will restore all .plexcached files back to their original names.")
+
+    # Load config to get the real_source path
+    config_manager = ConfigManager(config_file)
+    config_manager.load_config()
+
+    # Search in the real_source directory (where array files live)
+    search_paths = [config_manager.paths.real_source]
+    logging.info(f"Searching for .plexcached files in: {search_paths}")
+
+    restorer = PlexcachedRestorer(search_paths)
+
+    # First do a dry run to show what would be restored
+    print("\n=== Dry Run (showing what would be restored) ===")
+    plexcached_files = restorer.find_plexcached_files()
+
+    if not plexcached_files:
+        print("No .plexcached files found. Nothing to restore.")
+        return
+
+    print(f"Found {len(plexcached_files)} .plexcached file(s):\n")
+    for f in plexcached_files:
+        original = f[:-len(".plexcached")]
+        print(f"  {f}")
+        print(f"    -> {original}")
+
+    if debug:
+        print("\nDebug mode: No files will be restored.")
+        return
+
+    # Prompt for confirmation
+    print("\nWARNING: This will rename all .plexcached files back to their originals.")
+    print("This should only be used in emergencies when you need to restore array files.")
+    response = input("Type 'RESTORE' to proceed: ")
+
+    if response.strip() == "RESTORE":
+        logging.info("=== Performing restore ===")
+        success, errors = restorer.restore_all(dry_run=False)
+        logging.info(f"Restore complete: {success} files restored, {errors} errors")
+    else:
+        logging.info("Restore cancelled.")
 
 
 if __name__ == "__main__":

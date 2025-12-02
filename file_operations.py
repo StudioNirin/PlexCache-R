@@ -4,10 +4,14 @@ Handles file moving, filtering, subtitle operations, and path modifications.
 """
 
 import os
+import shutil
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Set, Optional, Tuple
+
+# Extension used to mark array files that have been cached
+PLEXCACHED_EXTENSION = ".plexcached"
 
 
 class FilePathModifier:
@@ -296,7 +300,18 @@ class FileFilter:
 
 
 class FileMover:
-    """Handles file moving operations."""
+    """Handles file moving operations.
+
+    For moves TO CACHE:
+    - Copy file from array to cache
+    - Rename array file to .plexcached (preserves original on array)
+    - Add to exclude file
+
+    For moves TO ARRAY:
+    - Rename .plexcached file back to original name
+    - Delete cache copy
+    - Remove from exclude file
+    """
 
     def __init__(self, real_source: str, cache_dir: str, is_unraid: bool,
                  file_utils, debug: bool = False, mover_cache_exclude_file: Optional[str] = None):
@@ -368,53 +383,263 @@ class FileMover:
     
     def _get_move_command(self, destination: str, cache_file_name: str,
                          user_path: str, user_file_name: str, cache_path: str) -> Optional[Tuple[str, str]]:
-        """Get the move command for a file."""
+        """Get the move command for a file.
+
+        For cache destination:
+        - If file already on cache: just add to exclude (return None, handled separately)
+        - If file on array: return command to copy+rename
+
+        For array destination:
+        - If .plexcached file exists: return command to restore+delete
+        """
         move = None
         if destination == 'array':
-            # Only create directories if not in debug mode (true dry-run)
-            if not self.debug:
-                self.file_utils.create_directory_with_permissions(user_path, cache_file_name)
-            if os.path.isfile(cache_file_name):
+            # Check if .plexcached version exists on array
+            plexcached_file = user_file_name + PLEXCACHED_EXTENSION
+            if os.path.isfile(plexcached_file):
+                # Only create directories if not in debug mode (true dry-run)
+                if not self.debug:
+                    self.file_utils.create_directory_with_permissions(user_path, cache_file_name)
                 move = (cache_file_name, user_path)
         elif destination == 'cache':
-            # Only create directories if not in debug mode (true dry-run)
-            if not self.debug:
-                self.file_utils.create_directory_with_permissions(cache_path, user_file_name)
-            if not os.path.isfile(cache_file_name):
+            # Check if file is already on cache
+            if os.path.isfile(cache_file_name):
+                # File already on cache - just ensure it's in exclude file
+                self._add_to_exclude_file(cache_file_name)
+                logging.info(f"File already on cache, added to exclude: {cache_file_name}")
+                return None
+
+            # Check if file exists on array to copy
+            if os.path.isfile(user_file_name):
+                # Only create directories if not in debug mode (true dry-run)
+                if not self.debug:
+                    self.file_utils.create_directory_with_permissions(cache_path, user_file_name)
                 move = (user_file_name, cache_path)
         return move
+
+    def _add_to_exclude_file(self, cache_file_name: str) -> None:
+        """Add a file to the exclude list (thread-safe)."""
+        if self.mover_cache_exclude_file:
+            with self._exclude_file_lock:
+                # Read existing entries to avoid duplicates
+                existing = set()
+                if os.path.exists(self.mover_cache_exclude_file):
+                    with open(self.mover_cache_exclude_file, "r") as f:
+                        existing = {line.strip() for line in f if line.strip()}
+                if cache_file_name not in existing:
+                    with open(self.mover_cache_exclude_file, "a") as f:
+                        f.write(f"{cache_file_name}\n")
     
-    def _execute_move_commands(self, move_commands: List[Tuple[Tuple[str, str], str]], 
-                             max_concurrent_moves_array: int, max_concurrent_moves_cache: int, 
+    def _execute_move_commands(self, move_commands: List[Tuple[Tuple[str, str], str]],
+                             max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
                              destination: str) -> None:
         """Execute the move commands."""
         if self.debug:
             for move_cmd, cache_file_name in move_commands:
-                logging.info(move_cmd)
+                (src, dest) = move_cmd
+                if destination == 'cache':
+                    plexcached_file = src + PLEXCACHED_EXTENSION
+                    logging.info(f"[DEBUG] Would copy: {src} -> {cache_file_name}")
+                    logging.info(f"[DEBUG] Would rename: {src} -> {plexcached_file}")
+                elif destination == 'array':
+                    array_file = os.path.join(dest, os.path.basename(src))
+                    plexcached_file = array_file + PLEXCACHED_EXTENSION
+                    logging.info(f"[DEBUG] Would rename: {plexcached_file} -> {array_file}")
+                    logging.info(f"[DEBUG] Would delete: {src}")
         else:
             max_concurrent_moves = max_concurrent_moves_array if destination == 'array' else max_concurrent_moves_cache
             from functools import partial
             with ThreadPoolExecutor(max_workers=max_concurrent_moves) as executor:
                 results = list(executor.map(partial(self._move_file, destination=destination), move_commands))
-                errors = [result for result in results if result != 0]
-                logging.info(f"Finished moving files with {len(errors)} errors.")
+                errors = [result for result in results if result == 1]
+                partial_successes = [result for result in results if result == 2]
+                if partial_successes:
+                    logging.warning(f"Finished moving files: {len(errors)} errors, {len(partial_successes)} partial (missing .plexcached)")
+                else:
+                    logging.info(f"Finished moving files with {len(errors)} errors.")
     
     def _move_file(self, move_cmd_with_cache: Tuple[Tuple[str, str], str], destination: str) -> int:
-        """Move a single file and update exclude file if moving to cache."""
+        """Move a single file using the .plexcached approach.
+
+        For cache destination:
+        1. Copy file from array to cache
+        2. Rename array file to .plexcached
+        3. Add to exclude file
+
+        For array destination:
+        1. Rename .plexcached file back to original
+        2. Delete cache copy
+        3. (Exclude file update handled separately by caller)
+        """
         (src, dest), cache_file_name = move_cmd_with_cache
         try:
-            self.file_utils.move_file(src, dest)
-            logging.info(f"Moved file from {src} to {dest} with original permissions and owner.")
-            # Only append to exclude file if moving to cache and move succeeded
-            # Use lock to prevent concurrent writes from corrupting the file
-            if destination == 'cache' and self.mover_cache_exclude_file:
-                with self._exclude_file_lock:
-                    with open(self.mover_cache_exclude_file, "a") as f:
-                        f.write(f"{cache_file_name}\n")
+            if destination == 'cache':
+                return self._move_to_cache(src, dest, cache_file_name)
+            elif destination == 'array':
+                return self._move_to_array(src, dest, cache_file_name)
             return 0
         except Exception as e:
             logging.error(f"Error moving file: {type(e).__name__}: {e}")
             return 1
+
+    def _move_to_cache(self, array_file: str, cache_path: str, cache_file_name: str) -> int:
+        """Copy file to cache and rename array original to .plexcached.
+
+        Order of operations ensures data safety:
+        1. Copy file to cache
+        2. Verify copy succeeded
+        3. Rename original to .plexcached (only after verified copy)
+        4. Verify rename succeeded
+
+        If interrupted at any point, the original array file remains safe.
+        Worst case: an orphaned cache copy exists that can be deleted.
+        """
+        plexcached_file = array_file + PLEXCACHED_EXTENSION
+        try:
+            # Step 1: Copy file from array to cache (preserving metadata)
+            shutil.copy2(array_file, cache_file_name)
+            logging.info(f"Copied file to cache: {array_file} -> {cache_file_name}")
+
+            # Validate copy succeeded
+            if not os.path.isfile(cache_file_name):
+                raise IOError(f"Copy verification failed: cache file not created at {cache_file_name}")
+
+            # Step 2: Rename array file to .plexcached
+            os.rename(array_file, plexcached_file)
+            logging.info(f"Renamed array file: {array_file} -> {plexcached_file}")
+
+            # Validate rename succeeded
+            if os.path.isfile(array_file):
+                raise IOError(f"Rename verification failed: original array file still exists at {array_file}")
+            if not os.path.isfile(plexcached_file):
+                raise IOError(f"Rename verification failed: .plexcached file not created at {plexcached_file}")
+
+            # Step 3: Add to exclude file
+            self._add_to_exclude_file(cache_file_name)
+
+            return 0
+        except Exception as e:
+            logging.error(f"Error copying to cache: {type(e).__name__}: {e}")
+            # Attempt cleanup on failure
+            self._cleanup_failed_cache_copy(array_file, cache_file_name)
+            return 1
+
+    def _move_to_array(self, cache_file: str, array_path: str, cache_file_name: str) -> int:
+        """Restore .plexcached file and delete cache copy.
+
+        Returns:
+            0: Success - both .plexcached renamed and cache deleted
+            1: Error - exception occurred during operation
+            2: Partial - .plexcached file was missing (cache still deleted if present)
+        """
+        try:
+            # Derive the original array file path and .plexcached path
+            array_file = os.path.join(array_path, os.path.basename(cache_file))
+            plexcached_file = array_file + PLEXCACHED_EXTENSION
+            plexcached_missing = False
+
+            # Step 1: Rename .plexcached back to original
+            if os.path.isfile(plexcached_file):
+                os.rename(plexcached_file, array_file)
+                logging.info(f"Restored array file: {plexcached_file} -> {array_file}")
+            else:
+                logging.warning(f"No .plexcached file found to restore: {plexcached_file}")
+                plexcached_missing = True
+
+            # Step 2: Delete cache copy
+            if os.path.isfile(cache_file):
+                os.remove(cache_file)
+                logging.info(f"Deleted cache file: {cache_file}")
+            else:
+                logging.debug(f"Cache file already removed: {cache_file}")
+
+            # Return appropriate status
+            if plexcached_missing:
+                return 2  # Partial success - no .plexcached to restore
+            return 0
+        except Exception as e:
+            logging.error(f"Error restoring to array: {type(e).__name__}: {e}")
+            return 1
+
+    def _cleanup_failed_cache_copy(self, array_file: str, cache_file_name: str) -> None:
+        """Clean up after a failed cache copy operation."""
+        plexcached_file = array_file + PLEXCACHED_EXTENSION
+        try:
+            # If we renamed the array file but copy failed, rename it back
+            if os.path.isfile(plexcached_file) and not os.path.isfile(array_file):
+                os.rename(plexcached_file, array_file)
+                logging.info(f"Cleanup: Restored array file after failed copy")
+            # Remove partial cache file if it exists
+            if os.path.isfile(cache_file_name):
+                os.remove(cache_file_name)
+                logging.info(f"Cleanup: Removed partial cache file")
+        except Exception as e:
+            logging.error(f"Error during cleanup: {type(e).__name__}: {e}")
+
+
+class PlexcachedRestorer:
+    """Emergency restore utility to rename all .plexcached files back to originals."""
+
+    def __init__(self, search_paths: List[str]):
+        """Initialize with paths to search for .plexcached files."""
+        self.search_paths = search_paths
+
+    def find_plexcached_files(self) -> List[str]:
+        """Find all .plexcached files in the search paths."""
+        plexcached_files = []
+        for search_path in self.search_paths:
+            if not os.path.exists(search_path):
+                logging.warning(f"Search path does not exist: {search_path}")
+                continue
+            for root, dirs, files in os.walk(search_path):
+                for filename in files:
+                    if filename.endswith(PLEXCACHED_EXTENSION):
+                        plexcached_files.append(os.path.join(root, filename))
+        return plexcached_files
+
+    def restore_all(self, dry_run: bool = False) -> Tuple[int, int]:
+        """Restore all .plexcached files to their original names.
+
+        Args:
+            dry_run: If True, only log what would be done without making changes.
+
+        Returns:
+            Tuple of (success_count, error_count)
+        """
+        plexcached_files = self.find_plexcached_files()
+        logging.info(f"Found {len(plexcached_files)} .plexcached files to restore")
+
+        if not plexcached_files:
+            return 0, 0
+
+        success_count = 0
+        error_count = 0
+
+        for plexcached_file in plexcached_files:
+            # Remove .plexcached extension to get original filename
+            original_file = plexcached_file[:-len(PLEXCACHED_EXTENSION)]
+
+            if dry_run:
+                logging.info(f"[DRY RUN] Would restore: {plexcached_file} -> {original_file}")
+                success_count += 1
+                continue
+
+            try:
+                # Check if original already exists (shouldn't happen, but be safe)
+                if os.path.exists(original_file):
+                    logging.warning(f"Original file already exists, skipping: {original_file}")
+                    error_count += 1
+                    continue
+
+                os.rename(plexcached_file, original_file)
+                logging.info(f"Restored: {plexcached_file} -> {original_file}")
+                success_count += 1
+            except Exception as e:
+                logging.error(f"Failed to restore {plexcached_file}: {type(e).__name__}: {e}")
+                error_count += 1
+
+        logging.info(f"Restore complete: {success_count} succeeded, {error_count} failed")
+        return success_count, error_count
 
 
 class CacheCleanup:
