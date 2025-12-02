@@ -290,6 +290,8 @@ class PlexcachedMigration:
                         if thread_id in self._active_files:
                             del self._active_files[thread_id]
                         self._print_progress()
+                    # Log to file (outside lock for performance)
+                    logging.info(f"Migrated: {filename} ({self._format_bytes(file_size)})")
                     return 0
                 else:
                     logging.error(f"Failed to verify: {plexcached_file}")
