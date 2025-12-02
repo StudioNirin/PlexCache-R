@@ -222,7 +222,16 @@ class PlexcachedMigration:
             self._mark_complete()
             return 0, len(cache_files), 0
 
-        logging.info(f"Found {len(files_needing_migration)} files needing .plexcached backup")
+        # Calculate total size of files to migrate
+        total_bytes = 0
+        for cache_file, _, _ in files_needing_migration:
+            try:
+                total_bytes += os.path.getsize(cache_file)
+            except OSError:
+                pass
+
+        total_gb = total_bytes / (1024 ** 3)
+        logging.info(f"Found {len(files_needing_migration)} files needing .plexcached backup ({total_gb:.2f} GB)")
 
         if dry_run:
             logging.info("[DRY RUN] Would create the following backups:")
