@@ -547,11 +547,8 @@ class FileFilter:
         if file in media_to_cache:
             return False
 
-        # Check retention period before allowing move to array
-        if self.timestamp_tracker and self.cache_retention_hours > 0:
-            if self.timestamp_tracker.is_within_retention_period(cache_file_name, self.cache_retention_hours):
-                logging.info(f"File within retention period ({self.cache_retention_hours}h), skipping move to array: {os.path.basename(file)}")
-                return False
+        # Note: Retention period check is handled upstream in get_files_to_move_back_to_array()
+        # which correctly distinguishes between TV shows (retention applies) and movies (no retention)
 
         array_file = file.replace("/mnt/user/", "/mnt/user0/", 1) if self.is_unraid else file
 
