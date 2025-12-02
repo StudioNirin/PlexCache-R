@@ -7,11 +7,122 @@ import os
 import shutil
 import logging
 import threading
+import json
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Set, Optional, Tuple
+from typing import List, Set, Optional, Tuple, Dict
 
 # Extension used to mark array files that have been cached
 PLEXCACHED_EXTENSION = ".plexcached"
+
+
+class CacheTimestampTracker:
+    """Thread-safe tracker for when files were cached.
+
+    Maintains a JSON file with timestamps of when each file was copied to cache.
+    Used to implement cache retention periods - files cached less than X hours ago
+    won't be moved back to array even if they're no longer in OnDeck/watchlist.
+    """
+
+    def __init__(self, timestamp_file: str):
+        """Initialize the tracker with the path to the timestamp file.
+
+        Args:
+            timestamp_file: Path to the JSON file storing timestamps.
+        """
+        self.timestamp_file = timestamp_file
+        self._lock = threading.Lock()
+        self._timestamps: Dict[str, str] = {}
+        self._load()
+
+    def _load(self) -> None:
+        """Load timestamps from file."""
+        try:
+            if os.path.exists(self.timestamp_file):
+                with open(self.timestamp_file, 'r', encoding='utf-8') as f:
+                    self._timestamps = json.load(f)
+                logging.debug(f"Loaded {len(self._timestamps)} timestamps from {self.timestamp_file}")
+        except (json.JSONDecodeError, IOError) as e:
+            logging.warning(f"Could not load timestamp file: {type(e).__name__}: {e}")
+            self._timestamps = {}
+
+    def _save(self) -> None:
+        """Save timestamps to file."""
+        try:
+            with open(self.timestamp_file, 'w', encoding='utf-8') as f:
+                json.dump(self._timestamps, f, indent=2)
+        except IOError as e:
+            logging.error(f"Could not save timestamp file: {type(e).__name__}: {e}")
+
+    def record_cache_time(self, cache_file_path: str) -> None:
+        """Record the current time as when a file was cached.
+
+        Args:
+            cache_file_path: The path to the cached file.
+        """
+        with self._lock:
+            self._timestamps[cache_file_path] = datetime.now().isoformat()
+            self._save()
+            logging.debug(f"Recorded cache timestamp for: {cache_file_path}")
+
+    def remove_entry(self, cache_file_path: str) -> None:
+        """Remove a file's timestamp entry (when file is restored to array).
+
+        Args:
+            cache_file_path: The path to the cached file.
+        """
+        with self._lock:
+            if cache_file_path in self._timestamps:
+                del self._timestamps[cache_file_path]
+                self._save()
+                logging.debug(f"Removed cache timestamp for: {cache_file_path}")
+
+    def is_within_retention_period(self, cache_file_path: str, retention_hours: int) -> bool:
+        """Check if a file is still within its cache retention period.
+
+        Args:
+            cache_file_path: The path to the cached file.
+            retention_hours: How many hours files should stay on cache.
+
+        Returns:
+            True if the file was cached less than retention_hours ago, False otherwise.
+            Returns False if no timestamp exists (file should be allowed to move).
+        """
+        with self._lock:
+            if cache_file_path not in self._timestamps:
+                # No timestamp means we don't know when it was cached
+                # Default to allowing the move
+                return False
+
+            try:
+                cached_time = datetime.fromisoformat(self._timestamps[cache_file_path])
+                age_hours = (datetime.now() - cached_time).total_seconds() / 3600
+
+                if age_hours < retention_hours:
+                    logging.debug(
+                        f"File still within retention period ({age_hours:.1f}h < {retention_hours}h): "
+                        f"{cache_file_path}"
+                    )
+                    return True
+                return False
+            except (ValueError, TypeError) as e:
+                logging.warning(f"Invalid timestamp for {cache_file_path}: {e}")
+                return False
+
+    def cleanup_missing_files(self) -> int:
+        """Remove entries for files that no longer exist on cache.
+
+        Returns:
+            Number of entries removed.
+        """
+        with self._lock:
+            missing = [path for path in self._timestamps if not os.path.exists(path)]
+            for path in missing:
+                del self._timestamps[path]
+            if missing:
+                self._save()
+                logging.info(f"Cleaned up {len(missing)} stale timestamp entries")
+            return len(missing)
 
 
 class FilePathModifier:
@@ -110,13 +221,17 @@ class SubtitleFinder:
 
 class FileFilter:
     """Handles file filtering based on destination and conditions."""
-    
-    def __init__(self, real_source: str, cache_dir: str, is_unraid: bool, 
-                 mover_cache_exclude_file: str):
+
+    def __init__(self, real_source: str, cache_dir: str, is_unraid: bool,
+                 mover_cache_exclude_file: str,
+                 timestamp_tracker: Optional['CacheTimestampTracker'] = None,
+                 cache_retention_hours: int = 12):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
         self.mover_cache_exclude_file = mover_cache_exclude_file or ""
+        self.timestamp_tracker = timestamp_tracker
+        self.cache_retention_hours = cache_retention_hours
     
     def filter_files(self, files: List[str], destination: str, 
                     media_to_cache: Optional[List[str]] = None, 
@@ -198,23 +313,27 @@ class FileFilter:
         
         return cache_path, cache_file_name
 
-    def get_files_to_move_back_to_array(self, current_ondeck_items: Set[str], 
+    def get_files_to_move_back_to_array(self, current_ondeck_items: Set[str],
                                        current_watchlist_items: Set[str]) -> Tuple[List[str], List[str]]:
-        """Get files in cache that should be moved back to array because they're no longer needed."""
+        """Get files in cache that should be moved back to array because they're no longer needed.
+
+        Files within the cache retention period will be kept even if not in OnDeck/watchlist.
+        """
         files_to_move_back = []
         cache_paths_to_remove = []
-        
+        retained_count = 0
+
         try:
             # Read the exclude file to get all files currently in cache
             if not os.path.exists(self.mover_cache_exclude_file):
                 logging.info("No exclude file found, nothing to move back")
                 return files_to_move_back, cache_paths_to_remove
-            
+
             with open(self.mover_cache_exclude_file, 'r') as f:
                 cache_files = [line.strip() for line in f if line.strip()]
-            
+
             logging.info(f"Found {len(cache_files)} files in exclude list")
-            
+
             # Get shows that are still needed (in OnDeck or watchlist)
             needed_shows = set()
             for item in current_ondeck_items | current_watchlist_items:
@@ -222,31 +341,40 @@ class FileFilter:
                 show_name = self._extract_show_name(item)
                 if show_name is not None:
                     needed_shows.add(show_name)
-            
+
             # Check each file in cache
             for cache_file in cache_files:
                 if not os.path.exists(cache_file):
                     logging.debug(f"Cache file no longer exists: {cache_file}")
                     cache_paths_to_remove.append(cache_file)
                     continue
-                
+
                 # Extract show name from cache file
                 show_name = self._extract_show_name(cache_file)
                 if show_name is None:
                     continue
-                
+
                 # If show is still needed, keep this file in cache
                 if show_name in needed_shows:
                     logging.debug(f"Show still needed, keeping in cache: {show_name}")
                     continue
-                
-                # Show is no longer needed, move this file back to array
+
+                # Check if file is within cache retention period
+                if self.timestamp_tracker and self.cache_retention_hours > 0:
+                    if self.timestamp_tracker.is_within_retention_period(cache_file, self.cache_retention_hours):
+                        logging.info(f"File within retention period, keeping in cache: {cache_file}")
+                        retained_count += 1
+                        continue
+
+                # Show is no longer needed and retention period has passed, move this file back to array
                 array_file = cache_file.replace(self.cache_dir, self.real_source, 1)
-                
+
                 logging.info(f"Show no longer needed, will move back to array: {show_name} - {cache_file}")
                 files_to_move_back.append(array_file)
                 cache_paths_to_remove.append(cache_file)
-            
+
+            if retained_count > 0:
+                logging.info(f"Retained {retained_count} files due to cache retention period ({self.cache_retention_hours}h)")
             logging.info(f"Found {len(files_to_move_back)} files to move back to array")
 
         except Exception as e:
@@ -306,21 +434,25 @@ class FileMover:
     - Copy file from array to cache
     - Rename array file to .plexcached (preserves original on array)
     - Add to exclude file
+    - Record timestamp for cache retention
 
     For moves TO ARRAY:
     - Rename .plexcached file back to original name
     - Delete cache copy
     - Remove from exclude file
+    - Remove timestamp entry
     """
 
     def __init__(self, real_source: str, cache_dir: str, is_unraid: bool,
-                 file_utils, debug: bool = False, mover_cache_exclude_file: Optional[str] = None):
+                 file_utils, debug: bool = False, mover_cache_exclude_file: Optional[str] = None,
+                 timestamp_tracker: Optional['CacheTimestampTracker'] = None):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
         self.file_utils = file_utils
         self.debug = debug
         self.mover_cache_exclude_file = mover_cache_exclude_file
+        self.timestamp_tracker = timestamp_tracker
         self._exclude_file_lock = threading.Lock()
     
     def move_media_files(self, files: List[str], destination: str, 
@@ -490,6 +622,7 @@ class FileMover:
         2. Verify copy succeeded
         3. Rename original to .plexcached (only after verified copy)
         4. Verify rename succeeded
+        5. Record timestamp for cache retention
 
         If interrupted at any point, the original array file remains safe.
         Worst case: an orphaned cache copy exists that can be deleted.
@@ -517,6 +650,10 @@ class FileMover:
 
             # Step 3: Add to exclude file
             self._add_to_exclude_file(cache_file_name)
+
+            # Step 4: Record timestamp for cache retention
+            if self.timestamp_tracker:
+                self.timestamp_tracker.record_cache_time(cache_file_name)
 
             return 0
         except Exception as e:
@@ -553,6 +690,10 @@ class FileMover:
                 logging.info(f"Deleted cache file: {cache_file}")
             else:
                 logging.debug(f"Cache file already removed: {cache_file}")
+
+            # Step 3: Remove timestamp entry
+            if self.timestamp_tracker:
+                self.timestamp_tracker.remove_entry(cache_file)
 
             # Return appropriate status
             if plexcached_missing:

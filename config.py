@@ -80,6 +80,10 @@ class CacheConfig:
     remote_watchlist_toggle: bool = False
     remote_watchlist_rss_url: str = ""
 
+    # Cache retention: how long files stay on cache before being moved back to array
+    # Files cached less than this many hours ago will not be restored to array
+    cache_retention_hours: int = 12
+
 
 
 @dataclass
@@ -181,6 +185,9 @@ class ConfigManager:
         # Load new remote watchlist settings
         self.cache.remote_watchlist_toggle = self.settings_data.get('remote_watchlist_toggle', False)
         self.cache.remote_watchlist_rss_url = self.settings_data.get('remote_watchlist_rss_url', "")
+
+        # Load cache retention setting (default 24 hours)
+        self.cache.cache_retention_hours = self.settings_data.get('cache_retention_hours', 24)
 
     
     def _load_path_config(self) -> None:
@@ -346,4 +353,9 @@ class ConfigManager:
             script_folder / "plexcache_watchlist_cache.json",
             script_folder / "plexcache_watched_cache.json",
             script_folder / "plexcache_mover_files_to_exclude.txt"
-        ) 
+        )
+
+    def get_timestamp_file(self) -> Path:
+        """Get the path for the cache timestamp tracking file."""
+        script_folder = Path(self.paths.script_folder)
+        return script_folder / "plexcache_timestamps.json" 

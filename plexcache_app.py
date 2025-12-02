@@ -16,7 +16,7 @@ from config import ConfigManager
 from logging_config import LoggingManager
 from system_utils import SystemDetector, PathConverter, FileUtils
 from plex_api import PlexManager, CacheManager
-from file_operations import FilePathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer
+from file_operations import FilePathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer, CacheTimestampTracker
 
 
 class PlexCacheApp:
@@ -142,28 +142,36 @@ class PlexCacheApp:
         
         # Get cache files
         watchlist_cache, watched_cache, mover_exclude = self.config_manager.get_cache_files()
+        timestamp_file = self.config_manager.get_timestamp_file()
         logging.debug(f"Cache files: watchlist={watchlist_cache}, watched={watched_cache}, exclude={mover_exclude}")
+        logging.debug(f"Timestamp file: {timestamp_file}")
 
         # Create exclude file on startup if it doesn't exist
         # This allows users to configure Mover settings before any files are moved
         if not mover_exclude.exists():
             mover_exclude.touch()
             logging.info(f"Created mover exclude file: {mover_exclude}")
-        
+
+        # Initialize the cache timestamp tracker for retention period tracking
+        self.timestamp_tracker = CacheTimestampTracker(str(timestamp_file))
+
         self.file_filter = FileFilter(
             real_source=self.config_manager.paths.real_source,
             cache_dir=self.config_manager.paths.cache_dir,
             is_unraid=self.system_detector.is_unraid,
-            mover_cache_exclude_file=str(mover_exclude)
+            mover_cache_exclude_file=str(mover_exclude),
+            timestamp_tracker=self.timestamp_tracker,
+            cache_retention_hours=self.config_manager.cache.cache_retention_hours
         )
-        
+
         self.file_mover = FileMover(
             real_source=self.config_manager.paths.real_source,
             cache_dir=self.config_manager.paths.cache_dir,
             is_unraid=self.system_detector.is_unraid,
             file_utils=self.file_utils,
             debug=self.debug,
-            mover_cache_exclude_file=str(mover_exclude)
+            mover_cache_exclude_file=str(mover_exclude),
+            timestamp_tracker=self.timestamp_tracker
         )
         
         self.cache_cleanup = CacheCleanup(
@@ -583,7 +591,11 @@ class PlexCacheApp:
         
         # Clean up empty folders in cache
         self.cache_cleanup.cleanup_empty_folders()
-        
+
+        # Clean up stale timestamp entries for files that no longer exist
+        if hasattr(self, 'timestamp_tracker') and self.timestamp_tracker:
+            self.timestamp_tracker.cleanup_missing_files()
+
         self.logging_manager.shutdown()
 
     def _convert_time(self, execution_time_seconds: float) -> str:
