@@ -919,6 +919,11 @@ class FileMover:
                 if cache_file_name not in existing:
                     with open(self.mover_cache_exclude_file, "a") as f:
                         f.write(f"{cache_file_name}\n")
+                    logging.debug(f"Added to exclude file: {cache_file_name}")
+                else:
+                    logging.debug(f"Already in exclude file: {cache_file_name}")
+        else:
+            logging.warning(f"No exclude file configured, cannot track: {cache_file_name}")
     
     def _execute_move_commands(self, move_commands: List[Tuple[Tuple[str, str], str, int]],
                              max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
