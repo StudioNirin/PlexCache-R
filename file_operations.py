@@ -680,11 +680,15 @@ class FileFilter:
         return files_to_move_back, cache_paths_to_remove
 
     def _is_tv_show_path(self, file_path: str) -> bool:
-        """Check if the path looks like a TV show (has Season folder) vs a movie."""
+        """Check if the path looks like a TV show (has Season/Series/Specials folder) vs a movie."""
         normalized_path = os.path.normpath(file_path)
         path_parts = normalized_path.split(os.sep)
         for part in path_parts:
-            if part.startswith('Season') or part == 'Specials' or part.isdigit():
+            if (
+                re.match(r'^(Season|Series)\s*\d+$', part, re.IGNORECASE)
+                or re.match(r'^\d+$', part)
+                or re.match(r'^Specials$', part, re.IGNORECASE)
+            ):
                 return True
         return False
 
