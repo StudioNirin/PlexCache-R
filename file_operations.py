@@ -1028,9 +1028,9 @@ class FileMover:
         plexcached_file = array_file + PLEXCACHED_EXTENSION
         try:
             # Step 1: Copy file from array to cache (preserving metadata)
-            logging.info(f"Starting copy: {array_file} -> {cache_file_name}")
+            logging.debug(f"Starting copy: {array_file} -> {cache_file_name}")
             shutil.copy2(array_file, cache_file_name)
-            logging.info(f"Copy complete: {os.path.basename(array_file)}")
+            logging.debug(f"Copy complete: {os.path.basename(array_file)}")
 
             # Validate copy succeeded
             if not os.path.isfile(cache_file_name):
@@ -1038,7 +1038,7 @@ class FileMover:
 
             # Step 2: Rename array file to .plexcached
             os.rename(array_file, plexcached_file)
-            logging.info(f"Renamed array file: {array_file} -> {plexcached_file}")
+            logging.debug(f"Renamed array file: {array_file} -> {plexcached_file}")
 
             # Validate rename succeeded
             if os.path.isfile(array_file):
@@ -1079,19 +1079,19 @@ class FileMover:
             # Scenario 1: .plexcached exists - just rename it back (fast)
             if os.path.isfile(plexcached_file):
                 os.rename(plexcached_file, array_file)
-                logging.info(f"Restored array file: {plexcached_file} -> {array_file}")
+                logging.debug(f"Restored array file: {plexcached_file} -> {array_file}")
 
             # Scenario 2: No .plexcached but file exists on cache - copy to array
             elif os.path.isfile(cache_file) and not os.path.isfile(array_file):
-                logging.info(f"No .plexcached found, copying from cache to array: {cache_file}")
+                logging.debug(f"No .plexcached found, copying from cache to array: {cache_file}")
                 shutil.copy2(cache_file, array_file)
-                logging.info(f"Copied to array: {array_file}")
+                logging.debug(f"Copied to array: {array_file}")
 
             # Delete cache copy only if array file now exists
             if os.path.isfile(array_file):
                 if os.path.isfile(cache_file):
                     os.remove(cache_file)
-                    logging.info(f"Deleted cache file: {cache_file}")
+                    logging.debug(f"Deleted cache file: {cache_file}")
                 else:
                     logging.debug(f"Cache file already removed: {cache_file}")
 
