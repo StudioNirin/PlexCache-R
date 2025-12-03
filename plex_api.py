@@ -604,8 +604,13 @@ class PlexManager:
                 watchlist = account.watchlist(filter='released', sort='watchlistedAt:desc')
                 logging.info(f"{current_username}: Found {len(watchlist)} watchlist items from Plex")
                 for item in watchlist:
-                    # Get watchlistedAt timestamp from the item
-                    watchlisted_at = getattr(item, 'addedAt', None)  # plexapi uses addedAt for watchlistedAt
+                    # Get watchlistedAt timestamp from userState (addedAt is the media release date, not when added to watchlist)
+                    watchlisted_at = None
+                    try:
+                        user_state = account.userState(item)
+                        watchlisted_at = getattr(user_state, 'watchlistedAt', None)
+                    except Exception as e:
+                        logging.debug(f"Could not get userState for {item.title}: {e}")
                     file = self.search_plex(item.title)
                     if file and (not filtered_sections or file.librarySectionID in filtered_sections):
                         try:
