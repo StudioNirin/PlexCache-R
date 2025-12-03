@@ -363,7 +363,7 @@ class PlexManager:
                         self.title = title
                 users_to_fetch.append(UserProxy(username))
 
-        logging.info(f"Fetching OnDeck media for {len(users_to_fetch)} users (using cached tokens)")
+        logging.debug(f"Fetching OnDeck media for {len(users_to_fetch)} users (using cached tokens)")
 
         # Fetch concurrently
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -395,7 +395,7 @@ class PlexManager:
                 logging.info(f"Skipping OnDeck fetch for {username} — no Plex instance available")
                 return []
 
-            logging.info(f"Fetching {username}'s onDeck media...")
+            logging.debug(f"Fetching {username}'s onDeck media...")
 
             on_deck_files = []
             # Get all sections available for the user
