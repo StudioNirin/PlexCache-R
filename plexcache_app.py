@@ -750,21 +750,25 @@ class PlexCacheApp:
                 watchlist_cache, _, _ = self.config_manager.get_cache_files()
                 if watchlist_cache.exists():
                     watchlist_media_set, _ = CacheManager.load_media_from_cache(watchlist_cache)
-                    all_watchlist_items = set(self.file_path_modifier.modify_file_paths(list(watchlist_media_set)))
 
                     # Filter out expired watchlist items - they should be moved back to array
+                    # Check expiry using original paths (as stored in tracker), then convert to modified paths
                     retention_days = self.config_manager.cache.watchlist_retention_days
                     if retention_days > 0 and self.watchlist_tracker:
-                        for item in all_watchlist_items:
-                            if not self.watchlist_tracker.is_expired(item, retention_days):
-                                current_watchlist_items.add(item)
+                        non_expired_original = set()
+                        expired_count = 0
+                        for original_path in watchlist_media_set:
+                            if not self.watchlist_tracker.is_expired(original_path, retention_days):
+                                non_expired_original.add(original_path)
                             else:
-                                logging.debug(f"Watchlist item expired, eligible for move back: {os.path.basename(item)}")
-                        expired_count = len(all_watchlist_items) - len(current_watchlist_items)
+                                logging.debug(f"Watchlist item expired, eligible for move back: {os.path.basename(original_path)}")
+                                expired_count += 1
                         if expired_count > 0:
                             logging.info(f"Excluding {expired_count} expired watchlist items from 'needed' check")
+                        # Convert non-expired items to modified paths
+                        current_watchlist_items = set(self.file_path_modifier.modify_file_paths(list(non_expired_original)))
                     else:
-                        current_watchlist_items = all_watchlist_items
+                        current_watchlist_items = set(self.file_path_modifier.modify_file_paths(list(watchlist_media_set)))
             
             # Get files that should be moved back to array (tracked by exclude file)
             files_to_move_back, cache_paths_to_remove = self.file_filter.get_files_to_move_back_to_array(
