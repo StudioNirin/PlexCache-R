@@ -507,12 +507,24 @@ class PlexCacheApp:
                                 )
                             )
                             logging.info(f"Found {len(remote_items)} remote watchlist items from RSS")
+                            rss_expired_count = 0
                             for item in remote_items:
                                 file_path, username, watchlisted_at = item
-                                # Update tracker (RSS items have no timestamp, will use current time)
+                                # Update tracker (RSS items use pubDate from feed)
                                 self.watchlist_tracker.update_entry(file_path, username, watchlisted_at)
+
+                                # Check watchlist retention (skip expired items)
+                                if retention_days > 0:
+                                    if self.watchlist_tracker.is_expired(file_path, retention_days):
+                                        rss_expired_count += 1
+                                        continue
+
                                 current_watchlist_set.add(file_path)
                                 result_set.add(file_path)
+
+                            if rss_expired_count > 0:
+                                expired_count += rss_expired_count
+                                logging.info(f"Skipped {rss_expired_count} RSS watchlist items due to retention expiry")
                         except Exception as e:
                             logging.error(f"Failed to fetch remote watchlist via RSS: {str(e)}")
 
