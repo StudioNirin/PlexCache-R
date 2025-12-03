@@ -744,13 +744,27 @@ class PlexCacheApp:
             # Get current OnDeck and watchlist items (already processed and path-modified)
             current_ondeck_items = self.ondeck_items
             current_watchlist_items = set()
-            
+
             # Get watchlist items from the processed media
             if self.config_manager.cache.watchlist_toggle:
                 watchlist_cache, _, _ = self.config_manager.get_cache_files()
                 if watchlist_cache.exists():
                     watchlist_media_set, _ = CacheManager.load_media_from_cache(watchlist_cache)
-                    current_watchlist_items = set(self.file_path_modifier.modify_file_paths(list(watchlist_media_set)))
+                    all_watchlist_items = set(self.file_path_modifier.modify_file_paths(list(watchlist_media_set)))
+
+                    # Filter out expired watchlist items - they should be moved back to array
+                    retention_days = self.config_manager.cache.watchlist_retention_days
+                    if retention_days > 0 and self.watchlist_tracker:
+                        for item in all_watchlist_items:
+                            if not self.watchlist_tracker.is_expired(item, retention_days):
+                                current_watchlist_items.add(item)
+                            else:
+                                logging.debug(f"Watchlist item expired, eligible for move back: {os.path.basename(item)}")
+                        expired_count = len(all_watchlist_items) - len(current_watchlist_items)
+                        if expired_count > 0:
+                            logging.info(f"Excluding {expired_count} expired watchlist items from 'needed' check")
+                    else:
+                        current_watchlist_items = all_watchlist_items
             
             # Get files that should be moved back to array (tracked by exclude file)
             files_to_move_back, cache_paths_to_remove = self.file_filter.get_files_to_move_back_to_array(
