@@ -88,6 +88,11 @@ class CacheConfig:
     # Note: This only applies to OnDeck items, not watchlist items
     cache_retention_hours: int = 12
 
+    # Watchlist retention: auto-expire watchlist items after X days
+    # Files are removed from cache X days after being added to watchlist, even if still on watchlist
+    # 0 = disabled (files stay as long as they're on any user's watchlist)
+    watchlist_retention_days: int = 0
+
     # Cache size limit: maximum space PlexCache can use on the cache drive
     # Supports formats: "250GB", "500MB", "50%", or just "250" (defaults to GB)
     # Empty string or "0" means no limit
@@ -202,6 +207,9 @@ class ConfigManager:
 
         # Load cache retention setting (default 12 hours)
         self.cache.cache_retention_hours = self.settings_data.get('cache_retention_hours', 12)
+
+        # Load watchlist retention setting (default 0 = disabled)
+        self.cache.watchlist_retention_days = self.settings_data.get('watchlist_retention_days', 0)
 
         # Load and parse cache limit setting
         self.cache.cache_limit = self.settings_data.get('cache_limit', "")
@@ -431,4 +439,9 @@ class ConfigManager:
     def get_timestamp_file(self) -> Path:
         """Get the path for the cache timestamp tracking file."""
         script_folder = Path(self.paths.script_folder)
-        return script_folder / "plexcache_timestamps.json" 
+        return script_folder / "plexcache_timestamps.json"
+
+    def get_watchlist_tracker_file(self) -> Path:
+        """Get the path for the watchlist retention tracker file."""
+        script_folder = Path(self.paths.script_folder)
+        return script_folder / "plexcache_watchlist_tracker.json" 

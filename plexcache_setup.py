@@ -53,6 +53,39 @@ def prompt_user_for_number(prompt_message, default_value, data_key, data_type=in
         except ValueError:
             print("User input is not a valid number")
 
+def prompt_user_for_duration(prompt_message, default_value, data_key):
+    """Prompt for a duration value that accepts hours (default) or days.
+
+    Accepts formats: 12, 12h, 12d (defaults to hours if no suffix)
+    Stores the value in hours.
+    """
+    while True:
+        user_input = (input(prompt_message) or default_value).strip().lower()
+        try:
+            # Check for day suffix
+            if user_input.endswith('d'):
+                days = float(user_input[:-1])
+                if days < 0:
+                    print("Please enter a non-negative number")
+                    continue
+                hours = int(days * 24)
+                settings_data[data_key] = hours
+                print(f"  Set to {hours} hours ({days} days)")
+                break
+            # Check for hour suffix (or no suffix - default to hours)
+            elif user_input.endswith('h'):
+                hours = int(user_input[:-1])
+            else:
+                hours = int(user_input)
+
+            if hours < 0:
+                print("Please enter a non-negative number")
+                continue
+            settings_data[data_key] = hours
+            break
+        except ValueError:
+            print("Invalid input. Enter a number, optionally with 'h' for hours or 'd' for days (e.g., 12, 12h, 2d)")
+
 def is_valid_plex_url(url):
     try:
         result = urlparse(url)
@@ -450,7 +483,17 @@ def setup():
         print('\nCache retention prevents files from being moved back to array immediately after caching.')
         print('This protects against accidental unwatching or Plex glitches.')
         print('Note: This only applies to OnDeck items. Watchlist items are moved back immediately when removed.')
-        prompt_user_for_number('How many hours should files stay on cache before they can be moved back? (default: 12) ', '12', 'cache_retention_hours')
+        print('Enter a number in hours (default) or use "d" suffix for days (e.g., 12, 12h, 2d)')
+        prompt_user_for_duration('Cache retention period (default: 12h): ', '12', 'cache_retention_hours')
+
+    # ---------------- Watchlist Retention Period ----------------
+    if 'watchlist_retention_days' not in settings_data:
+        print('\nWatchlist retention automatically expires cached files after a set number of days.')
+        print('Files are removed from cache X days after being added to watchlist, even if still on watchlist.')
+        print('This prevents watchlist items from sitting on cache indefinitely.')
+        print('Multi-user: If another user adds the same item, the retention timer resets.')
+        print('Enter 0 to disable (files stay cached as long as they are on any watchlist).')
+        prompt_user_for_number('Watchlist retention in days (0 to disable, default: 0): ', '0', 'watchlist_retention_days')
 
     # ---------------- Cache Size Limit ----------------
     if 'cache_limit' not in settings_data:

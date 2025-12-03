@@ -476,9 +476,14 @@ class PlexManager:
         return re.sub(r"\s\(\d{4}\)$", "", title)
 
 
-    def get_watchlist_media(self, valid_sections: List[int], watchlist_episodes: int, 
-                            users_toggle: bool, skip_watchlist: List[str], rss_url: Optional[str] = None) -> Generator[str, None, None]:
-        """Get watchlist media files, optionally via RSS, with proper user filtering."""
+    def get_watchlist_media(self, valid_sections: List[int], watchlist_episodes: int,
+                            users_toggle: bool, skip_watchlist: List[str], rss_url: Optional[str] = None) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+        """Get watchlist media files, optionally via RSS, with proper user filtering.
+
+        Yields:
+            Tuples of (file_path, username, watchlisted_at) where watchlisted_at is the
+            datetime when the item was added to the user's watchlist (None for RSS items).
+        """
 
         def fetch_rss_titles(url: str) -> List[Tuple[str, str]]:
             """Fetch titles and categories from a Plex RSS feed."""
@@ -497,21 +502,23 @@ class PlexManager:
                 logging.error(f"Failed to fetch or parse RSS feed {url}: {e}")
                 return []
 
-        def process_show(file, watchlist_episodes: int) -> Generator[str, None, None]:
+        def process_show(file, watchlist_episodes: int, username: str, watchlisted_at: Optional[datetime]) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+            """Process a show and yield episode file paths with metadata."""
             episodes = file.episodes()
             logging.debug(f"Processing show {file.title} with {len(episodes)} episodes")
             for episode in episodes[:watchlist_episodes]:
                 if len(episode.media) > 0 and len(episode.media[0].parts) > 0:
                     if not episode.isPlayed:
-                        yield episode.media[0].parts[0].file
+                        yield (episode.media[0].parts[0].file, username, watchlisted_at)
 
-        def process_movie(file) -> Generator[str, None, None]:
+        def process_movie(file, username: str, watchlisted_at: Optional[datetime]) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+            """Process a movie and yield file path with metadata."""
             if len(file.media) > 0 and len(file.media[0].parts) > 0:
-                yield file.media[0].parts[0].file
+                yield (file.media[0].parts[0].file, username, watchlisted_at)
 
 
-        def fetch_user_watchlist(user) -> Generator[str, None, None]:
-            """Fetch watchlist media for a user, optionally via RSS, yielding file paths."""
+        def fetch_user_watchlist(user) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+            """Fetch watchlist media for a user, optionally via RSS, yielding file paths with metadata."""
             current_username = user.title if user else "main"
 
             # Use rate limiting
@@ -559,7 +566,7 @@ class PlexManager:
                 _log_api_error(f"get Plex account for {current_username}", e)
                 return
 
-            # --- RSS feed processing ---
+            # --- RSS feed processing (no watchlistedAt available) ---
             if rss_url:
                 rss_items = fetch_rss_titles(rss_url)
                 logging.info(f"RSS feed contains {len(rss_items)} items")
@@ -571,9 +578,9 @@ class PlexManager:
                         if not filtered_sections or file.librarySectionID in filtered_sections:
                             try:
                                 if category == 'show' or file.TYPE == 'show':
-                                    yield from process_show(file, watchlist_episodes)
+                                    yield from process_show(file, watchlist_episodes, current_username, None)
                                 elif file.TYPE == 'movie':
-                                    yield from process_movie(file)
+                                    yield from process_movie(file, current_username, None)
                                 else:
                                     logging.debug(f"Ignoring item '{file.title}' of type '{file.TYPE}'")
                             except Exception as e:
@@ -586,16 +593,19 @@ class PlexManager:
 
             # --- Local Plex watchlist processing ---
             try:
-                watchlist = account.watchlist(filter='released')
+                # Sort by watchlistedAt descending to get most recent add date first
+                watchlist = account.watchlist(filter='released', sort='watchlistedAt:desc')
                 logging.info(f"{current_username}: Found {len(watchlist)} watchlist items from Plex")
                 for item in watchlist:
+                    # Get watchlistedAt timestamp from the item
+                    watchlisted_at = getattr(item, 'addedAt', None)  # plexapi uses addedAt for watchlistedAt
                     file = self.search_plex(item.title)
                     if file and (not filtered_sections or file.librarySectionID in filtered_sections):
                         try:
                             if file.TYPE == 'show':
-                                yield from process_show(file, watchlist_episodes)
+                                yield from process_show(file, watchlist_episodes, current_username, watchlisted_at)
                             elif file.TYPE == 'movie':
-                                yield from process_movie(file)
+                                yield from process_movie(file, current_username, watchlisted_at)
                             else:
                                 logging.debug(f"Ignoring item '{file.title}' of type '{file.TYPE}'")
                         except Exception as e:

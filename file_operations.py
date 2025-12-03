@@ -188,6 +188,218 @@ class CacheTimestampTracker:
             return len(missing)
 
 
+class WatchlistTracker:
+    """Thread-safe tracker for watchlist retention.
+
+    Tracks when files were added to watchlists and by which users.
+    Used to implement watchlist retention - files auto-expire X days after
+    being added to a watchlist, even if still on the watchlist.
+
+    Storage format:
+    {
+        "/path/to/file.mkv": {
+            "watchlisted_at": "2025-12-02T14:26:27.156439",
+            "users": ["Brandon", "Home"],
+            "last_seen": "2025-12-03T10:00:00.000000"
+        }
+    }
+    """
+
+    def __init__(self, tracker_file: str):
+        """Initialize the tracker with the path to the tracker file.
+
+        Args:
+            tracker_file: Path to the JSON file storing watchlist data.
+        """
+        self.tracker_file = tracker_file
+        self._lock = threading.Lock()
+        self._data: Dict[str, dict] = {}
+        self._load()
+
+    def _load(self) -> None:
+        """Load tracker data from file."""
+        try:
+            if os.path.exists(self.tracker_file):
+                with open(self.tracker_file, 'r', encoding='utf-8') as f:
+                    self._data = json.load(f)
+                logging.debug(f"Loaded {len(self._data)} watchlist entries from {self.tracker_file}")
+        except (json.JSONDecodeError, IOError) as e:
+            logging.warning(f"Could not load watchlist tracker file: {type(e).__name__}: {e}")
+            self._data = {}
+
+    def _save(self) -> None:
+        """Save tracker data to file."""
+        try:
+            with open(self.tracker_file, 'w', encoding='utf-8') as f:
+                json.dump(self._data, f, indent=2)
+        except IOError as e:
+            logging.error(f"Could not save watchlist tracker file: {type(e).__name__}: {e}")
+
+    def update_entry(self, file_path: str, username: str, watchlisted_at: Optional[datetime]) -> None:
+        """Update or create an entry for a watchlist item.
+
+        If the item already exists and the new watchlisted_at is more recent,
+        update the timestamp (this extends retention when another user adds it).
+
+        Args:
+            file_path: The path to the media file.
+            username: The user who has this on their watchlist.
+            watchlisted_at: When the user added it to their watchlist (from Plex API).
+        """
+        with self._lock:
+            now_iso = datetime.now().isoformat()
+
+            if file_path in self._data:
+                entry = self._data[file_path]
+                # Add user if not already in list
+                if username not in entry.get('users', []):
+                    entry.setdefault('users', []).append(username)
+
+                # Update watchlisted_at if the new timestamp is more recent
+                if watchlisted_at:
+                    new_ts_iso = watchlisted_at.isoformat()
+                    existing_ts = entry.get('watchlisted_at')
+                    if existing_ts:
+                        try:
+                            existing_dt = datetime.fromisoformat(existing_ts)
+                            if watchlisted_at > existing_dt:
+                                entry['watchlisted_at'] = new_ts_iso
+                                logging.debug(f"Updated watchlist timestamp for {file_path} (user {username} added later)")
+                        except ValueError:
+                            entry['watchlisted_at'] = new_ts_iso
+                    else:
+                        entry['watchlisted_at'] = new_ts_iso
+
+                # Always update last_seen
+                entry['last_seen'] = now_iso
+            else:
+                # New entry
+                self._data[file_path] = {
+                    'watchlisted_at': watchlisted_at.isoformat() if watchlisted_at else now_iso,
+                    'users': [username],
+                    'last_seen': now_iso
+                }
+                logging.debug(f"Added new watchlist entry: {file_path} (user: {username})")
+
+            self._save()
+
+    def is_expired(self, file_path: str, retention_days: int) -> bool:
+        """Check if a watchlist item has expired based on retention period.
+
+        Args:
+            file_path: The path to the media file.
+            retention_days: Number of days before expiry.
+
+        Returns:
+            True if the item was added more than retention_days ago, False otherwise.
+            Returns False if no entry exists (conservative - don't expire unknown items).
+        """
+        if retention_days <= 0:
+            # Retention disabled
+            return False
+
+        with self._lock:
+            if file_path not in self._data:
+                # No entry - conservative, don't expire
+                return False
+
+            entry = self._data[file_path]
+            watchlisted_at_str = entry.get('watchlisted_at')
+            if not watchlisted_at_str:
+                return False
+
+            try:
+                watchlisted_at = datetime.fromisoformat(watchlisted_at_str)
+                age_days = (datetime.now() - watchlisted_at).total_seconds() / 86400
+
+                if age_days > retention_days:
+                    users = entry.get('users', ['unknown'])
+                    logging.info(
+                        f"Watchlist retention expired ({age_days:.1f} days > {retention_days} days): "
+                        f"{os.path.basename(file_path)} (users: {', '.join(users)})"
+                    )
+                    return True
+                return False
+            except (ValueError, TypeError) as e:
+                logging.warning(f"Invalid watchlisted_at timestamp for {file_path}: {e}")
+                return False
+
+    def get_entry(self, file_path: str) -> Optional[dict]:
+        """Get the tracker entry for a file.
+
+        Args:
+            file_path: The path to the media file.
+
+        Returns:
+            The entry dict or None if not found.
+        """
+        with self._lock:
+            return self._data.get(file_path)
+
+    def remove_entry(self, file_path: str) -> None:
+        """Remove a file's entry (when file is no longer on any watchlist).
+
+        Args:
+            file_path: The path to the media file.
+        """
+        with self._lock:
+            if file_path in self._data:
+                del self._data[file_path]
+                self._save()
+                logging.debug(f"Removed watchlist entry: {file_path}")
+
+    def cleanup_stale_entries(self, max_days_since_seen: int = 7) -> int:
+        """Remove entries that haven't been seen on any watchlist recently.
+
+        This cleans up entries for files that were removed from all watchlists.
+
+        Args:
+            max_days_since_seen: Remove entries not seen in this many days.
+
+        Returns:
+            Number of entries removed.
+        """
+        with self._lock:
+            stale = []
+            now = datetime.now()
+            for path, entry in self._data.items():
+                last_seen_str = entry.get('last_seen')
+                if last_seen_str:
+                    try:
+                        last_seen = datetime.fromisoformat(last_seen_str)
+                        days_since = (now - last_seen).total_seconds() / 86400
+                        if days_since > max_days_since_seen:
+                            stale.append(path)
+                    except ValueError:
+                        stale.append(path)
+                else:
+                    stale.append(path)
+
+            for path in stale:
+                del self._data[path]
+
+            if stale:
+                self._save()
+                logging.info(f"Cleaned up {len(stale)} stale watchlist tracker entries")
+
+            return len(stale)
+
+    def cleanup_missing_files(self) -> int:
+        """Remove entries for files that no longer exist on cache.
+
+        Returns:
+            Number of entries removed.
+        """
+        with self._lock:
+            missing = [path for path in self._data if not os.path.exists(path)]
+            for path in missing:
+                del self._data[path]
+            if missing:
+                self._save()
+                logging.info(f"Cleaned up {len(missing)} watchlist entries for missing files")
+            return len(missing)
+
+
 class PlexcachedMigration:
     """One-time migration to create .plexcached backups for existing cached files.
 
