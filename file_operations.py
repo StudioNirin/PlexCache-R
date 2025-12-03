@@ -657,8 +657,12 @@ class FileFilter:
                                        current_watchlist_items: Set[str]) -> Tuple[List[str], List[str]]:
         """Get files in cache that should be moved back to array because they're no longer needed.
 
-        Retention period applies uniformly to all cached files (both OnDeck and watchlist).
-        This protects against accidental unwatching or watchlist removal.
+        For TV shows: Episodes before the OnDeck episode are considered watched and will be moved back.
+                      Episodes >= OnDeck episode are kept (they're upcoming/current).
+        For movies: Moved back when no longer on OnDeck or watchlist.
+
+        Retention period applies uniformly to all cached files to protect against
+        accidental unwatching or watchlist removal.
         """
         files_to_move_back = []
         cache_paths_to_remove = []
@@ -675,21 +679,35 @@ class FileFilter:
 
             logging.info(f"Found {len(cache_files)} files in exclude list")
 
-            # Build separate sets for OnDeck and watchlist media names
-            ondeck_media = set()
-            for item in current_ondeck_items:
-                media_name = self._extract_media_name(item)
-                if media_name is not None:
-                    ondeck_media.add(media_name)
+            # Build TV show tracking: {show_name: {season: min_episode}}
+            # This tracks the minimum episode number that should be kept for each show/season
+            tv_show_min_episodes: Dict[str, Dict[int, int]] = {}
 
-            watchlist_media = set()
-            for item in current_watchlist_items:
-                media_name = self._extract_media_name(item)
-                if media_name is not None:
-                    watchlist_media.add(media_name)
+            # Build movie set for simple name matching
+            needed_movies = set()
 
-            needed_media = ondeck_media | watchlist_media
-            logging.debug(f"Needed media count: {len(needed_media)} (OnDeck: {len(ondeck_media)}, Watchlist: {len(watchlist_media)})")
+            # Process OnDeck and watchlist items
+            for item in current_ondeck_items | current_watchlist_items:
+                tv_info = self._extract_tv_info(item)
+                if tv_info:
+                    show_name, season_num, episode_num = tv_info
+                    if show_name not in tv_show_min_episodes:
+                        tv_show_min_episodes[show_name] = {}
+                    # Keep the minimum episode number for each season (the "current" episode)
+                    if season_num not in tv_show_min_episodes[show_name]:
+                        tv_show_min_episodes[show_name][season_num] = episode_num
+                    else:
+                        tv_show_min_episodes[show_name][season_num] = min(
+                            tv_show_min_episodes[show_name][season_num], episode_num
+                        )
+                else:
+                    # It's a movie - use filename matching
+                    media_name = self._extract_media_name(item)
+                    if media_name:
+                        needed_movies.add(media_name)
+
+            logging.debug(f"TV shows on deck/watchlist: {list(tv_show_min_episodes.keys())}")
+            logging.debug(f"Movies on deck/watchlist: {len(needed_movies)}")
 
             # Check each file in cache
             for cache_file in cache_files:
@@ -698,20 +716,43 @@ class FileFilter:
                     cache_paths_to_remove.append(cache_file)
                     continue
 
-                # Extract show/movie name from cache file
-                media_name = self._extract_media_name(cache_file)
-                if media_name is None:
-                    logging.warning(f"Could not extract media name from path: {cache_file}")
-                    continue
+                # Check if this is a TV show
+                tv_info = self._extract_tv_info(cache_file)
 
-                # If media is still needed (in OnDeck or watchlist), keep this file in cache
-                if media_name in needed_media:
-                    logging.debug(f"Media still needed, keeping in cache: {media_name}")
-                    continue
+                if tv_info:
+                    # TV show episode logic
+                    show_name, season_num, episode_num = tv_info
+
+                    # Check if this show is still being watched
+                    if show_name in tv_show_min_episodes:
+                        # Check if this season has an active episode
+                        if season_num in tv_show_min_episodes[show_name]:
+                            min_episode = tv_show_min_episodes[show_name][season_num]
+                            # Keep episodes >= the OnDeck episode (current + upcoming)
+                            if episode_num >= min_episode:
+                                logging.debug(f"TV episode still needed (E{episode_num:02d} >= E{min_episode:02d}), keeping: {show_name} S{season_num:02d}E{episode_num:02d}")
+                                continue
+                            else:
+                                logging.debug(f"TV episode watched (E{episode_num:02d} < E{min_episode:02d}), will check retention: {show_name} S{season_num:02d}E{episode_num:02d}")
+                        else:
+                            # Different season - keep all episodes of seasons with no OnDeck
+                            # (they might be future seasons user hasn't started)
+                            logging.debug(f"TV episode in different season, keeping: {show_name} S{season_num:02d}E{episode_num:02d}")
+                            continue
+                    # Show not on deck/watchlist - will be moved back
+                    media_name = show_name
+                else:
+                    # Movie logic - use filename matching
+                    media_name = self._extract_media_name(cache_file)
+                    if media_name is None:
+                        logging.warning(f"Could not extract media name from path: {cache_file}")
+                        continue
+
+                    if media_name in needed_movies:
+                        logging.debug(f"Movie still needed, keeping in cache: {media_name}")
+                        continue
 
                 # Media is no longer needed - check if retention period applies
-                # Retention applies uniformly to all cached files to protect against
-                # accidental unwatching or watchlist removal
                 if self.timestamp_tracker and self.cache_retention_hours > 0:
                     if self.timestamp_tracker.is_within_retention_period(cache_file, self.cache_retention_hours):
                         source = self.timestamp_tracker.get_source(cache_file)
@@ -735,23 +776,102 @@ class FileFilter:
 
         return files_to_move_back, cache_paths_to_remove
 
+    def _extract_tv_info(self, file_path: str) -> Optional[Tuple[str, int, int]]:
+        """
+        Extract TV show information from a file path.
+        Returns (show_name, season_number, episode_number) or None if not a TV show.
+        """
+        try:
+            normalized_path = os.path.normpath(file_path)
+            path_parts = normalized_path.split(os.sep)
+
+            # Find show name from folder structure
+            show_name = None
+            season_num = None
+
+            for i, part in enumerate(path_parts):
+                # Match Season folders
+                season_match = re.match(r'^(Season|Series)\s*(\d+)$', part, re.IGNORECASE)
+                if season_match:
+                    season_num = int(season_match.group(2))
+                    if i > 0:
+                        show_name = path_parts[i - 1]
+                    break
+                # Match numeric-only season folders
+                if re.match(r'^\d+$', part):
+                    season_num = int(part)
+                    if i > 0:
+                        show_name = path_parts[i - 1]
+                    break
+                # Match Specials folder (treat as season 0)
+                if re.match(r'^Specials$', part, re.IGNORECASE):
+                    season_num = 0
+                    if i > 0:
+                        show_name = path_parts[i - 1]
+                    break
+
+            if show_name is None or season_num is None:
+                return None
+
+            # Extract episode number from filename (e.g., "Show - S01E03 - Title.mkv")
+            filename = os.path.basename(file_path)
+
+            # Pattern 1: S01E02, S1E2, s01e02 (most common)
+            ep_match = re.search(r'[Ss](\d+)\s*[Ee](\d+)', filename)
+            if ep_match:
+                episode_num = int(ep_match.group(2))
+                return (show_name, season_num, episode_num)
+
+            # Pattern 2: 1x02, 1 x 02, 01x02 (alternate format)
+            ep_match = re.search(r'(\d+)\s*x\s*(\d+)', filename, re.IGNORECASE)
+            if ep_match:
+                episode_num = int(ep_match.group(2))
+                return (show_name, season_num, episode_num)
+
+            # Pattern 3: Episode 02, Ep 02, E02 (standalone episode)
+            ep_match = re.search(r'(?:Episode|Ep\.?|E)\s*(\d+)', filename, re.IGNORECASE)
+            if ep_match:
+                episode_num = int(ep_match.group(1))
+                return (show_name, season_num, episode_num)
+
+            return None
+
+        except Exception:
+            return None
+
     def _extract_media_name(self, file_path: str) -> Optional[str]:
         """
         Extract a comparable media identifier from a file path.
-        - For movies: returns cleaned file title.
-        - For TV episodes: returns cleaned episode name.
+        - For movies: returns cleaned file title
+        - For TV shows: returns show name (but episode comparison is handled separately)
         """
         try:
+            normalized_path = os.path.normpath(file_path)
+            path_parts = normalized_path.split(os.sep)
+
+            # Check if this is a TV show
+            for i, part in enumerate(path_parts):
+                if (
+                    re.match(r'^(Season|Series)\s*\d+$', part, re.IGNORECASE)
+                    or re.match(r'^\d+$', part)
+                    or re.match(r'^Specials$', part, re.IGNORECASE)
+                ):
+                    if i > 0:
+                        return path_parts[i - 1]
+                    break
+
+            # For movies: return cleaned filename
             filename = os.path.basename(file_path)
             name, _ext = os.path.splitext(filename)
-
-            # Remove trailing parentheses blocks
             cleaned = re.sub(r'\s*\([^)]*\)$', '', name).strip()
-
             return cleaned
 
         except Exception:
             return None
+
+    def _is_tv_show(self, file_path: str) -> bool:
+        """Check if the file path is a TV show (has Season/Series/Specials folder)."""
+        return self._extract_tv_info(file_path) is not None
 
     def remove_files_from_exclude_list(self, cache_paths_to_remove: List[str]) -> bool:
         """Remove specified files from the exclude list. Returns True on success."""
