@@ -1515,8 +1515,17 @@ class FileMover:
             # Scenario 2: No .plexcached but file exists on cache - copy to array
             elif os.path.isfile(cache_file) and not os.path.isfile(array_file):
                 logging.debug(f"No .plexcached found, copying from cache to array: {cache_file}")
+                cache_size = os.path.getsize(cache_file)
                 shutil.copy2(cache_file, array_file)
                 logging.debug(f"Copied to array: {array_file}")
+
+                # Verify copy succeeded by comparing file sizes
+                if os.path.isfile(array_file):
+                    array_size = os.path.getsize(array_file)
+                    if cache_size != array_size:
+                        logging.error(f"Size mismatch after copy! Cache: {cache_size}, Array: {array_size}. Keeping cache file.")
+                        os.remove(array_file)  # Remove incomplete copy
+                        return 1
 
             # Delete cache copy only if array file now exists
             if os.path.isfile(array_file):
