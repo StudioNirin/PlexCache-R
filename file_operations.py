@@ -292,6 +292,21 @@ class WatchlistTracker:
 
             self._save()
 
+    def _find_entry_by_filename(self, file_path: str) -> Optional[Tuple[str, dict]]:
+        """Find a tracker entry by matching filename when full path doesn't match.
+
+        This handles cases where the cache file has modified paths (/mnt/user/...)
+        but the tracker stores original paths (/data/...).
+
+        Returns:
+            Tuple of (matched_path, entry) if found, None otherwise.
+        """
+        target_filename = os.path.basename(file_path)
+        for stored_path, entry in self._data.items():
+            if os.path.basename(stored_path) == target_filename:
+                return (stored_path, entry)
+        return None
+
     def is_expired(self, file_path: str, retention_days: int) -> bool:
         """Check if a watchlist item has expired based on retention period.
 
@@ -308,11 +323,20 @@ class WatchlistTracker:
             return False
 
         with self._lock:
-            if file_path not in self._data:
-                # No entry - conservative, don't expire
-                return False
+            entry = None
+            matched_path = file_path
 
-            entry = self._data[file_path]
+            if file_path in self._data:
+                entry = self._data[file_path]
+            else:
+                # Try to find by filename (handles path prefix mismatches)
+                result = self._find_entry_by_filename(file_path)
+                if result:
+                    matched_path, entry = result
+
+            if entry is None:
+                # No entry found - conservative, don't expire
+                return False
             watchlisted_at_str = entry.get('watchlisted_at')
             if not watchlisted_at_str:
                 return False
