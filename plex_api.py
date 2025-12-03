@@ -549,18 +549,23 @@ class PlexManager:
                     logging.info(f"Skipping {current_username} due to skip_watchlist")
                     return
 
-            # --- Obtain Plex account instance ---
+            # --- Obtain Plex account instance using cached token (no plex.tv API call) ---
             try:
                 if user is None:
                     # Use already authenticated main account
                     account = self.plex.myPlexAccount()
                 else:
-                    # Try to switch to home user
+                    # Use cached token directly instead of switchHomeUser (avoids plex.tv rate limits)
+                    token = self._user_tokens.get(current_username)
+                    if not token:
+                        logging.warning(f"[PLEX API] No cached token for {current_username}; skipping watchlist")
+                        return
                     try:
-                        self._rate_limited_api_call()
-                        account = self.plex.myPlexAccount().switchHomeUser(user.title)
+                        from plexapi.myplex import MyPlexAccount
+                        account = MyPlexAccount(token=token)
+                        logging.debug(f"[PLEX API] Using cached token for {current_username} watchlist")
                     except Exception as e:
-                        _log_api_error(f"switch to user {user.title}", e)
+                        _log_api_error(f"authenticate with cached token for {current_username}", e)
                         return
             except Exception as e:
                 _log_api_error(f"get Plex account for {current_username}", e)
@@ -593,6 +598,8 @@ class PlexManager:
 
             # --- Local Plex watchlist processing ---
             try:
+                # Rate limit the watchlist API call (hits plex.tv)
+                self._rate_limited_api_call()
                 # Sort by watchlistedAt descending to get most recent add date first
                 watchlist = account.watchlist(filter='released', sort='watchlistedAt:desc')
                 logging.info(f"{current_username}: Found {len(watchlist)} watchlist items from Plex")
