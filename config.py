@@ -128,7 +128,7 @@ class ConfigManager:
         
     def load_config(self) -> None:
         """Load configuration from file and validate."""
-        logging.info(f"Loading configuration from: {self.config_file}")
+        logging.debug(f"Loading configuration from: {self.config_file}")
         
         if not self.config_file.exists():
             logging.error(f"Settings file not found: {self.config_file}")
@@ -149,7 +149,7 @@ class ConfigManager:
         self._load_all_configs()
         self._validate_values()
         self._save_updated_config()
-        logging.info("Configuration loaded and validated successfully")
+        logging.debug("Configuration loaded and validated successfully")
     
     def _process_first_start(self) -> None:
         """Handle first start configuration."""

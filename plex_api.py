@@ -118,7 +118,7 @@ class UserTokenCache:
             with open(self._cache_file, 'r') as f:
                 data = json.load(f)
                 self._memory_cache = data.get('tokens', {})
-                logging.info(f"[TOKEN CACHE] Loaded {len(self._memory_cache)} cached tokens from disk")
+                logging.debug(f"[TOKEN CACHE] Loaded {len(self._memory_cache)} cached tokens from disk")
         except Exception as e:
             logging.warning(f"[TOKEN CACHE] Could not load cache file: {e}")
             self._memory_cache = {}
@@ -151,11 +151,10 @@ class PlexManager:
 
     def connect(self) -> None:
         """Connect to the Plex server."""
-        logging.info(f"Connecting to Plex server: {self.plex_url}")
+        logging.debug(f"Connecting to Plex server: {self.plex_url}")
 
         try:
             self.plex = PlexServer(self.plex_url, self.plex_token)
-            logging.info("Successfully connected to Plex server")
             logging.debug(f"Plex server version: {self.plex.version}")
         except Exception as e:
             _log_api_error("connect to Plex server", e)
@@ -188,7 +187,7 @@ class PlexManager:
         skip_users = skip_users or []
         settings_users = settings_users or []
         machine_id = self.plex.machineIdentifier
-        logging.info("[PLEX API] Loading user tokens (one-time startup operation)...")
+        logging.debug("[PLEX API] Loading user tokens...")
 
         try:
             # Add main account token
@@ -196,7 +195,7 @@ class PlexManager:
             account = self.plex.myPlexAccount()
             main_username = account.title
             self._user_tokens[main_username] = self.plex_token
-            logging.info(f"[PLEX API] Main account: {main_username}")
+            logging.debug(f"[PLEX API] Main account: {main_username}")
 
             # Step 1: Load tokens from settings file (includes remote users)
             settings_loaded = 0
@@ -213,7 +212,7 @@ class PlexManager:
 
                 # Check skip list
                 if username in skip_users or token in skip_users:
-                    logging.info(f"[PLEX API] Skipping {username} (in skip list)")
+                    logging.debug(f"[PLEX API] Skipping {username} (in skip list)")
                     continue
 
                 self._user_tokens[username] = token
@@ -222,7 +221,7 @@ class PlexManager:
                 logging.debug(f"[PLEX API] Loaded {user_type} user from settings: {username}")
                 settings_loaded += 1
 
-            logging.info(f"[PLEX API] Loaded {settings_loaded} users from settings file")
+            logging.debug(f"[PLEX API] Loaded {settings_loaded} users from settings file")
 
             # Step 2: Check Plex API for new users not in settings
             self._rate_limited_api_call()
@@ -238,17 +237,17 @@ class PlexManager:
 
                 # Check skip list
                 if username in skip_users:
-                    logging.info(f"[PLEX API] Skipping user (in skip list): {username}")
+                    logging.debug(f"[PLEX API] Skipping user (in skip list): {username}")
                     continue
 
                 # Try to get token from disk cache first
                 cached_token = self._token_cache.get_token(username, machine_id)
                 if cached_token:
                     if cached_token in skip_users:
-                        logging.info(f"[PLEX API] Skipping {username} (token in skip list)")
+                        logging.debug(f"[PLEX API] Skipping {username} (token in skip list)")
                         continue
                     self._user_tokens[username] = cached_token
-                    logging.info(f"[PLEX API] Using cached token for new user: {username}")
+                    logging.debug(f"[PLEX API] Using cached token for new user: {username}")
                     new_users += 1
                     continue
 
@@ -258,11 +257,11 @@ class PlexManager:
                     token = user.get_token(machine_id)
                     if token:
                         if token in skip_users:
-                            logging.info(f"[PLEX API] Skipping {username} (token in skip list)")
+                            logging.debug(f"[PLEX API] Skipping {username} (token in skip list)")
                             continue
                         self._user_tokens[username] = token
                         self._token_cache.set_token(username, token, machine_id)
-                        logging.info(f"[PLEX API] Fetched token for new user: {username}")
+                        logging.debug(f"[PLEX API] Fetched token for new user: {username}")
                         new_users += 1
                     else:
                         logging.warning(f"[PLEX API] No token available for: {username}")
@@ -273,8 +272,8 @@ class PlexManager:
                 logging.info(f"[PLEX API] Found {new_users} new users not in settings (consider re-running setup)")
 
             self._users_loaded = True
-            total_users = len(self._user_tokens) - 1  # Subtract main account
-            logging.info(f"[PLEX API] Loaded tokens for {len(self._user_tokens)} users total ({total_users} additional users)")
+            total_users = len(self._user_tokens)
+            logging.info(f"Connected to Plex ({total_users} users)")
             return self._user_tokens
 
         except Exception as e:
@@ -381,7 +380,6 @@ class PlexManager:
                 except Exception as e:
                     logging.error(f"An error occurred while fetching OnDeck media for a user: {e}")
 
-        logging.info(f"Found {len(on_deck_files)} OnDeck items")
         return on_deck_files
 
     

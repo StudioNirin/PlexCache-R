@@ -780,7 +780,7 @@ class SubtitleFinder:
                 subtitle_files = self._find_subtitle_files(directory_path, file)
                 all_media_files.extend(subtitle_files)
                 for subtitle_file in subtitle_files:
-                    logging.info(f"Subtitle found: {subtitle_file}")
+                    logging.debug(f"Subtitle found: {subtitle_file}")
 
         return all_media_files
     
@@ -929,7 +929,7 @@ class FileFilter:
             with open(self.mover_cache_exclude_file, 'r') as f:
                 cache_files = [line.strip() for line in f if line.strip()]
 
-            logging.info(f"Found {len(cache_files)} files in exclude list")
+            logging.debug(f"Found {len(cache_files)} files in exclude list")
 
             # Build TV show tracking: {show_name: {season: min_episode}}
             # This tracks the minimum episode number that should be kept for each show/season
@@ -1715,7 +1715,7 @@ class CacheCleanup:
 
     def cleanup_empty_folders(self) -> None:
         """Remove empty folders from cache directories."""
-        logging.info("Starting cache cleanup process...")
+        logging.debug("Starting cache cleanup process...")
         cleaned_count = 0
 
         # Use configured library folders, or fall back to scanning cache_dir subdirectories
@@ -1740,8 +1740,6 @@ class CacheCleanup:
         
         if cleaned_count > 0:
             logging.info(f"Cleaned up {cleaned_count} empty folders")
-        else:
-            logging.info("No empty folders found to clean up")
     
     def _cleanup_directory(self, directory_path: str) -> int:
         """Recursively remove empty folders from a directory."""
