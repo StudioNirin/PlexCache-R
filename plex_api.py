@@ -594,7 +594,7 @@ class PlexManager:
                     cleaned_title = self.clean_rss_title(title)
                     file = self.search_plex(cleaned_title)
                     if file:
-                        logging.info(f"RSS title '{title}' matched Plex item '{file.title}' ({file.TYPE})")
+                        logging.debug(f"RSS title '{title}' matched Plex item '{file.title}' ({file.TYPE})")
                         if not filtered_sections or file.librarySectionID in filtered_sections:
                             try:
                                 if category == 'show' or file.TYPE == 'show':

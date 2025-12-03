@@ -347,7 +347,7 @@ class WatchlistTracker:
 
                 if age_days > retention_days:
                     users = entry.get('users', ['unknown'])
-                    logging.info(
+                    logging.debug(
                         f"Watchlist retention expired ({age_days:.1f} days > {retention_days} days): "
                         f"{os.path.basename(file_path)} (users: {', '.join(users)})"
                     )
