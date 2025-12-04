@@ -859,7 +859,20 @@ class FileFilter:
         self.mover_cache_exclude_file = mover_cache_exclude_file or ""
         self.timestamp_tracker = timestamp_tracker
         self.cache_retention_hours = cache_retention_hours
-    
+
+    def _add_to_exclude_file(self, cache_file_name: str) -> None:
+        """Add a file to the exclude list."""
+        if self.mover_cache_exclude_file:
+            # Read existing entries to avoid duplicates
+            existing = set()
+            if os.path.exists(self.mover_cache_exclude_file):
+                with open(self.mover_cache_exclude_file, "r") as f:
+                    existing = {line.strip() for line in f if line.strip()}
+            if cache_file_name not in existing:
+                with open(self.mover_cache_exclude_file, "a") as f:
+                    f.write(f"{cache_file_name}\n")
+                logging.debug(f"Added to exclude file: {cache_file_name}")
+
     def filter_files(self, files: List[str], destination: str,
                     media_to_cache: Optional[List[str]] = None,
                     files_to_skip: Optional[Set[str]] = None) -> List[str]:
