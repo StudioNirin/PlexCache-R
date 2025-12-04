@@ -569,15 +569,20 @@ class PlexCacheApp:
                     if file_path not in watched_media_set:
                         # Check retention period before adding to move queue
                         if retention_hours > 0 and self.timestamp_tracker:
-                            # Get the cache path to check retention
-                            cache_path = file_path.replace(
-                                self.config_manager.paths.real_source,
-                                self.config_manager.paths.cache_dir, 1
-                            )
-                            logging.debug(f"Checking retention for watched file: {cache_path}")
-                            if self.timestamp_tracker.is_within_retention_period(cache_path, retention_hours):
-                                logging.info(f"Watched file within retention period ({retention_hours}h), skipping move to array: {os.path.basename(file_path)}")
-                                continue
+                            # Convert Plex path to real path first, then to cache path
+                            # file_path is raw Plex path like /data/Movies/...
+                            # We need to convert to cache path like /mnt/cache_downloads/Movies/...
+                            modified_paths = self.file_path_modifier.modify_file_paths([file_path])
+                            if modified_paths:
+                                real_path = modified_paths[0]  # /mnt/user/Movies/...
+                                cache_path = real_path.replace(
+                                    self.config_manager.paths.real_source,
+                                    self.config_manager.paths.cache_dir, 1
+                                )
+                                logging.debug(f"Checking retention for watched file: {cache_path}")
+                                if self.timestamp_tracker.is_within_retention_period(cache_path, retention_hours):
+                                    logging.info(f"Watched file within retention period ({retention_hours}h), skipping move to array: {os.path.basename(file_path)}")
+                                    continue
                         self.media_to_array.append(file_path)
 
                 # Add new media to the watched media set

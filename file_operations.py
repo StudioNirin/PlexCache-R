@@ -960,10 +960,12 @@ class FileFilter:
 
         # Check for upgrade scenario: old .plexcached with different filename but same media identity
         # In this case, we still want to move the file so _move_to_array can handle the upgrade
+        # NOTE: Only treat as upgrade if the .plexcached has a DIFFERENT name than expected
+        expected_plexcached = array_file + PLEXCACHED_EXTENSION
         cache_identity = get_media_identity(cache_file_name)
         old_plexcached = find_matching_plexcached(array_path, cache_identity)
-        if old_plexcached:
-            # Found an old .plexcached for the same media - this is an upgrade
+        if old_plexcached and old_plexcached != expected_plexcached:
+            # Found a .plexcached with different filename - this is a true upgrade scenario
             # Let _move_to_array handle it
             logging.debug(f"Found old .plexcached for upgrade: {old_plexcached}")
             return True, False
