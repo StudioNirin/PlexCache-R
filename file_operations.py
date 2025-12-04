@@ -421,30 +421,6 @@ class WatchlistTracker:
                 logging.warning(f"Invalid watchlisted_at timestamp for {file_path}: {e}")
                 return False
 
-    def get_entry(self, file_path: str) -> Optional[dict]:
-        """Get the tracker entry for a file.
-
-        Args:
-            file_path: The path to the media file.
-
-        Returns:
-            The entry dict or None if not found.
-        """
-        with self._lock:
-            return self._data.get(file_path)
-
-    def remove_entry(self, file_path: str) -> None:
-        """Remove a file's entry (when file is no longer on any watchlist).
-
-        Args:
-            file_path: The path to the media file.
-        """
-        with self._lock:
-            if file_path in self._data:
-                del self._data[file_path]
-                self._save()
-                logging.debug(f"Removed watchlist entry: {file_path}")
-
     def cleanup_stale_entries(self, max_days_since_seen: int = 7) -> int:
         """Remove entries that haven't been seen on any watchlist recently.
 
@@ -1224,10 +1200,6 @@ class FileFilter:
 
         except Exception:
             return None
-
-    def _is_tv_show(self, file_path: str) -> bool:
-        """Check if the file path is a TV show (has Season/Series/Specials folder)."""
-        return self._extract_tv_info(file_path) is not None
 
     def remove_files_from_exclude_list(self, cache_paths_to_remove: List[str]) -> bool:
         """Remove specified files from the exclude list. Returns True on success."""
