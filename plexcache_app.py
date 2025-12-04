@@ -561,11 +561,22 @@ class PlexCacheApp:
                 ))
                 
                 # Add fetched media to the current media set
+                retention_hours = self.config_manager.cache.cache_retention_hours
                 for file_path in fetched_media:
                     current_media_set.add(file_path)
 
                     # Check if file is not already in the watched media set
                     if file_path not in watched_media_set:
+                        # Check retention period before adding to move queue
+                        if retention_hours > 0 and self.timestamp_tracker:
+                            # Get the cache path to check retention
+                            cache_path = file_path.replace(
+                                self.config_manager.paths.real_source,
+                                self.config_manager.paths.cache_dir, 1
+                            )
+                            if self.timestamp_tracker.is_within_retention_period(cache_path, retention_hours):
+                                logging.debug(f"Watched file within retention period, skipping: {os.path.basename(file_path)}")
+                                continue
                         self.media_to_array.append(file_path)
 
                 # Add new media to the watched media set
