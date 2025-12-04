@@ -17,6 +17,65 @@ import re
 PLEXCACHED_EXTENSION = ".plexcached"
 
 
+def get_media_identity(filepath: str) -> str:
+    """Extract the core media identity from a filename, ignoring quality/codec info.
+
+    This allows matching files that have been upgraded by Radarr/Sonarr.
+
+    Examples:
+        Movie: "Wreck-It Ralph (2012) [WEBDL-1080p].mkv" -> "Wreck-It Ralph (2012)"
+        Movie: "Wreck-It Ralph (2012) [HEVC-1080p].mkv" -> "Wreck-It Ralph (2012)"
+        TV: "From - S01E02 - The Way Things Are Now [HDTV-1080p].mkv" -> "From - S01E02 - The Way Things Are Now"
+
+    Args:
+        filepath: Full path or just filename
+
+    Returns:
+        The base media identity (title + year for movies, show + episode for TV)
+    """
+    filename = os.path.basename(filepath)
+    # Remove extension
+    name = os.path.splitext(filename)[0]
+    # Remove .plexcached extension if present
+    if name.endswith('.plexcached'):
+        name = name[:-len('.plexcached')]
+        name = os.path.splitext(name)[0]  # Remove the actual extension too
+    # Remove everything from first '[' onwards (quality/codec info)
+    if '[' in name:
+        name = name[:name.index('[')].strip()
+    # Remove trailing ' -' or '-' if present (sometimes left over)
+    name = name.rstrip(' -').rstrip('-').strip()
+    return name
+
+
+def find_matching_plexcached(array_path: str, media_identity: str) -> Optional[str]:
+    """Find a .plexcached file in the array path that matches the media identity.
+
+    This handles the case where Radarr/Sonarr upgraded a file - the .plexcached
+    backup may have a different quality suffix but same core identity.
+
+    Args:
+        array_path: Directory path on the array to search
+        media_identity: The core media identity to match (from get_media_identity)
+
+    Returns:
+        Full path to matching .plexcached file, or None if not found
+    """
+    if not os.path.isdir(array_path):
+        return None
+
+    try:
+        for entry in os.scandir(array_path):
+            if entry.is_file() and entry.name.endswith(PLEXCACHED_EXTENSION):
+                entry_identity = get_media_identity(entry.name)
+                if entry_identity == media_identity:
+                    return entry.path
+    except (OSError, PermissionError) as e:
+        logging.debug(f"Error scanning for .plexcached files in {array_path}: {e}")
+
+    return None
+
+
 class CacheTimestampTracker:
     """Thread-safe tracker for when files were cached and their source.
 
@@ -865,6 +924,10 @@ class FileFilter:
     def _should_add_to_array(self, file: str, cache_file_name: str, media_to_cache: List[str]) -> Tuple[bool, bool]:
         """Determine if a file should be added to the array.
 
+        Also detects when Radarr/Sonarr has upgraded a file - if the same media
+        exists on array with a different quality, we should still move the
+        upgraded version to array (handled by _move_to_array upgrade logic).
+
         Returns:
             Tuple of (should_add, cache_was_removed):
             - should_add: True if file should be added to array move queue
@@ -878,7 +941,9 @@ class FileFilter:
         # which correctly distinguishes between TV shows (retention applies) and movies (no retention)
 
         array_file = file.replace("/mnt/user/", "/mnt/user0/", 1) if self.is_unraid else file
+        array_path = os.path.dirname(array_file)
 
+        # Check if exact file already exists on array
         if os.path.isfile(array_file):
             # File already exists in the array, try to remove cache version
             logging.debug(f"File already exists on array, removing cache version: {array_file}")
@@ -892,7 +957,18 @@ class FileFilter:
             except OSError as e:
                 logging.error(f"Failed to remove cache file {cache_file_name}: {type(e).__name__}: {e}")
             return False, cache_removed  # No need to add to array
-        return True, False  # Otherwise, the file should be added to the array
+
+        # Check for upgrade scenario: old .plexcached with different filename but same media identity
+        # In this case, we still want to move the file so _move_to_array can handle the upgrade
+        cache_identity = get_media_identity(cache_file_name)
+        old_plexcached = find_matching_plexcached(array_path, cache_identity)
+        if old_plexcached:
+            # Found an old .plexcached for the same media - this is an upgrade
+            # Let _move_to_array handle it
+            logging.debug(f"Found old .plexcached for upgrade: {old_plexcached}")
+            return True, False
+
+        return True, False  # File should be added to the array
 
     def _should_add_to_cache(self, file: str, cache_file_name: str) -> bool:
         """Determine if a file should be added to the cache."""
@@ -1361,7 +1437,23 @@ class FileMover:
                     logging.debug(f"Already in exclude file: {cache_file_name}")
         else:
             logging.warning(f"No exclude file configured, cannot track: {cache_file_name}")
-    
+
+    def _remove_from_exclude_file(self, cache_file_name: str) -> None:
+        """Remove a file from the exclude list (thread-safe)."""
+        if self.mover_cache_exclude_file and os.path.exists(self.mover_cache_exclude_file):
+            with self._exclude_file_lock:
+                try:
+                    with open(self.mover_cache_exclude_file, "r") as f:
+                        lines = [line.strip() for line in f if line.strip()]
+                    if cache_file_name in lines:
+                        lines.remove(cache_file_name)
+                        with open(self.mover_cache_exclude_file, "w") as f:
+                            for line in lines:
+                                f.write(f"{line}\n")
+                        logging.debug(f"Removed from exclude file: {cache_file_name}")
+                except Exception as e:
+                    logging.warning(f"Failed to remove from exclude file: {e}")
+
     def _execute_move_commands(self, move_commands: List[Tuple[Tuple[str, str], str, int]],
                              max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
                              destination: str, total_bytes: int) -> None:
@@ -1462,17 +1554,37 @@ class FileMover:
         """Copy file to cache and rename array original to .plexcached.
 
         Order of operations ensures data safety:
-        1. Copy file to cache
-        2. Verify copy succeeded
-        3. Rename original to .plexcached (only after verified copy)
-        4. Verify rename succeeded
-        5. Record timestamp for cache retention
+        1. Check for and clean up old .plexcached if this is an upgrade
+        2. Copy file to cache
+        3. Verify copy succeeded
+        4. Rename original to .plexcached (only after verified copy)
+        5. Verify rename succeeded
+        6. Record timestamp for cache retention
 
         If interrupted at any point, the original array file remains safe.
         Worst case: an orphaned cache copy exists that can be deleted.
         """
         plexcached_file = array_file + PLEXCACHED_EXTENSION
+        array_path = os.path.dirname(array_file)
+
         try:
+            # Step 0: Check for upgrade scenario - clean up old .plexcached if needed
+            old_cache_file_to_remove = None
+            if not os.path.isfile(plexcached_file):
+                cache_identity = get_media_identity(cache_file_name)
+                old_plexcached = find_matching_plexcached(array_path, cache_identity)
+                if old_plexcached and old_plexcached != plexcached_file:
+                    old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
+                    new_name = os.path.basename(cache_file_name)
+                    logging.info(f"Upgrade detected during cache: {old_name} -> {new_name}")
+                    os.remove(old_plexcached)
+                    logging.debug(f"Deleted old .plexcached: {old_plexcached}")
+                    # Build the old cache file path for exclude list cleanup
+                    old_cache_file_to_remove = cache_file_name.replace(
+                        os.path.basename(cache_file_name),
+                        old_name
+                    )
+
             # Step 1: Copy file from array to cache (preserving metadata)
             logging.debug(f"Starting copy: {array_file} -> {cache_file_name}")
             shutil.copy2(array_file, cache_file_name)
@@ -1492,8 +1604,10 @@ class FileMover:
             if not os.path.isfile(plexcached_file):
                 raise IOError(f"Rename verification failed: .plexcached file not created at {plexcached_file}")
 
-            # Step 3: Add to exclude file
+            # Step 3: Add to exclude file (and remove old entry if upgrade)
             self._add_to_exclude_file(cache_file_name)
+            if old_cache_file_to_remove:
+                self._remove_from_exclude_file(old_cache_file_to_remove)
 
             # Step 4: Record timestamp for cache retention with source info
             if self.timestamp_tracker:
@@ -1516,9 +1630,11 @@ class FileMover:
     def _move_to_array(self, cache_file: str, array_path: str, cache_file_name: str) -> int:
         """Move file from cache back to array.
 
-        Handles two scenarios:
-        1. .plexcached exists: Rename it back to original, delete cache copy
-        2. No .plexcached: Copy from cache to array, then delete cache copy
+        Handles three scenarios:
+        1. Exact .plexcached exists: Rename it back to original, delete cache copy
+        2. Upgraded file: Different .plexcached exists (same media, different quality)
+           - Delete old .plexcached, copy upgraded cache file to array
+        3. No .plexcached: Copy from cache to array, then delete cache copy
 
         Returns:
             0: Success - array file exists and cache deleted
@@ -1529,25 +1645,53 @@ class FileMover:
             array_file = os.path.join(array_path, os.path.basename(cache_file))
             plexcached_file = array_file + PLEXCACHED_EXTENSION
 
-            # Scenario 1: .plexcached exists - just rename it back (fast)
+            # Scenario 1: Exact .plexcached exists - just rename it back (fast)
             if os.path.isfile(plexcached_file):
                 os.rename(plexcached_file, array_file)
                 logging.debug(f"Restored array file: {plexcached_file} -> {array_file}")
 
-            # Scenario 2: No .plexcached but file exists on cache - copy to array
-            elif os.path.isfile(cache_file) and not os.path.isfile(array_file):
-                logging.debug(f"No .plexcached found, copying from cache to array: {cache_file}")
-                cache_size = os.path.getsize(cache_file)
-                shutil.copy2(cache_file, array_file)
-                logging.debug(f"Copied to array: {array_file}")
+            # Check for upgrade scenario: different .plexcached with same media identity
+            elif os.path.isfile(cache_file):
+                cache_identity = get_media_identity(cache_file)
+                old_plexcached = find_matching_plexcached(array_path, cache_identity)
 
-                # Verify copy succeeded by comparing file sizes
-                if os.path.isfile(array_file):
-                    array_size = os.path.getsize(array_file)
-                    if cache_size != array_size:
-                        logging.error(f"Size mismatch after copy! Cache: {cache_size}, Array: {array_size}. Keeping cache file.")
-                        os.remove(array_file)  # Remove incomplete copy
-                        return 1
+                # Scenario 2: Upgraded file - old .plexcached exists with different name
+                if old_plexcached and old_plexcached != plexcached_file:
+                    old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
+                    new_name = os.path.basename(cache_file)
+                    logging.info(f"Upgrade detected: {old_name} -> {new_name}")
+
+                    # Delete the old .plexcached (it's outdated)
+                    os.remove(old_plexcached)
+                    logging.debug(f"Deleted old .plexcached: {old_plexcached}")
+
+                    # Copy the upgraded cache file to array
+                    cache_size = os.path.getsize(cache_file)
+                    shutil.copy2(cache_file, array_file)
+                    logging.debug(f"Copied upgraded file to array: {array_file}")
+
+                    # Verify copy succeeded
+                    if os.path.isfile(array_file):
+                        array_size = os.path.getsize(array_file)
+                        if cache_size != array_size:
+                            logging.error(f"Size mismatch after copy! Cache: {cache_size}, Array: {array_size}. Keeping cache file.")
+                            os.remove(array_file)
+                            return 1
+
+                # Scenario 3: No .plexcached at all - copy to array
+                elif not os.path.isfile(array_file):
+                    logging.debug(f"No .plexcached found, copying from cache to array: {cache_file}")
+                    cache_size = os.path.getsize(cache_file)
+                    shutil.copy2(cache_file, array_file)
+                    logging.debug(f"Copied to array: {array_file}")
+
+                    # Verify copy succeeded by comparing file sizes
+                    if os.path.isfile(array_file):
+                        array_size = os.path.getsize(array_file)
+                        if cache_size != array_size:
+                            logging.error(f"Size mismatch after copy! Cache: {cache_size}, Array: {array_size}. Keeping cache file.")
+                            os.remove(array_file)
+                            return 1
 
             # Delete cache copy only if array file now exists
             if os.path.isfile(array_file):
