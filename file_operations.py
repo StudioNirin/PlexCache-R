@@ -955,18 +955,30 @@ class FileFilter:
         """Determine if a file should be added to the cache."""
         array_file = file.replace("/mnt/user/", "/mnt/user0/", 1) if self.is_unraid else file
 
-        if os.path.isfile(cache_file_name) and os.path.isfile(array_file):
-            # Remove the array version when the file exists in the cache
-            try:
-                os.remove(array_file)
-                logging.info(f"Removed array version of file: {array_file}")
-            except FileNotFoundError:
-                pass  # File already removed
-            except OSError as e:
-                logging.error(f"Failed to remove array file {array_file}: {type(e).__name__}: {e}")
+        # Check if file already exists on cache
+        if os.path.isfile(cache_file_name):
+            # File already on cache - ensure it's protected
+            self._add_to_exclude_file(cache_file_name)
+
+            # Record timestamp if not already tracked (for retention)
+            if self.timestamp_tracker:
+                self.timestamp_tracker.record_cache_time(cache_file_name, "pre-existing")
+
+            logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
+
+            # If array version also exists, remove it (cache is authoritative)
+            if os.path.isfile(array_file):
+                try:
+                    os.remove(array_file)
+                    logging.info(f"Removed array version of file: {array_file}")
+                except FileNotFoundError:
+                    pass  # File already removed
+                except OSError as e:
+                    logging.error(f"Failed to remove array file {array_file}: {type(e).__name__}: {e}")
+
             return False
 
-        return not os.path.isfile(cache_file_name)
+        return True
     
     def _get_cache_paths(self, file: str) -> Tuple[str, str]:
         """Get cache path and filename for a given file."""
