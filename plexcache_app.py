@@ -705,7 +705,7 @@ class PlexCacheApp:
         total_size, total_size_unit = self.file_utils.get_total_size_of_files(media_files_filtered)
         
         if total_size > 0:
-            print(f"Moving {total_size:.2f} {total_size_unit} to {destination}")
+            logging.info(f"Moving {total_size:.2f} {total_size_unit} to {destination}")
             self.logging_manager.add_summary_message(
                 f"Total size of media files moved to {destination}: {total_size:.2f} {total_size_unit}"
             )
