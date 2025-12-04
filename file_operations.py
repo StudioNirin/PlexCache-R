@@ -945,17 +945,15 @@ class FileFilter:
 
         # Check if exact file already exists on array
         if os.path.isfile(array_file):
-            # File already exists in the array, try to remove cache version
-            logging.debug(f"File already exists on array, removing cache version: {array_file}")
+            # File already exists in the array - check if there's a cache version to clean up
             cache_removed = False
-            try:
-                os.remove(cache_file_name)
-                logging.info(f"Removed cache version of file: {cache_file_name}")
-                cache_removed = True
-            except FileNotFoundError:
-                pass  # File already removed or never existed
-            except OSError as e:
-                logging.error(f"Failed to remove cache file {cache_file_name}: {type(e).__name__}: {e}")
+            if os.path.isfile(cache_file_name):
+                try:
+                    os.remove(cache_file_name)
+                    logging.info(f"Removed orphaned cache file (array copy exists): {os.path.basename(cache_file_name)}")
+                    cache_removed = True
+                except OSError as e:
+                    logging.error(f"Failed to remove cache file {cache_file_name}: {type(e).__name__}: {e}")
             return False, cache_removed  # No need to add to array
 
         # Check for upgrade scenario: old .plexcached with different filename but same media identity
