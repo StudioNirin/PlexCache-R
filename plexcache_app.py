@@ -604,8 +604,37 @@ class PlexCacheApp:
 
             else:
                 logging.debug("Loading watched media from cache...")
-                # Add watched media from cache to the media array
-                self.media_to_array.extend(watched_media_set)
+                # Filter out stale entries and clean up the cache
+                valid_entries = []
+                stale_entries = []
+
+                for file_path in watched_media_set:
+                    # Convert to cache path and check if file exists
+                    modified_paths = self.file_path_modifier.modify_file_paths([file_path])
+                    if not modified_paths:
+                        stale_entries.append(file_path)
+                        logging.warning(f"Stale watched cache entry (path conversion failed): {os.path.basename(file_path)}")
+                        continue
+
+                    real_path = modified_paths[0]
+                    cache_path = real_path.replace(
+                        self.config_manager.paths.real_source,
+                        self.config_manager.paths.cache_dir, 1
+                    )
+
+                    if os.path.isfile(cache_path):
+                        valid_entries.append(file_path)
+                    else:
+                        stale_entries.append(file_path)
+                        logging.warning(f"Stale watched cache entry (file not on cache): {os.path.basename(file_path)}")
+
+                # Clean up stale entries from the cache file
+                if stale_entries:
+                    logging.info(f"Removed {len(stale_entries)} stale entries from watched cache")
+                    CacheManager.save_media_to_cache(watched_cache, valid_entries)
+
+                # Add valid entries to the media array
+                self.media_to_array.extend(valid_entries)
 
         except Exception as e:
             logging.exception(f"An error occurred while processing the watched media: {type(e).__name__}: {e}")
