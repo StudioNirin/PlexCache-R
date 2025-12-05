@@ -1514,6 +1514,7 @@ class FileMover:
                              max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
                              destination: str, total_bytes: int) -> None:
         """Execute the move commands with progress tracking."""
+        import time
         # Initialize progress tracking
         self._completed_count = 0
         self._total_count = len(move_commands)
@@ -1521,10 +1522,13 @@ class FileMover:
         self._total_bytes = total_bytes
         self._active_files = {}
         self._last_display_lines = 0
+        self._last_progress_time = 0  # Rate limit progress updates
+        self._progress_update_interval = 2  # Seconds between updates
 
         # Show initial progress bar
         if self._total_count > 0:
             self._print_move_progress(destination)
+            self._last_progress_time = time.time()
 
         if self.debug:
             for i, (move_cmd, cache_file_name, file_size) in enumerate(move_commands, 1):
@@ -1576,10 +1580,14 @@ class FileMover:
         filename = os.path.basename(src)
 
         try:
+            import time
             # Register this file as actively being moved
             with self._progress_lock:
                 self._active_files[thread_id] = (filename, file_size)
-                self._print_move_progress(destination)
+                # Rate-limit progress updates
+                if time.time() - self._last_progress_time >= self._progress_update_interval:
+                    self._print_move_progress(destination)
+                    self._last_progress_time = time.time()
 
             if destination == 'cache':
                 result = self._move_to_cache(src, dest, cache_file_name, original_path)
@@ -1594,7 +1602,10 @@ class FileMover:
                 self._completed_bytes += file_size
                 if thread_id in self._active_files:
                     del self._active_files[thread_id]
-                self._print_move_progress(destination)
+                # Rate-limit progress updates
+                if time.time() - self._last_progress_time >= self._progress_update_interval:
+                    self._print_move_progress(destination)
+                    self._last_progress_time = time.time()
 
             return result
         except Exception as e:
