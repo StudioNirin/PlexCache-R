@@ -406,14 +406,15 @@ class PlexManager:
                     delta = datetime.now() - video.lastViewedAt
                     if delta.days <= days_to_monitor:
                         if isinstance(video, Episode):
-                            self._process_episode_ondeck(video, number_episodes, on_deck_files)
+                            self._process_episode_ondeck(video, number_episodes, on_deck_files, username)
                         elif isinstance(video, Movie):
-                            self._process_movie_ondeck(video, on_deck_files)
+                            self._process_movie_ondeck(video, on_deck_files, username)
                         else:
                             logging.warning(f"Skipping OnDeck item '{video.title}' — unknown type {type(video)}")
                 else:
                     logging.debug(f"Skipping OnDeck item '{video.title}' — section {section_key} not in valid_sections {filtered_sections}")
 
+            logging.info(f"{username}: Found {len(on_deck_files)} OnDeck items")
             return on_deck_files
 
         except Exception as e:
@@ -423,10 +424,12 @@ class PlexManager:
                 self.invalidate_user_token(username)
             return []
     
-    def _process_episode_ondeck(self, video: Episode, number_episodes: int, on_deck_files: List[str]) -> None:
+    def _process_episode_ondeck(self, video: Episode, number_episodes: int, on_deck_files: List[str], username: str = "unknown") -> None:
         """Process an episode from onDeck."""
         for media in video.media:
-            on_deck_files.extend(part.file for part in media.parts)
+            for part in media.parts:
+                on_deck_files.append(part.file)
+                logging.debug(f"OnDeck found ({username}): {part.file}")
 
         # Skip fetching next episodes if current episode has missing index data
         if video.parentIndex is None or video.index is None:
@@ -441,16 +444,16 @@ class PlexManager:
 
         for episode in next_episodes:
             for media in episode.media:
-                on_deck_files.extend(part.file for part in media.parts)
                 for part in media.parts:
-                    logging.debug(f"OnDeck found: {part.file}")
+                    on_deck_files.append(part.file)
+                    logging.debug(f"OnDeck found ({username}): {part.file}")
     
-    def _process_movie_ondeck(self, video: Movie, on_deck_files: List[str]) -> None:
+    def _process_movie_ondeck(self, video: Movie, on_deck_files: List[str], username: str = "unknown") -> None:
         """Process a movie from onDeck."""
         for media in video.media:
-            on_deck_files.extend(part.file for part in media.parts)
             for part in media.parts:
-                logging.debug(f"OnDeck found: {part.file}")
+                on_deck_files.append(part.file)
+                logging.debug(f"OnDeck found ({username}): {part.file}")
     
     def _get_next_episodes(self, episodes: List[Episode], current_season: int,
                           current_episode_index: int, number_episodes: int) -> List[Episode]:
