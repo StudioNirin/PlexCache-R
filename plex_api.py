@@ -146,6 +146,7 @@ class PlexManager:
         self.plex = None
         self._token_cache = UserTokenCache(cache_file=token_cache_file, cache_expiry_hours=24)
         self._user_tokens: Dict[str, str] = {}  # username -> token (populated at startup)
+        self._user_id_to_name: Dict[str, str] = {}  # user_id (str) -> username (for RSS author lookup)
         self._users_loaded = False
         self._api_lock = threading.Lock()  # For rate limiting plex.tv calls
 
@@ -204,11 +205,16 @@ class PlexManager:
                 username = user_entry.get("title")
                 token = user_entry.get("token")
                 is_local = user_entry.get("is_local", False)
+                user_id = user_entry.get("id")
 
                 if not username or not token:
                     continue
 
                 settings_usernames.add(username)
+
+                # Build user ID -> username map for RSS author lookup
+                if user_id:
+                    self._user_id_to_name[str(user_id)] = username
 
                 # Check skip list
                 if username in skip_users or token in skip_users:
@@ -493,8 +499,8 @@ class PlexManager:
         if home_users is None:
             home_users = []
 
-        def fetch_rss_titles(url: str) -> List[Tuple[str, str, Optional[datetime]]]:
-            """Fetch titles, categories, and pubDate from a Plex RSS feed."""
+        def fetch_rss_titles(url: str) -> List[Tuple[str, str, Optional[datetime], str]]:
+            """Fetch titles, categories, pubDate, and author ID from a Plex RSS feed."""
             from email.utils import parsedate_to_datetime
             try:
                 resp = requests.get(url, timeout=10)
@@ -513,7 +519,12 @@ class PlexManager:
                             pub_date = parsedate_to_datetime(pub_date_elem.text)
                         except Exception:
                             pass
-                    items.append((title, category, pub_date))
+                    # Get author ID (Plex user ID who added to watchlist)
+                    author_id = ""
+                    author_elem = item.find("author")
+                    if author_elem is not None and author_elem.text:
+                        author_id = author_elem.text
+                    items.append((title, category, pub_date, author_id))
                 return items
             except Exception as e:
                 logging.error(f"Failed to fetch or parse RSS feed {url}: {e}")
@@ -624,9 +635,16 @@ class PlexManager:
             if rss_url:
                 rss_items = fetch_rss_titles(rss_url)
                 logging.info(f"RSS feed contains {len(rss_items)} items")
-                # RSS feed is friends' combined watchlist - we can't identify individual users
-                rss_username = "Friends"
-                for title, category, pub_date in rss_items:
+                unknown_user_ids = set()  # Track unknown IDs to log once
+                for title, category, pub_date, author_id in rss_items:
+                    # Look up username from author ID, fall back to ID or "Unknown"
+                    if author_id and author_id in self._user_id_to_name:
+                        rss_username = self._user_id_to_name[author_id]
+                    elif author_id:
+                        rss_username = f"User#{author_id}"
+                        unknown_user_ids.add(author_id)
+                    else:
+                        rss_username = "Friends (RSS)"
                     cleaned_title = self.clean_rss_title(title)
                     file = self.search_plex(cleaned_title)
                     if file:
@@ -644,7 +662,10 @@ class PlexManager:
                         else:
                             logging.debug(f"Skipping RSS item '{file.title}' — section {file.librarySectionID} not in valid_sections {filtered_sections}")
                     else:
-                        logging.warning(f"RSS title '{title}' (cleaned: '{cleaned_title}') not found in Plex — discarded")
+                        logging.warning(f"RSS title '{title}' (added by {rss_username}) not found in Plex — discarded")
+                # Log unknown user IDs once at the end
+                if unknown_user_ids:
+                    logging.debug(f"[PLEX API] {len(unknown_user_ids)} unknown user ID(s) in RSS feed: {', '.join(sorted(unknown_user_ids))}. Run 'python3 plexcache_setup.py' and refresh users to resolve.")
                 return
 
             # --- Local Plex watchlist processing ---

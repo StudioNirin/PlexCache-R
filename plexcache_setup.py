@@ -474,6 +474,7 @@ def setup():
             user_entries = []
             for user in plex.myPlexAccount().users():
                 name = user.title
+                user_id = getattr(user, "id", None)
                 # Check if user is a home/managed user (not a remote friend)
                 # home=True means they're part of Plex Home
                 # restricted="1" means they're a managed user (no separate plex.tv account)
@@ -494,6 +495,7 @@ def setup():
 
                 user_entries.append({
                     "title": name,
+                    "id": user_id,
                     "token": token,
                     "is_local": is_local,
                     "skip_ondeck": False,
@@ -772,6 +774,7 @@ def refresh_users(settings: dict) -> dict:
     new_user_entries = []
     for user in plex.myPlexAccount().users():
         name = user.title
+        user_id = getattr(user, "id", None)
 
         # Detect if home/local user
         is_home = getattr(user, "home", False)
@@ -797,6 +800,7 @@ def refresh_users(settings: dict) -> dict:
 
         new_user_entries.append({
             "title": name,
+            "id": user_id,
             "token": user_token,
             "is_local": is_local,
             "skip_ondeck": skip_ondeck,
