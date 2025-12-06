@@ -417,10 +417,12 @@ def setup():
                 name = user.title
                 # Check if user is a home/managed user (not a remote friend)
                 # home=True means they're part of Plex Home
-                # restricted=True means they're a managed user (no separate plex.tv account)
+                # restricted="1" means they're a managed user (no separate plex.tv account)
+                # Note: restricted comes as string "0" or "1" from API, not boolean
                 is_home = getattr(user, "home", False)
                 is_restricted = getattr(user, "restricted", False)
-                is_local = is_home or is_restricted
+                # Convert to proper boolean (restricted is a string from the API)
+                is_local = bool(is_home) or (is_restricted == "1" or is_restricted == 1 or is_restricted is True)
                 try:
                     token = user.get_token(plex.machineIdentifier)
                 except Exception as e:
@@ -682,6 +684,86 @@ def check_for_missing_settings(settings: dict) -> list:
     missing = [s for s in optional_new_settings if s not in settings]
     return missing
 
+
+def refresh_users(settings: dict) -> dict:
+    """Refresh user list from Plex API, preserving skip settings.
+
+    Re-fetches all users and updates is_local detection while keeping
+    existing skip_ondeck and skip_watchlist preferences.
+    """
+    url = settings.get('PLEX_URL')
+    token = settings.get('PLEX_TOKEN')
+
+    if not url or not token:
+        print("Error: PLEX_URL or PLEX_TOKEN not found in settings.")
+        return settings
+
+    try:
+        plex = PlexServer(url, token)
+    except Exception as e:
+        print(f"Error connecting to Plex: {e}")
+        return settings
+
+    # Build lookup of existing skip preferences by username
+    existing_users = {u.get("title"): u for u in settings.get("users", [])}
+
+    print("\nRefreshing user list from Plex API...")
+    print("-" * 60)
+
+    new_user_entries = []
+    for user in plex.myPlexAccount().users():
+        name = user.title
+
+        # Detect if home/local user
+        is_home = getattr(user, "home", False)
+        is_restricted = getattr(user, "restricted", False)
+        # Convert to proper boolean (restricted comes as string "0" or "1")
+        is_local = bool(is_home) or (is_restricted == "1" or is_restricted == 1 or is_restricted is True)
+
+        try:
+            user_token = user.get_token(plex.machineIdentifier)
+        except Exception as e:
+            print(f"  {name}: SKIPPED (error getting token: {e})")
+            continue
+
+        if user_token is None:
+            print(f"  {name}: SKIPPED (no token available)")
+            continue
+
+        # Preserve existing skip preferences if user existed before
+        existing = existing_users.get(name, {})
+        skip_ondeck = existing.get("skip_ondeck", False)
+        skip_watchlist = existing.get("skip_watchlist", False)
+        old_is_local = existing.get("is_local", None)
+
+        new_user_entries.append({
+            "title": name,
+            "token": user_token,
+            "is_local": is_local,
+            "skip_ondeck": skip_ondeck,
+            "skip_watchlist": skip_watchlist
+        })
+
+        # Show what changed
+        status = "home/local" if is_local else "remote/friend"
+        if old_is_local is not None and old_is_local != is_local:
+            print(f"  {name}: {status} (CHANGED from {'local' if old_is_local else 'remote'})")
+        else:
+            print(f"  {name}: {status}")
+
+    settings["users"] = new_user_entries
+
+    # Update skip lists
+    settings["skip_ondeck"] = [u["token"] for u in new_user_entries if u["skip_ondeck"]]
+    settings["skip_watchlist"] = [u["token"] for u in new_user_entries if u["is_local"] and u["skip_watchlist"]]
+
+    print("-" * 60)
+    home_count = sum(1 for u in new_user_entries if u["is_local"])
+    remote_count = len(new_user_entries) - home_count
+    print(f"Total: {len(new_user_entries)} users ({home_count} home/local, {remote_count} remote/friends)")
+
+    return settings
+
 if os.path.exists(settings_filename):
     try:
         settings_data = read_existing_settings(settings_filename)
@@ -703,7 +785,22 @@ if os.path.exists(settings_filename):
                 else:
                     print("Skipping new settings. You can configure them later or edit the settings file directly.\n")
             else:
-                print("Configuration exists and appears to be valid, you can now run the plexcache.py script.\n")
+                print("Configuration exists and appears to be valid.")
+
+            # Always offer to refresh users (fixes is_local detection for existing configs)
+            if settings_data.get('users_toggle') and settings_data.get('users'):
+                user_count = len(settings_data.get('users', []))
+                home_count = sum(1 for u in settings_data.get('users', []) if u.get('is_local'))
+                print(f"\nCurrent user list: {user_count} users ({home_count} marked as home/local)")
+                refresh = input("Would you like to refresh the user list from Plex? [y/N] ") or 'no'
+                if refresh.lower() in ['y', 'yes']:
+                    settings_data = refresh_users(settings_data)
+                    write_settings(settings_filename, settings_data)
+                    print("\nUser list refreshed and saved!")
+                else:
+                    print("Keeping existing user list.")
+
+            print("\nYou can now run the plexcache.py script.\n")
     except json.decoder.JSONDecodeError as e:
         print(f"Settings file appears to be corrupted (JSON error: {e}). Re-initializing...\n")
         settings_data = {}
