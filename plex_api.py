@@ -31,7 +31,8 @@ def _log_api_error(context: str, error: Exception) -> None:
 
     if "401" in error_str or "Unauthorized" in error_str:
         logging.error(f"[PLEX API] Authentication failed ({context}): {error}")
-        logging.error(f"[PLEX API] This may indicate an invalid or expired token")
+        logging.error(f"[PLEX API] Your Plex token is invalid or has been revoked.")
+        logging.error(f"[PLEX API] To fix: Run 'python3 plexcache_setup.py' and select 'y' to re-authenticate.")
     elif "429" in error_str or "Too Many Requests" in error_str:
         logging.warning(f"[PLEX API] Rate limited by Plex.tv ({context}): {error}")
         logging.warning(f"[PLEX API] Consider increasing delays between API calls")
