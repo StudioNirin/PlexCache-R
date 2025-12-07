@@ -22,10 +22,9 @@ from file_operations import FilePathModifier, SubtitleFinder, FileFilter, FileMo
 class PlexCacheApp:
     """Main PlexCache application class."""
 
-    def __init__(self, config_file: str, skip_cache: bool = False, dry_run: bool = False,
+    def __init__(self, config_file: str, dry_run: bool = False,
                  quiet: bool = False, verbose: bool = False):
         self.config_file = config_file
-        self.skip_cache = skip_cache
         self.dry_run = dry_run  # Don't move files, just simulate
         self.debug = dry_run  # Alias for backwards compatibility in code
         self.quiet = quiet  # Override notification level to errors-only
@@ -741,7 +740,6 @@ class PlexCacheApp:
 
 def main():
     """Main entry point."""
-    skip_cache = "--skip-cache" in sys.argv
     dry_run = "--dry-run" in sys.argv or "--debug" in sys.argv  # --debug is alias for backwards compatibility
     restore_plexcached = "--restore-plexcached" in sys.argv
     quiet = "--quiet" in sys.argv or "--notify-errors-only" in sys.argv
@@ -756,7 +754,7 @@ def main():
         _run_plexcached_restore(config_file, dry_run, verbose)
         return
 
-    app = PlexCacheApp(config_file, skip_cache, dry_run, quiet, verbose)
+    app = PlexCacheApp(config_file, dry_run, quiet, verbose)
     app.run()
 
 
