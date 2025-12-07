@@ -148,11 +148,18 @@ class CacheTimestampTracker:
     def record_cache_time(self, cache_file_path: str, source: str = "unknown") -> None:
         """Record the current time and source when a file was cached.
 
+        Only records if no entry exists - never overwrites existing timestamps.
+
         Args:
             cache_file_path: The path to the cached file.
-            source: Where the file came from - "ondeck", "watchlist", or "unknown".
+            source: Where the file came from - "ondeck", "watchlist", "pre-existing", or "unknown".
         """
         with self._lock:
+            # Never overwrite existing timestamps - file was cached when it was first recorded
+            if cache_file_path in self._timestamps:
+                logging.debug(f"Timestamp already exists for: {cache_file_path}")
+                return
+
             self._timestamps[cache_file_path] = {
                 "cached_at": datetime.now().isoformat(),
                 "source": source
