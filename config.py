@@ -57,6 +57,7 @@ class PlexConfig:
     users_toggle: bool = True
     skip_ondeck: Optional[List[str]] = None
     skip_watchlist: Optional[List[str]] = None
+    users: Optional[List[dict]] = None  # User list from settings file
 
     def __post_init__(self):
         if self.valid_sections is None:
@@ -65,6 +66,8 @@ class PlexConfig:
             self.skip_ondeck = []
         if self.skip_watchlist is None:
             self.skip_watchlist = []
+        if self.users is None:
+            self.users = []
 
 
 @dataclass
@@ -72,13 +75,28 @@ class CacheConfig:
     """Configuration for caching behavior."""
     watchlist_toggle: bool = True
     watchlist_episodes: int = 5
-    watchlist_cache_expiry: int = 48
-    watched_cache_expiry: int = 48
     watched_move: bool = True
 
-    # Add these new fields
+    # Remote watchlist via RSS
     remote_watchlist_toggle: bool = False
     remote_watchlist_rss_url: str = ""
+
+    # Cache retention: how long files stay on cache before being moved back to array
+    # Files cached less than this many hours ago will not be restored to array
+    # Applies to all cached files (OnDeck, Watchlist, etc.) to protect against accidental changes
+    cache_retention_hours: int = 12
+
+    # Watchlist retention: auto-expire watchlist items after X days
+    # Files are removed from cache X days after being added to watchlist, even if still on watchlist
+    # 0 = disabled (files stay as long as they're on any user's watchlist)
+    # Supports fractional days (e.g., 0.5 = 12 hours) for testing
+    watchlist_retention_days: float = 0
+
+    # Cache size limit: maximum space PlexCache can use on the cache drive
+    # Supports formats: "250GB", "500MB", "50%", or just "250" (defaults to GB)
+    # Empty string or "0" means no limit
+    cache_limit: str = ""
+    cache_limit_bytes: int = 0  # Parsed value in bytes (computed from cache_limit)
 
 
 
@@ -108,7 +126,7 @@ class ConfigManager:
         
     def load_config(self) -> None:
         """Load configuration from file and validate."""
-        logging.info(f"Loading configuration from: {self.config_file}")
+        logging.debug(f"Loading configuration from: {self.config_file}")
         
         if not self.config_file.exists():
             logging.error(f"Settings file not found: {self.config_file}")
@@ -129,7 +147,7 @@ class ConfigManager:
         self._load_all_configs()
         self._validate_values()
         self._save_updated_config()
-        logging.info("Configuration loaded and validated successfully")
+        logging.debug("Configuration loaded and validated successfully")
     
     def _process_first_start(self) -> None:
         """Handle first start configuration."""
@@ -149,6 +167,7 @@ class ConfigManager:
         self._load_cache_config()
         self._load_path_config()
         self._load_performance_config()
+        self._load_notification_config()
         self._load_misc_config()
     
     def _load_plex_config(self) -> None:
@@ -169,18 +188,33 @@ class ConfigManager:
         else:
             self.plex.skip_ondeck = self.settings_data.get('skip_ondeck', [])
             self.plex.skip_watchlist = self.settings_data.get('skip_watchlist', [])
+
+        # Load users list (contains tokens for all users including remote)
+        self.plex.users = self.settings_data.get('users', [])
     
     def _load_cache_config(self) -> None:
         """Load cache-related configuration."""
         self.cache.watchlist_toggle = self.settings_data['watchlist_toggle']
         self.cache.watchlist_episodes = self.settings_data['watchlist_episodes']
-        self.cache.watchlist_cache_expiry = self.settings_data['watchlist_cache_expiry']
-        self.cache.watched_cache_expiry = self.settings_data['watched_cache_expiry']
         self.cache.watched_move = self.settings_data['watched_move']
 
-        # Load new remote watchlist settings
+        # Load remote watchlist settings
         self.cache.remote_watchlist_toggle = self.settings_data.get('remote_watchlist_toggle', False)
         self.cache.remote_watchlist_rss_url = self.settings_data.get('remote_watchlist_rss_url', "")
+
+        # Log deprecation warning for old cache expiry settings (these are now ignored)
+        if 'watchlist_cache_expiry' in self.settings_data or 'watched_cache_expiry' in self.settings_data:
+            logging.debug("Note: watchlist_cache_expiry and watched_cache_expiry settings are deprecated and ignored. Data is now always fetched fresh.")
+
+        # Load cache retention setting (default 12 hours)
+        self.cache.cache_retention_hours = self.settings_data.get('cache_retention_hours', 12)
+
+        # Load watchlist retention setting (default 0 = disabled)
+        self.cache.watchlist_retention_days = self.settings_data.get('watchlist_retention_days', 0)
+
+        # Load and parse cache limit setting
+        self.cache.cache_limit = self.settings_data.get('cache_limit', "")
+        self.cache.cache_limit_bytes = self._parse_cache_limit(self.cache.cache_limit)
 
     
     def _load_path_config(self) -> None:
@@ -195,7 +229,15 @@ class ConfigManager:
         """Load performance-related configuration."""
         self.performance.max_concurrent_moves_array = self.settings_data['max_concurrent_moves_array']
         self.performance.max_concurrent_moves_cache = self.settings_data['max_concurrent_moves_cache']
-    
+
+    def _load_notification_config(self) -> None:
+        """Load notification-related configuration."""
+        self.notification.notification_type = self.settings_data.get('notification_type', 'system')
+        self.notification.unraid_level = self.settings_data.get('unraid_level', 'summary')
+        self.notification.webhook_level = self.settings_data.get('webhook_level', '')
+        self.notification.webhook_url = self.settings_data.get('webhook_url', '')
+        self.notification.webhook_headers = self.settings_data.get('webhook_headers', {})
+
     def _load_misc_config(self) -> None:
         """Load miscellaneous configuration."""
         self.exit_if_active_session = self.settings_data.get('exit_if_active_session')
@@ -215,9 +257,8 @@ class ConfigManager:
         required_fields = [
             'PLEX_URL', 'PLEX_TOKEN', 'number_episodes', 'valid_sections',
             'days_to_monitor', 'users_toggle', 'watchlist_toggle',
-            'watchlist_episodes', 'watchlist_cache_expiry', 'watched_cache_expiry',
-            'watched_move', 'plex_source', 'cache_dir', 'real_source',
-            'nas_library_folders', 'plex_library_folders',
+            'watchlist_episodes', 'watched_move', 'plex_source', 'cache_dir',
+            'real_source', 'nas_library_folders', 'plex_library_folders',
             'max_concurrent_moves_array', 'max_concurrent_moves_cache'
         ]
 
@@ -241,8 +282,6 @@ class ConfigManager:
             'users_toggle': bool,
             'watchlist_toggle': bool,
             'watchlist_episodes': int,
-            'watchlist_cache_expiry': int,
-            'watched_cache_expiry': int,
             'watched_move': bool,
             'plex_source': str,
             'cache_dir': str,
@@ -283,7 +322,6 @@ class ConfigManager:
         # Validate positive integers
         positive_int_fields = [
             'number_episodes', 'days_to_monitor', 'watchlist_episodes',
-            'watchlist_cache_expiry', 'watched_cache_expiry',
             'max_concurrent_moves_array', 'max_concurrent_moves_cache'
         ]
         for field in positive_int_fields:
@@ -324,6 +362,53 @@ class ConfigManager:
             logging.error(f"Error saving settings: {type(e).__name__}: {e}")
             raise
     
+    def _parse_cache_limit(self, limit_str: str) -> int:
+        """Parse cache limit string and return bytes.
+
+        Supports formats:
+        - "250GB" or "250gb" -> 250 * 1024^3 bytes
+        - "500MB" or "500mb" -> 500 * 1024^2 bytes
+        - "50%" -> percentage of total cache drive size (computed at runtime)
+        - "250" -> defaults to GB (250 * 1024^3 bytes)
+        - "" or "0" -> 0 (no limit)
+
+        Returns:
+            Bytes as int, or negative value for percentage (e.g., -50 for 50%)
+        """
+        if not limit_str or limit_str.strip() == "0":
+            return 0
+
+        limit_str = limit_str.strip().upper()
+
+        try:
+            # Check for percentage
+            if limit_str.endswith('%'):
+                percent = int(limit_str[:-1])
+                if percent <= 0 or percent > 100:
+                    logging.warning(f"Invalid cache_limit percentage '{limit_str}', must be 1-100. Using no limit.")
+                    return 0
+                # Return negative value to indicate percentage (will be computed at runtime)
+                return -percent
+
+            # Check for size units
+            if limit_str.endswith('GB'):
+                size = float(limit_str[:-2])
+                return int(size * 1024 * 1024 * 1024)
+            elif limit_str.endswith('MB'):
+                size = float(limit_str[:-2])
+                return int(size * 1024 * 1024)
+            elif limit_str.endswith('TB'):
+                size = float(limit_str[:-2])
+                return int(size * 1024 * 1024 * 1024 * 1024)
+            else:
+                # No unit specified, default to GB
+                size = float(limit_str)
+                return int(size * 1024 * 1024 * 1024)
+
+        except ValueError:
+            logging.warning(f"Invalid cache_limit value '{limit_str}'. Using no limit.")
+            return 0
+
     @staticmethod
     def _add_trailing_slashes(value: str) -> str:
         """Add trailing slashes to a path."""
@@ -339,11 +424,17 @@ class ConfigManager:
         """Remove all slashes from a list of paths."""
         return [value.strip('/\\') for value in value_list]
     
-    def get_cache_files(self) -> Tuple[Path, Path, Path]:
-        """Get cache file paths."""
+    def get_mover_exclude_file(self) -> Path:
+        """Get the path for the mover exclude file."""
         script_folder = Path(self.paths.script_folder)
-        return (
-            script_folder / "plexcache_watchlist_cache.json",
-            script_folder / "plexcache_watched_cache.json",
-            script_folder / "plexcache_mover_files_to_exclude.txt"
-        ) 
+        return script_folder / "plexcache_mover_files_to_exclude.txt"
+
+    def get_timestamp_file(self) -> Path:
+        """Get the path for the cache timestamp tracking file."""
+        script_folder = Path(self.paths.script_folder)
+        return script_folder / "plexcache_timestamps.json"
+
+    def get_watchlist_tracker_file(self) -> Path:
+        """Get the path for the watchlist retention tracker file."""
+        script_folder = Path(self.paths.script_folder)
+        return script_folder / "plexcache_watchlist_tracker.json" 

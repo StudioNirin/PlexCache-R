@@ -90,8 +90,40 @@ And set it on a cron job to run whenever you want. I run it once a day at midnig
 
 ### Command Line Options
 
-- `--debug`: Run in debug mode (no files will be moved)
-- `--skip-cache`: Skip using cached data and fetch fresh from Plex
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Simulate run without moving files (useful for testing). Alias: `--debug` |
+| `--verbose` | Show detailed DEBUG level logging. Alias: `-v` |
+| `--skip-cache` | Bypass cache expiry and fetch fresh data from Plex (OnDeck, watchlist, watched) |
+| `--restore-plexcached` | Emergency restore: scan for all `.plexcached` files and restore them to original names |
+| `--quiet` | Only send notifications on errors (suppresses summary notification). Alias: `--notify-errors-only` |
+
+**Examples:**
+```bash
+# Normal run
+python3 plexcache_app.py
+
+# Test run without moving files
+python3 plexcache_app.py --dry-run
+
+# Verbose output for troubleshooting
+python3 plexcache_app.py --verbose
+
+# Dry-run with verbose logging to see exactly what would happen
+python3 plexcache_app.py --dry-run --verbose
+
+# Force refresh watchlist/OnDeck data
+python3 plexcache_app.py --skip-cache
+
+# Restore all .plexcached backup files
+python3 plexcache_app.py --restore-plexcached
+
+# Run silently (only notify on errors) - ideal for scheduled cron jobs
+python3 plexcache_app.py --quiet
+
+# Combine flags as needed
+python3 plexcache_app.py --skip-cache --quiet
+```
 
 
 

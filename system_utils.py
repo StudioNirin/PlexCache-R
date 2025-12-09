@@ -166,10 +166,33 @@ class FileUtils:
         """Get free space in a human-readable format."""
         if not os.path.exists(directory):
             raise FileNotFoundError(f"Invalid path, unable to calculate free space for: {directory}.")
-        
+
         stat = os.statvfs(directory)
         free_space_bytes = stat.f_bfree * stat.f_frsize
         return self._convert_bytes_to_readable_size(free_space_bytes)
+
+    def get_total_drive_size(self, directory: str) -> int:
+        """Get total size of the drive in bytes."""
+        if not os.path.exists(directory):
+            raise FileNotFoundError(f"Invalid path, unable to calculate drive size for: {directory}.")
+
+        stat = os.statvfs(directory)
+        return stat.f_blocks * stat.f_frsize
+
+    def get_directory_size(self, directory: str) -> int:
+        """Calculate total size of all files in a directory (recursive) in bytes."""
+        total_size = 0
+        try:
+            for dirpath, _, filenames in os.walk(directory):
+                for filename in filenames:
+                    filepath = os.path.join(dirpath, filename)
+                    try:
+                        total_size += os.path.getsize(filepath)
+                    except (OSError, FileNotFoundError):
+                        pass  # Skip files that can't be accessed
+        except Exception as e:
+            logging.warning(f"Error calculating directory size for {directory}: {e}")
+        return total_size
     
     def get_total_size_of_files(self, files: list) -> Tuple[float, str]:
         """Calculate total size of files in human-readable format."""

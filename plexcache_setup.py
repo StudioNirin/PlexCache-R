@@ -1,4 +1,4 @@
-import json, os, requests, ntpath, posixpath, subprocess, re
+import json, os, requests, ntpath, posixpath, re, uuid, time, webbrowser
 from urllib.parse import urlparse
 from plexapi.server import PlexServer
 from plexapi.exceptions import BadRequest
@@ -53,6 +53,72 @@ def prompt_user_for_number(prompt_message, default_value, data_key, data_type=in
         except ValueError:
             print("User input is not a valid number")
 
+def prompt_user_for_duration(prompt_message, default_value, data_key):
+    """Prompt for a duration value that accepts hours (default) or days.
+
+    Accepts formats: 12, 12h, 12d (defaults to hours if no suffix)
+    Stores the value in hours.
+    """
+    while True:
+        user_input = (input(prompt_message) or default_value).strip().lower()
+        try:
+            # Check for day suffix
+            if user_input.endswith('d'):
+                days = float(user_input[:-1])
+                if days < 0:
+                    print("Please enter a non-negative number")
+                    continue
+                hours = int(days * 24)
+                settings_data[data_key] = hours
+                print(f"  Set to {hours} hours ({days} days)")
+                break
+            # Check for hour suffix (or no suffix - default to hours)
+            elif user_input.endswith('h'):
+                hours = int(user_input[:-1])
+            else:
+                hours = int(user_input)
+
+            if hours < 0:
+                print("Please enter a non-negative number")
+                continue
+            settings_data[data_key] = hours
+            break
+        except ValueError:
+            print("Invalid input. Enter a number, optionally with 'h' for hours or 'd' for days (e.g., 12, 12h, 2d)")
+
+def prompt_user_for_duration_days(prompt_message, default_value, data_key):
+    """Prompt for a duration value that accepts days (default) or hours.
+
+    Accepts formats: 30, 30d, 12h (defaults to days if no suffix)
+    Stores the value in days (as float to support fractional days from hours).
+    """
+    while True:
+        user_input = (input(prompt_message) or default_value).strip().lower()
+        try:
+            # Check for hour suffix
+            if user_input.endswith('h'):
+                hours = float(user_input[:-1])
+                if hours < 0:
+                    print("Please enter a non-negative number")
+                    continue
+                days = hours / 24
+                settings_data[data_key] = days
+                print(f"  Set to {days:.2f} days ({hours} hours)")
+                break
+            # Check for day suffix (or no suffix - default to days)
+            elif user_input.endswith('d'):
+                days = float(user_input[:-1])
+            else:
+                days = float(user_input)
+
+            if days < 0:
+                print("Please enter a non-negative number")
+                continue
+            settings_data[data_key] = days
+            break
+        except ValueError:
+            print("Invalid input. Enter a number, optionally with 'd' for days or 'h' for hours (e.g., 30, 30d, 12h)")
+
 def is_valid_plex_url(url):
     try:
         result = urlparse(url)
@@ -90,76 +156,131 @@ def is_unraid():
     return os.path.exists('/etc/unraid-version')
 
 
-def auto_detect_plex_token():
-    """
-    Auto-detect Plex token from Preferences.xml on Unraid.
-    Uses optimized search: finds appdata/apps folders first, then searches within.
-    Returns tuple of (token, preferences_path) or (None, None) if not found.
-    """
-    if not is_unraid():
-        return None, None
+# ----------------  Plex OAuth PIN Authentication ----------------
 
-    print("Searching for Plex installation...")
+# PlexCache-R client identifier - stored in settings for consistency
+PLEXCACHE_CLIENT_ID_KEY = 'plexcache_client_id'
+PLEXCACHE_PRODUCT_NAME = 'PlexCache-R'
+PLEXCACHE_PRODUCT_VERSION = '1.0'
 
-    # Step 1: Find appdata/apps folders first (fast, limited scope)
+
+def get_or_create_client_id(settings: dict) -> str:
+    """Get existing client ID from settings or create a new one."""
+    if PLEXCACHE_CLIENT_ID_KEY in settings:
+        return settings[PLEXCACHE_CLIENT_ID_KEY]
+    # Generate new UUID for this installation
+    client_id = str(uuid.uuid4())
+    settings[PLEXCACHE_CLIENT_ID_KEY] = client_id
+    return client_id
+
+
+def plex_oauth_authenticate(settings: dict, timeout_seconds: int = 300):
+    """
+    Authenticate with Plex using the PIN-based OAuth flow.
+
+    This is the official Plex authentication method that provides a user-scoped token.
+
+    Workflow:
+    1. Generate a PIN via POST to plex.tv/api/v2/pins
+    2. User opens URL in browser and logs in
+    3. Script polls until token is returned or timeout
+    4. Returns the authentication token
+
+    Args:
+        settings: The settings dict (used to get/store client ID)
+        timeout_seconds: How long to wait for user to authenticate (default 5 min)
+
+    Returns:
+        Authentication token string, or None if failed/cancelled
+    """
+    client_id = get_or_create_client_id(settings)
+
+    headers = {
+        'Accept': 'application/json',
+        'X-Plex-Product': PLEXCACHE_PRODUCT_NAME,
+        'X-Plex-Version': PLEXCACHE_PRODUCT_VERSION,
+        'X-Plex-Client-Identifier': client_id,
+    }
+
+    # Step 1: Request a PIN
+    print("\nRequesting authentication PIN from Plex...")
     try:
-        result = subprocess.run(
-            ['find', '/mnt', '-maxdepth', '4', '-type', 'd', '(', '-name', 'appdata', '-o', '-name', 'apps', ')'],
-            capture_output=True, text=True, timeout=30
+        response = requests.post(
+            'https://plex.tv/api/v2/pins',
+            headers=headers,
+            data={'strong': 'true'},  # Request a strong (long-lived) token
+            timeout=30
         )
-        app_folders = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
-        print(f"Error searching for app folders: {e}")
-        return None, None
+        response.raise_for_status()
+        pin_data = response.json()
+    except requests.RequestException as e:
+        print(f"Error requesting PIN from Plex: {e}")
+        return None
 
-    # Step 2: Search for Plex Preferences.xml within those folders
-    # Use */Plex Media Server/Preferences.xml to match both native installs and Docker variants
-    preferences_path = None
-    for folder in app_folders:
-        try:
-            result = subprocess.run(
-                ['find', folder, '-maxdepth', '8', '-path', '*/Plex Media Server/Preferences.xml'],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.stdout.strip():
-                preferences_path = result.stdout.strip().split('\n')[0]
-                break
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            continue
+    pin_id = pin_data.get('id')
+    pin_code = pin_data.get('code')
 
-    # Step 3: Fallback to broader search if not found in appdata/apps folders
-    if not preferences_path:
-        print("Not found in appdata/apps folders, searching /mnt (this may take a moment)...")
-        try:
-            result = subprocess.run(
-                ['find', '/mnt', '-maxdepth', '10', '-path', '*/Plex Media Server/Preferences.xml'],
-                capture_output=True, text=True, timeout=60
-            )
-            if result.stdout.strip():
-                preferences_path = result.stdout.strip().split('\n')[0]
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
-            print(f"Error during fallback search: {e}")
-            return None, None
+    if not pin_id or not pin_code:
+        print("Error: Invalid response from Plex PIN endpoint")
+        return None
 
-    if not preferences_path:
-        print("Could not find Plex Preferences.xml")
-        return None, None
+    # Step 2: Build the auth URL and prompt user
+    auth_url = f"https://app.plex.tv/auth#?clientID={client_id}&code={pin_code}&context%5Bdevice%5D%5Bproduct%5D={PLEXCACHE_PRODUCT_NAME}"
 
-    print(f"Found: {preferences_path}")
+    print("\n" + "=" * 70)
+    print("PLEX AUTHENTICATION")
+    print("=" * 70)
+    print("\nPlease open the following URL in your browser to authenticate:")
+    print(f"\n  {auth_url}\n")
 
-    # Step 4: Extract token from Preferences.xml
+    # Try to open browser automatically
     try:
-        with open(preferences_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        match = re.search(r'PlexOnlineToken="([^"]+)"', content)
-        if match:
-            return match.group(1), preferences_path
-        else:
-            print("Could not find PlexOnlineToken in Preferences.xml")
-            return None, None
-    except (IOError, OSError) as e:
-        print(f"Error reading Preferences.xml: {e}")
-        return None, None
+        webbrowser.open(auth_url)
+        print("(A browser window should have opened automatically)")
+    except Exception:
+        print("(Could not open browser automatically - please copy the URL above)")
+
+    print("\nAfter logging in and clicking 'Allow', return here.")
+    print(f"Waiting for authentication (timeout: {timeout_seconds // 60} minutes)...")
+    print("=" * 70)
+
+    # Step 3: Poll for the token
+    poll_interval = 2  # seconds between polls
+    start_time = time.time()
+
+    while time.time() - start_time < timeout_seconds:
+        try:
+            response = requests.get(
+                f'https://plex.tv/api/v2/pins/{pin_id}',
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            pin_status = response.json()
+
+            auth_token = pin_status.get('authToken')
+            if auth_token:
+                print("\nAuthentication successful!")
+                return auth_token
+
+            # Check if PIN expired
+            if pin_status.get('expiresAt'):
+                # PIN is still valid, keep polling
+                pass
+
+        except requests.RequestException as e:
+            print(f"\nWarning: Error checking PIN status: {e}")
+            # Continue polling despite transient errors
+
+        # Show progress indicator
+        elapsed = int(time.time() - start_time)
+        remaining = timeout_seconds - elapsed
+        print(f"\r  Waiting... ({remaining}s remaining)    ", end='', flush=True)
+
+        time.sleep(poll_interval)
+
+    print("\n\nAuthentication timed out. Please try again.")
+    return None
 
 
 # ---------------- Setup Function ----------------
@@ -183,38 +304,42 @@ def setup():
     while 'PLEX_TOKEN' not in settings_data:
         token = None
 
-        # Offer auto-detection on Unraid
-        if is_unraid():
-            while True:
-                auto_detect = input('\nWould you like to auto-detect your Plex token? [Y/n] ') or 'yes'
-                if auto_detect.lower() in ['y', 'yes']:
-                    detected_token, plex_path = auto_detect_plex_token()
-                    if detected_token:
-                        # Show partial token for security (first 8 and last 4 chars)
-                        if len(detected_token) > 12:
-                            masked_token = detected_token[:8] + '...' + detected_token[-4:]
-                        else:
-                            masked_token = detected_token[:4] + '...'
-                        print(f"Token found: {masked_token}")
-                        while True:
-                            use_token = input(f'Use this token? [Y/n] ') or 'yes'
-                            if use_token.lower() in ['y', 'yes']:
-                                token = detected_token
-                                break
-                            elif use_token.lower() in ['n', 'no']:
-                                print("Token not used. Please enter manually.")
-                                break
-                            else:
-                                print("Invalid choice. Please enter either yes or no")
-                    break
-                elif auto_detect.lower() in ['n', 'no']:
-                    break
-                else:
-                    print("Invalid choice. Please enter either yes or no")
+        # Offer authentication options
+        print("\n" + "-" * 60)
+        print("PLEX AUTHENTICATION")
+        print("-" * 60)
+        print("\nHow would you like to authenticate with Plex?")
+        print("  1. Authenticate via Plex.tv (recommended - opens browser)")
+        print("  2. Enter token manually (from browser inspection)")
+        print("")
 
-        # Manual entry if no token yet
-        if not token:
-            token = input('\nEnter your plex token: ')
+        while token is None:
+            auth_choice = input("Select option [1/2]: ").strip()
+
+            if auth_choice == '1':
+                # OAuth PIN-based authentication
+                token = plex_oauth_authenticate(settings_data)
+                if token is None:
+                    print("\nOAuth authentication failed or was cancelled.")
+                    retry = input("Would you like to try again or enter token manually? [retry/manual] ").strip().lower()
+                    if retry == 'manual':
+                        token = input('\nEnter your plex token: ')
+                    # else loop continues for retry
+                break
+
+            elif auth_choice == '2':
+                # Manual token entry
+                print("\nTo get your token manually:")
+                print("  1. Open Plex Web App in your browser")
+                print("  2. Open Developer Tools (F12) -> Network tab")
+                print("  3. Refresh the page and look for any request to plex.tv")
+                print("  4. Find 'X-Plex-Token' in the request headers")
+                print("")
+                token = input('Enter your plex token: ')
+                break
+
+            else:
+                print("Invalid choice. Please enter 1 or 2")
 
         if not token.strip():
             print("Token is not valid. It cannot be empty.")
@@ -324,11 +449,9 @@ def setup():
         if watchlist.lower() in ['n', 'no']:
             settings_data['watchlist_toggle'] = False
             settings_data['watchlist_episodes'] = 0
-            settings_data['watchlist_cache_expiry'] = 1
         elif watchlist.lower() in ['y', 'yes']:
             settings_data['watchlist_toggle'] = True
             prompt_user_for_number('\nHow many episodes do you want fetch from your Watchlist? (default: 3) ', '3', 'watchlist_episodes')
-            prompt_user_for_number('\nDefine the watchlist cache expiry duration in hours (default: 6) ', '6', 'watchlist_cache_expiry')
         else:
             print("Invalid choice. Please enter either yes or no")
 
@@ -349,8 +472,15 @@ def setup():
             user_entries = []
             for user in plex.myPlexAccount().users():
                 name = user.title
-                username = getattr(user, "username", None)
-                is_local = username is None
+                user_id = getattr(user, "id", None)
+                # Check if user is a home/managed user (not a remote friend)
+                # home=True means they're part of Plex Home
+                # restricted="1" means they're a managed user (no separate plex.tv account)
+                # Note: restricted comes as string "0" or "1" from API, not boolean
+                is_home = getattr(user, "home", False)
+                is_restricted = getattr(user, "restricted", False)
+                # Convert to proper boolean (restricted is a string from the API)
+                is_local = bool(is_home) or (is_restricted == "1" or is_restricted == 1 or is_restricted is True)
                 try:
                     token = user.get_token(plex.machineIdentifier)
                 except Exception as e:
@@ -363,6 +493,7 @@ def setup():
 
                 user_entries.append({
                     "title": name,
+                    "id": user_id,
                     "token": token,
                     "is_local": is_local,
                     "skip_ondeck": False,
@@ -438,12 +569,71 @@ def setup():
         watched_move = input('\nDo you want to move watched media from the cache back to the array? [y/N] ') or 'no'
         if watched_move.lower() in ['n', 'no']:
             settings_data['watched_move'] = False
-            settings_data['watched_cache_expiry'] = 48
         elif watched_move.lower() in ['y', 'yes']:
             settings_data['watched_move'] = True
-            prompt_user_for_number('\nDefine the watched cache expiry duration in hours (default: 48) ', '48', 'watched_cache_expiry')
         else:
             print("Invalid choice. Please enter either yes or no")
+
+    # ---------------- Cache Retention Period ----------------
+    if 'cache_retention_hours' not in settings_data:
+        print('\nCache retention prevents files from being moved back to array immediately after caching.')
+        print('This protects against accidental unwatching, watchlist removal, or Plex glitches.')
+        print('Applies to all cached files (OnDeck, Watchlist, etc.).')
+        print('Enter a number in hours (default) or use "d" suffix for days (e.g., 12, 12h, 2d)')
+        prompt_user_for_duration('Cache retention period (default: 12h): ', '12', 'cache_retention_hours')
+
+    # ---------------- Watchlist Retention Period ----------------
+    if 'watchlist_retention_days' not in settings_data:
+        print('\nWatchlist retention automatically expires cached files after a set number of days.')
+        print('Files are removed from cache X days after being added to watchlist, even if still on watchlist.')
+        print('This prevents watchlist items from sitting on cache indefinitely.')
+        print('Multi-user: If another user adds the same item, the retention timer resets.')
+        print('Enter 0 to disable (files stay cached as long as they are on any watchlist).')
+        print('Enter a number in days (default) or use "h" suffix for hours (e.g., 30, 30d, 12h)')
+        prompt_user_for_duration_days('Watchlist retention (0 to disable, default: 0): ', '0', 'watchlist_retention_days')
+
+    # ---------------- Cache Size Limit ----------------
+    if 'cache_limit' not in settings_data:
+        print('\nSet a maximum amount of space PlexCache can use on your cache drive.')
+        print('This prevents your cache from being overwhelmed by large watchlists.')
+        print('Supported formats:')
+        print('  - "250GB" or "250" (defaults to GB)')
+        print('  - "500MB"')
+        print('  - "1TB"')
+        print('  - "50%" (percentage of total cache drive size)')
+        print('  - Leave empty for no limit')
+        cache_limit = input('\nEnter cache size limit (e.g., 250GB, 50%, or leave empty for no limit): ').strip()
+        settings_data['cache_limit'] = cache_limit
+        if cache_limit:
+            print(f'Cache limit set to: {cache_limit}')
+        else:
+            print('No cache limit set.')
+
+    # ---------------- Notification Level ----------------
+    if 'unraid_level' not in settings_data:
+        print('\nNotification level controls when you receive Unraid notifications from PlexCache.')
+        print('Options:')
+        print('  - "summary" : Notify on every run with a summary (default)')
+        print('  - "error"   : Only notify when errors occur')
+        print('  - "warning" : Notify on warnings and errors')
+        print('  - ""        : Disable notifications entirely')
+        while True:
+            unraid_level = input('\nEnter notification level (summary/error/warning/blank to disable) [default: summary]: ').strip().lower()
+            if unraid_level == '':
+                # User pressed enter - use default
+                unraid_level = 'summary'
+                break
+            elif unraid_level in ['summary', 'error', 'warning', 'disable', 'disabled', 'none']:
+                if unraid_level in ['disable', 'disabled', 'none']:
+                    unraid_level = ''
+                break
+            else:
+                print('Invalid option. Please enter: summary, error, warning, or leave blank.')
+        settings_data['unraid_level'] = unraid_level
+        if unraid_level:
+            print(f'Notification level set to: {unraid_level}')
+        else:
+            print('Notifications disabled.')
 
     # ---------------- Cache / Array Paths ----------------
     if 'cache_dir' not in settings_data:
@@ -539,6 +729,100 @@ def setup():
 # ---------------- Main ----------------
 check_directory_exists(script_folder)
 
+def check_for_missing_settings(settings: dict) -> list:
+    """Check for new settings that aren't in the existing config."""
+    # List of settings that setup() can configure
+    optional_new_settings = [
+        'cache_retention_hours',
+        'cache_limit',
+        'unraid_level',
+        'watchlist_retention_days',
+    ]
+    missing = [s for s in optional_new_settings if s not in settings]
+    return missing
+
+
+def refresh_users(settings: dict) -> dict:
+    """Refresh user list from Plex API, preserving skip settings.
+
+    Re-fetches all users and updates is_local detection while keeping
+    existing skip_ondeck and skip_watchlist preferences.
+    """
+    url = settings.get('PLEX_URL')
+    token = settings.get('PLEX_TOKEN')
+
+    if not url or not token:
+        print("Error: PLEX_URL or PLEX_TOKEN not found in settings.")
+        return settings
+
+    try:
+        plex = PlexServer(url, token)
+    except Exception as e:
+        print(f"Error connecting to Plex: {e}")
+        return settings
+
+    # Build lookup of existing skip preferences by username
+    existing_users = {u.get("title"): u for u in settings.get("users", [])}
+
+    print("\nRefreshing user list from Plex API...")
+    print("-" * 60)
+
+    new_user_entries = []
+    for user in plex.myPlexAccount().users():
+        name = user.title
+        user_id = getattr(user, "id", None)
+
+        # Detect if home/local user
+        is_home = getattr(user, "home", False)
+        is_restricted = getattr(user, "restricted", False)
+        # Convert to proper boolean (restricted comes as string "0" or "1")
+        is_local = bool(is_home) or (is_restricted == "1" or is_restricted == 1 or is_restricted is True)
+
+        try:
+            user_token = user.get_token(plex.machineIdentifier)
+        except Exception as e:
+            print(f"  {name}: SKIPPED (error getting token: {e})")
+            continue
+
+        if user_token is None:
+            print(f"  {name}: SKIPPED (no token available)")
+            continue
+
+        # Preserve existing skip preferences if user existed before
+        existing = existing_users.get(name, {})
+        skip_ondeck = existing.get("skip_ondeck", False)
+        skip_watchlist = existing.get("skip_watchlist", False)
+        old_is_local = existing.get("is_local", None)
+
+        new_user_entries.append({
+            "title": name,
+            "id": user_id,
+            "token": user_token,
+            "is_local": is_local,
+            "skip_ondeck": skip_ondeck,
+            "skip_watchlist": skip_watchlist
+        })
+
+        # Show what changed
+        status = "home/local" if is_local else "remote/friend"
+        if old_is_local is not None and old_is_local != is_local:
+            print(f"  {name}: {status} (CHANGED from {'local' if old_is_local else 'remote'})")
+        else:
+            print(f"  {name}: {status}")
+
+    settings["users"] = new_user_entries
+
+    # Update skip lists
+    settings["skip_ondeck"] = [u["token"] for u in new_user_entries if u["skip_ondeck"]]
+    settings["skip_watchlist"] = [u["token"] for u in new_user_entries if u["is_local"] and u["skip_watchlist"]]
+
+    print("-" * 60)
+    home_count = sum(1 for u in new_user_entries if u["is_local"])
+    remote_count = len(new_user_entries) - home_count
+    print(f"Total: {len(new_user_entries)} users ({home_count} home/local, {remote_count} remote/friends)")
+
+    return settings
+
 if os.path.exists(settings_filename):
     try:
         settings_data = read_existing_settings(settings_filename)
@@ -549,7 +833,88 @@ if os.path.exists(settings_filename):
             settings_data = {}
             setup()
         else:
-            print("Configuration exists and appears to be valid, you can now run the plexcache.py script.\n")
+            # Check for missing new settings
+            missing_settings = check_for_missing_settings(settings_data)
+            if missing_settings:
+                print(f"Found {len(missing_settings)} new setting(s) available: {', '.join(missing_settings)}")
+                update = input("Would you like to configure these now? [Y/n] ") or 'yes'
+                if update.lower() in ['y', 'yes']:
+                    print("Updating configuration with new settings...\n")
+                    setup()
+                else:
+                    print("Skipping new settings. You can configure them later or edit the settings file directly.\n")
+            else:
+                print("Configuration exists and appears to be valid.")
+
+            # Offer to re-authenticate (useful for switching from auto-detected to OAuth token)
+            reauth = input("\nWould you like to re-authenticate with Plex? [y/N] ") or 'no'
+            if reauth.lower() in ['y', 'yes']:
+                print("\nRe-authenticating will replace your current Plex token.")
+                new_token = None
+
+                # Run OAuth flow directly (not full setup)
+                print("\n" + "-" * 60)
+                print("PLEX AUTHENTICATION")
+                print("-" * 60)
+                print("\nHow would you like to authenticate with Plex?")
+                print("  1. Authenticate via Plex.tv (recommended - opens browser)")
+                print("  2. Enter token manually (from browser inspection)")
+                print("")
+
+                while new_token is None:
+                    auth_choice = input("Select option [1/2]: ").strip()
+
+                    if auth_choice == '1':
+                        new_token = plex_oauth_authenticate(settings_data)
+                        if new_token is None:
+                            print("\nOAuth authentication failed or was cancelled.")
+                            retry = input("Would you like to try again or enter token manually? [retry/manual] ").strip().lower()
+                            if retry == 'manual':
+                                new_token = input('\nEnter your plex token: ')
+                        break
+
+                    elif auth_choice == '2':
+                        print("\nTo get your token manually:")
+                        print("  1. Open Plex Web App in your browser")
+                        print("  2. Open Developer Tools (F12) -> Network tab")
+                        print("  3. Refresh the page and look for any request to plex.tv")
+                        print("  4. Find 'X-Plex-Token' in the request headers")
+                        print("")
+                        new_token = input('Enter your plex token: ')
+                        break
+
+                    else:
+                        print("Invalid choice. Please enter 1 or 2")
+
+                if new_token and new_token.strip():
+                    # Validate the new token
+                    try:
+                        plex = PlexServer(settings_data['PLEX_URL'], new_token)
+                        user = plex.myPlexAccount().username
+                        print(f"Connection successful! Currently connected as {user}")
+                        settings_data['PLEX_TOKEN'] = new_token
+                        write_settings(settings_filename, settings_data)
+                        print("New token saved!")
+                    except Exception as e:
+                        print(f"Error: Could not connect with new token: {e}")
+                        print("Keeping existing token.")
+                else:
+                    print("No valid token provided. Keeping existing token.")
+
+            # Always offer to refresh users (fixes is_local detection for existing configs)
+            if settings_data.get('users_toggle') and settings_data.get('users'):
+                user_count = len(settings_data.get('users', []))
+                home_count = sum(1 for u in settings_data.get('users', []) if u.get('is_local'))
+                print(f"\nCurrent user list: {user_count} users ({home_count} marked as home/local)")
+                refresh = input("Would you like to refresh the user list from Plex? [y/N] ") or 'no'
+                if refresh.lower() in ['y', 'yes']:
+                    settings_data = refresh_users(settings_data)
+                    write_settings(settings_filename, settings_data)
+                    print("\nUser list refreshed and saved!")
+                else:
+                    print("Keeping existing user list.")
+
+            print("\nYou can now run the plexcache.py script.\n")
     except json.decoder.JSONDecodeError as e:
         print(f"Settings file appears to be corrupted (JSON error: {e}). Re-initializing...\n")
         settings_data = {}
