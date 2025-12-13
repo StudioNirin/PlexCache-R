@@ -214,8 +214,12 @@ class PlexManager:
                 settings_usernames.add(username)
 
                 # Build user ID -> username map for RSS author lookup
+                # RSS feed uses uuid (hex string), so store both id and uuid
                 if user_id:
                     self._user_id_to_name[str(user_id)] = username
+                user_uuid = user_entry.get("uuid")
+                if user_uuid:
+                    self._user_id_to_name[str(user_uuid)] = username
 
                 # Check skip list
                 if username in skip_users or token in skip_users:
@@ -237,6 +241,19 @@ class PlexManager:
 
             for user in users:
                 username = user.title
+
+                # Build user ID -> username map for RSS author lookup (even if skipped)
+                # RSS feed uses uuid (hex string from thumb URL), so store both id and uuid
+                if hasattr(user, 'id') and user.id:
+                    self._user_id_to_name[str(user.id)] = username
+                # Extract uuid from thumb URL: https://plex.tv/users/{uuid}/avatar
+                thumb = getattr(user, 'thumb', '')
+                if thumb and '/users/' in thumb:
+                    try:
+                        user_uuid = thumb.split('/users/')[1].split('/')[0]
+                        self._user_id_to_name[user_uuid] = username
+                    except (IndexError, AttributeError):
+                        pass
 
                 # Skip if already loaded from settings
                 if username in settings_usernames:

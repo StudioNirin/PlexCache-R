@@ -473,6 +473,14 @@ def setup():
             for user in plex.myPlexAccount().users():
                 name = user.title
                 user_id = getattr(user, "id", None)
+                # Extract uuid from thumb URL: https://plex.tv/users/{uuid}/avatar
+                user_uuid = None
+                thumb = getattr(user, "thumb", "")
+                if thumb and "/users/" in thumb:
+                    try:
+                        user_uuid = thumb.split("/users/")[1].split("/")[0]
+                    except (IndexError, AttributeError):
+                        pass
                 # Check if user is a home/managed user (not a remote friend)
                 # home=True means they're part of Plex Home
                 # restricted="1" means they're a managed user (no separate plex.tv account)
@@ -494,6 +502,7 @@ def setup():
                 user_entries.append({
                     "title": name,
                     "id": user_id,
+                    "uuid": user_uuid,
                     "token": token,
                     "is_local": is_local,
                     "skip_ondeck": False,
@@ -771,6 +780,14 @@ def refresh_users(settings: dict) -> dict:
     for user in plex.myPlexAccount().users():
         name = user.title
         user_id = getattr(user, "id", None)
+        # Extract uuid from thumb URL: https://plex.tv/users/{uuid}/avatar
+        user_uuid = None
+        thumb = getattr(user, "thumb", "")
+        if thumb and "/users/" in thumb:
+            try:
+                user_uuid = thumb.split("/users/")[1].split("/")[0]
+            except (IndexError, AttributeError):
+                pass
 
         # Detect if home/local user
         is_home = getattr(user, "home", False)
@@ -797,6 +814,7 @@ def refresh_users(settings: dict) -> dict:
         new_user_entries.append({
             "title": name,
             "id": user_id,
+            "uuid": user_uuid,
             "token": user_token,
             "is_local": is_local,
             "skip_ondeck": skip_ondeck,
