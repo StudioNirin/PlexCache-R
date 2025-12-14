@@ -1003,6 +1003,8 @@ class CachePriorityManager:
     def get_priority_report(self, cached_files: List[str]) -> str:
         """Generate a human-readable priority report for all cached files.
 
+        Sorted by: Score (desc), Source (ondeck first), Days cached (asc)
+
         Args:
             cached_files: List of cache file paths.
 
@@ -1010,18 +1012,9 @@ class CachePriorityManager:
             Formatted string showing priority scores and metadata.
         """
         priorities = self.get_all_priorities(cached_files)
-        # Reverse to show highest priority first
-        priorities.reverse()
 
-        lines = []
-        lines.append("Cache Priority Report")
-        lines.append("=" * 70)
-        lines.append(f"{'Score':>5} | {'Size':>8} | {'Source':>9} | {'Users':>5} | {'Days':>4} | File")
-        lines.append("-" * 70)
-
-        evictable_count = 0
-        evictable_bytes = 0
-
+        # Build list of report entries with all metadata for sorting
+        entries = []
         for cache_path, score in priorities:
             # Get file info
             try:
@@ -1053,12 +1046,37 @@ class CachePriorityManager:
             if len(filename) > 35:
                 filename = filename[:32] + "..."
 
-            evict_marker = " *" if score < self.eviction_min_priority else ""
-            lines.append(f"{score:>5} | {size_str:>8} | {source:>9} | {user_count:>5} | {days_cached:>4.0f} | {filename}{evict_marker}")
+            entries.append({
+                'score': score,
+                'source': source,
+                'days': days_cached,
+                'size_str': size_str,
+                'size_bytes': size_bytes,
+                'user_count': user_count,
+                'filename': filename
+            })
 
-            if score < self.eviction_min_priority:
+        # Sort by: Score (desc), Source (ondeck=0, watchlist=1, unknown=2), Days (asc)
+        source_order = {'ondeck': 0, 'watchlist': 1, 'unknown': 2}
+        entries.sort(key=lambda e: (-e['score'], source_order.get(e['source'], 2), e['days']))
+
+        # Build report
+        lines = []
+        lines.append("Cache Priority Report")
+        lines.append("=" * 70)
+        lines.append(f"{'Score':>5} | {'Size':>8} | {'Source':>9} | {'Users':>5} | {'Days':>4} | File")
+        lines.append("-" * 70)
+
+        evictable_count = 0
+        evictable_bytes = 0
+
+        for entry in entries:
+            evict_marker = " *" if entry['score'] < self.eviction_min_priority else ""
+            lines.append(f"{entry['score']:>5} | {entry['size_str']:>8} | {entry['source']:>9} | {entry['user_count']:>5} | {entry['days']:>4.0f} | {entry['filename']}{evict_marker}")
+
+            if entry['score'] < self.eviction_min_priority:
                 evictable_count += 1
-                evictable_bytes += size_bytes
+                evictable_bytes += entry['size_bytes']
 
         lines.append("-" * 70)
         lines.append(f"Items below eviction threshold ({self.eviction_min_priority}): {evictable_count}")
