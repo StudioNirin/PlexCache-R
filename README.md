@@ -46,17 +46,10 @@ The original PlexCache app only worked for local users for most features, due to
 - **`plexcache_app.py`**: Main application orchestrator
 
 
-## Installation
 
-AlienTech42 has already done a really helpful video on the original PlexCache installation, and for now it's the best resource. 
-The install process is pretty much the same for PlexCache-R. However there are some settings in the setup.py that
-are either in a different place, or are completely removed/altered/added. So don't follow the video religiously!
-https://www.youtube.com/watch?v=9oAnJJY8NH0
+## Installation and Setup
 
-
-## Setup
-
-Please check out our [Wiki section](https://github.com/bexem/PlexCache/wiki) for the step-by-step guide on how to setup PlexCache on your system. 
+Please check out our [Wiki section](https://github.com/bexem/PlexCache/wiki) for the step-by-step guide on how to setup PlexCache on your system. The WIKI should cover basically everything. If something doesn't make sense, or doesn't work, please open a new issue for it. But don't be upset if the answer is in the WIKI and we mock you for not reading it thoroughly first. 
 
 ## Notes
 
