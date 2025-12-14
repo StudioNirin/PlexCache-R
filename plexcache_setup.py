@@ -173,7 +173,8 @@ def display_path_mappings(mappings):
         print(f"     Plex path:  {m.get('plex_path', '')}")
         print(f"     Real path:  {m.get('real_path', '')}")
         if m.get('cacheable', True):
-            print(f"     Cache path: {m.get('cache_path', 'Not set')}")
+            cache_path = m.get('cache_path') or 'Not set'
+            print(f"     Cache path: {cache_path}")
         print(f"     Status: {status}, {cacheable}")
         print()
 
