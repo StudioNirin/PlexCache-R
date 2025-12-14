@@ -1034,7 +1034,7 @@ class CachePriorityManager:
 
         # Build list of report entries with all metadata for sorting
         entries = []
-        stale_count = 0  # Track files that no longer exist on disk
+        stale_entries = []  # Track files that no longer exist on disk
         for cache_path, score in priorities:
             # Get file info
             try:
@@ -1042,12 +1042,18 @@ class CachePriorityManager:
                     size_bytes = os.path.getsize(cache_path)
                     size_str = f"{size_bytes / (1024**3):.1f}GB" if size_bytes >= 1024**3 else f"{size_bytes / (1024**2):.0f}MB"
                 else:
-                    # File doesn't exist - count as stale and skip
-                    stale_count += 1
+                    # File doesn't exist - track as stale and skip
+                    filename = os.path.basename(cache_path)
+                    if len(filename) > 50:
+                        filename = filename[:47] + "..."
+                    stale_entries.append(filename)
                     continue
             except (OSError, IOError):
-                # Can't access file - count as stale and skip
-                stale_count += 1
+                # Can't access file - track as stale and skip
+                filename = os.path.basename(cache_path)
+                if len(filename) > 50:
+                    filename = filename[:47] + "..."
+                stale_entries.append(filename)
                 continue
 
             source = self.timestamp_tracker.get_source(cache_path)
@@ -1103,10 +1109,15 @@ class CachePriorityManager:
         lines.append("-" * 70)
         lines.append(f"Items below eviction threshold ({self.eviction_min_priority}): {evictable_count}")
         lines.append(f"Space that would be freed: {evictable_bytes / (1024**3):.2f}GB")
-        if stale_count > 0:
-            lines.append(f"Stale entries (file not found): {stale_count} — run app to clean")
         lines.append("")
         lines.append("* = Would be evicted when space is needed")
+
+        # List stale entries if any
+        if stale_entries:
+            lines.append("")
+            lines.append(f"Stale entries (file not found): {len(stale_entries)} — run app to clean")
+            for stale_file in stale_entries:
+                lines.append(f"  - {stale_file}")
 
         return "\n".join(lines)
 
