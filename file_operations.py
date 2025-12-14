@@ -1116,7 +1116,7 @@ class CachePriorityManager:
         if stale_entries:
             lines.append("")
             lines.append(f"Stale entries (file not found): {len(stale_entries)} — run app to clean")
-            for stale_file in stale_entries:
+            for stale_file in sorted(stale_entries):
                 lines.append(f"  - {stale_file}")
 
         return "\n".join(lines)
