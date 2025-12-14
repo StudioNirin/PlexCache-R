@@ -29,17 +29,48 @@ class NotificationConfig:
 
 
 @dataclass
+class PathMapping:
+    """Single path mapping configuration for multi-path support.
+
+    Maps a Plex container path to its real filesystem path and optional cache path.
+    Allows per-library control over caching behavior.
+
+    Attributes:
+        name: Human-readable identifier for logging/diagnostics
+        plex_path: Path as Plex sees it (container mount point)
+        real_path: Actual filesystem path where PlexCache runs
+        cache_path: Cache destination path (None if not cacheable)
+        cacheable: Whether files from this mapping can be moved to cache
+        enabled: Toggle mapping on/off without deleting config
+    """
+    name: str = ""
+    plex_path: str = ""
+    real_path: str = ""
+    cache_path: Optional[str] = None
+    cacheable: bool = True
+    enabled: bool = True
+
+
+@dataclass
 class PathConfig:
     """Configuration for file paths and directories."""
     script_folder: str = str(_SCRIPT_DIR)
     logs_folder: str = str(_SCRIPT_DIR / "logs")
+
+    # Multi-path mapping support (new)
+    path_mappings: Optional[List[PathMapping]] = None
+
+    # Legacy single-path fields (deprecated, kept for migration)
     plex_source: str = ""
     real_source: str = ""
     cache_dir: str = ""
+
     nas_library_folders: Optional[List[str]] = None
     plex_library_folders: Optional[List[str]] = None
 
     def __post_init__(self):
+        if self.path_mappings is None:
+            self.path_mappings = []
         if self.nas_library_folders is None:
             self.nas_library_folders = []
         if self.plex_library_folders is None:
@@ -118,6 +149,58 @@ class PerformanceConfig:
     permissions: int = 0o777
 
 
+def migrate_path_settings(settings: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+    """Migrate legacy single-path settings to multi-path format.
+
+    Converts old plex_source/real_source/cache_dir settings to the new
+    path_mappings array format. Preserves original settings for backwards
+    compatibility during the transition period.
+
+    Args:
+        settings: The raw settings dictionary from JSON file.
+
+    Returns:
+        Tuple of (updated_settings, was_migrated).
+        was_migrated is True if migration was performed.
+    """
+    # Already migrated - has path_mappings array
+    if "path_mappings" in settings:
+        return settings, False
+
+    # Check for legacy settings
+    plex_source = settings.get("plex_source", "")
+    real_source = settings.get("real_source", "")
+    cache_dir = settings.get("cache_dir", "")
+
+    # No legacy settings to migrate
+    if not plex_source and not real_source:
+        return settings, False
+
+    logging.info("Migrating legacy path settings to multi-path format...")
+
+    # Create single mapping from legacy settings
+    mapping = {
+        "name": "Default (migrated)",
+        "plex_path": plex_source,
+        "real_path": real_source,
+        "cache_path": cache_dir,
+        "cacheable": True,
+        "enabled": True
+    }
+
+    settings["path_mappings"] = [mapping]
+
+    # Keep legacy fields for backwards compatibility (other code may still use them)
+    # They will be deprecated over time as code is updated to use path_mappings
+
+    logging.info(f"Migration complete: created mapping '{mapping['name']}'")
+    logging.info(f"  plex_path: {mapping['plex_path']}")
+    logging.info(f"  real_path: {mapping['real_path']}")
+    logging.info(f"  cache_path: {mapping['cache_path']}")
+
+    return settings, True
+
+
 class ConfigManager:
     """Manages application configuration loading and validation."""
     
@@ -131,6 +214,7 @@ class ConfigManager:
         self.performance = PerformanceConfig()
         self.debug = False
         self.exit_if_active_session = False
+        self._path_settings_migrated = False
         
     def load_config(self) -> None:
         """Load configuration from file and validate."""
@@ -147,7 +231,10 @@ class ConfigManager:
         except json.JSONDecodeError as e:
             logging.error(f"Invalid JSON in settings file: {type(e).__name__}: {e}")
             raise ValueError(f"Invalid JSON in settings file: {e}")
-        
+
+        # Migrate legacy path settings to multi-path format if needed
+        self.settings_data, self._path_settings_migrated = migrate_path_settings(self.settings_data)
+
         logging.debug("Processing configuration...")
         self._validate_required_fields()
         self._validate_types()
@@ -242,11 +329,26 @@ class ConfigManager:
 
     def _load_path_config(self) -> None:
         """Load path-related configuration."""
+        # Load legacy single-path settings (still needed for backwards compatibility)
         self.paths.plex_source = self._add_trailing_slashes(self.settings_data['plex_source'])
         self.paths.real_source = self._add_trailing_slashes(self.settings_data['real_source'])
         self.paths.cache_dir = self._add_trailing_slashes(self.settings_data['cache_dir'])
         self.paths.nas_library_folders = self._remove_all_slashes(self.settings_data['nas_library_folders'])
         self.paths.plex_library_folders = self._remove_all_slashes(self.settings_data['plex_library_folders'])
+
+        # Load multi-path mappings (new format)
+        self.paths.path_mappings = []
+        for mapping_data in self.settings_data.get('path_mappings', []):
+            mapping = PathMapping(
+                name=mapping_data.get('name', 'Unnamed'),
+                plex_path=self._add_trailing_slashes(mapping_data.get('plex_path', '')),
+                real_path=self._add_trailing_slashes(mapping_data.get('real_path', '')),
+                cache_path=self._add_trailing_slashes(mapping_data['cache_path']) if mapping_data.get('cache_path') else None,
+                cacheable=mapping_data.get('cacheable', True),
+                enabled=mapping_data.get('enabled', True)
+            )
+            self.paths.path_mappings.append(mapping)
+            logging.debug(f"Loaded path mapping: {mapping.name} ({mapping.plex_path} -> {mapping.real_path})")
     
     def _load_performance_config(self) -> None:
         """Load performance-related configuration."""
@@ -378,6 +480,20 @@ class ConfigManager:
                 'skip_watchlist': self.plex.skip_watchlist,
                 'exit_if_active_session': self.exit_if_active_session,
             })
+
+            # Save path_mappings if present
+            if self.paths.path_mappings:
+                self.settings_data['path_mappings'] = [
+                    {
+                        'name': m.name,
+                        'plex_path': m.plex_path,
+                        'real_path': m.real_path,
+                        'cache_path': m.cache_path,
+                        'cacheable': m.cacheable,
+                        'enabled': m.enabled
+                    }
+                    for m in self.paths.path_mappings
+                ]
 
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.settings_data, f, indent=4)

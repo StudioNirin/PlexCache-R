@@ -10,8 +10,11 @@ import threading
 import json
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Set, Optional, Tuple, Dict
+from typing import List, Set, Optional, Tuple, Dict, TYPE_CHECKING
 import re
+
+if TYPE_CHECKING:
+    from config import PathMapping
 
 # Extension used to mark array files that have been cached
 PLEXCACHED_EXTENSION = ".plexcached"
@@ -1554,6 +1557,181 @@ class FilePathModifier:
             logging.debug(f"Edited path: {file_path}")
 
         return result
+
+
+class MultiPathModifier:
+    """Handles path conversion with multiple mapping support.
+
+    Replaces the legacy FilePathModifier for setups with multiple path mappings.
+    Supports:
+    - Multiple independent path mappings (e.g., local array + remote NAS)
+    - Per-mapping cache configuration
+    - Non-cacheable paths (remote storage that shouldn't be cached)
+    - Longest-prefix matching for overlapping paths
+
+    Attributes:
+        mappings: List of PathMapping objects, sorted by plex_path length (descending)
+                  for longest-prefix matching.
+    """
+
+    def __init__(self, mappings: List['PathMapping']):
+        """Initialize with list of path mappings.
+
+        Args:
+            mappings: List of PathMapping objects. Will be filtered to enabled only
+                      and sorted by plex_path length (descending) for longest-prefix matching.
+        """
+        # Import here to avoid circular imports
+        from config import PathMapping
+
+        # Filter to enabled mappings and sort by plex_path length (longest first)
+        self.mappings = sorted(
+            [m for m in mappings if m.enabled],
+            key=lambda m: len(m.plex_path),
+            reverse=True
+        )
+
+        if not self.mappings:
+            logging.warning("No enabled path mappings configured!")
+        else:
+            logging.debug(f"MultiPathModifier initialized with {len(self.mappings)} mappings")
+            for m in self.mappings:
+                cacheable_str = "cacheable" if m.cacheable else "NOT cacheable"
+                logging.debug(f"  {m.name}: {m.plex_path} -> {m.real_path} ({cacheable_str})")
+
+    def convert_plex_to_real(self, plex_path: str) -> Tuple[str, Optional['PathMapping']]:
+        """Convert Plex path to real filesystem path.
+
+        Args:
+            plex_path: Path as returned by Plex API.
+
+        Returns:
+            Tuple of (converted_path, mapping_used).
+            If no mapping matches, returns (original_path, None).
+        """
+        # Check if already converted (matches any real_path prefix)
+        for mapping in self.mappings:
+            if plex_path.startswith(mapping.real_path):
+                logging.debug(f"Path already in real format, skipping: {plex_path}")
+                return (plex_path, mapping)
+
+        # Find matching mapping (longest prefix wins due to sort order)
+        for mapping in self.mappings:
+            if plex_path.startswith(mapping.plex_path):
+                converted = plex_path.replace(mapping.plex_path, mapping.real_path, 1)
+                logging.debug(f"Converted path using '{mapping.name}': {plex_path} -> {converted}")
+                return (converted, mapping)
+
+        logging.warning(f"No path mapping found for: {plex_path}")
+        return (plex_path, None)
+
+    def convert_real_to_cache(self, real_path: str) -> Tuple[Optional[str], Optional['PathMapping']]:
+        """Convert real filesystem path to cache path.
+
+        Args:
+            real_path: Actual filesystem path.
+
+        Returns:
+            Tuple of (cache_path, mapping_used).
+            Returns (None, mapping) if path is not cacheable.
+            Returns (None, None) if no mapping matches.
+        """
+        for mapping in self.mappings:
+            if real_path.startswith(mapping.real_path):
+                if not mapping.cacheable or not mapping.cache_path:
+                    logging.debug(f"Path not cacheable ({mapping.name}): {real_path}")
+                    return (None, mapping)
+                cache = real_path.replace(mapping.real_path, mapping.cache_path, 1)
+                return (cache, mapping)
+
+        logging.warning(f"No mapping found for real path: {real_path}")
+        return (None, None)
+
+    def convert_cache_to_real(self, cache_path: str) -> Tuple[Optional[str], Optional['PathMapping']]:
+        """Convert cache path back to real filesystem path.
+
+        Args:
+            cache_path: Path on cache drive.
+
+        Returns:
+            Tuple of (real_path, mapping_used).
+            Returns (None, None) if no mapping matches.
+        """
+        for mapping in self.mappings:
+            if mapping.cache_path and cache_path.startswith(mapping.cache_path):
+                real = cache_path.replace(mapping.cache_path, mapping.real_path, 1)
+                return (real, mapping)
+
+        logging.warning(f"No mapping found for cache path: {cache_path}")
+        return (None, None)
+
+    def is_cacheable(self, real_path: str) -> bool:
+        """Check if a real filesystem path is cacheable.
+
+        Args:
+            real_path: Actual filesystem path.
+
+        Returns:
+            True if path belongs to a cacheable mapping, False otherwise.
+        """
+        for mapping in self.mappings:
+            if real_path.startswith(mapping.real_path):
+                return mapping.cacheable
+        return False
+
+    def get_mapping_for_path(self, path: str) -> Optional['PathMapping']:
+        """Get the mapping that handles a given path.
+
+        Args:
+            path: Any path (plex, real, or cache).
+
+        Returns:
+            The PathMapping that handles this path, or None.
+        """
+        for mapping in self.mappings:
+            if (path.startswith(mapping.plex_path) or
+                path.startswith(mapping.real_path) or
+                (mapping.cache_path and path.startswith(mapping.cache_path))):
+                return mapping
+        return None
+
+    def modify_file_paths(self, files: List[str]) -> List[str]:
+        """Convert a list of Plex paths to real paths.
+
+        Compatibility method - replaces legacy FilePathModifier.modify_file_paths().
+
+        Args:
+            files: List of Plex paths.
+
+        Returns:
+            List of converted real paths.
+        """
+        if files is None:
+            return []
+
+        logging.debug("Converting file paths using multi-path mappings...")
+        result = []
+        for file_path in files:
+            converted, mapping = self.convert_plex_to_real(file_path)
+            result.append(converted)
+        return result
+
+    def get_mapping_stats(self) -> Dict[str, Dict[str, any]]:
+        """Get statistics about path mappings.
+
+        Returns:
+            Dict mapping names to stats (plex_path, real_path, cacheable, enabled).
+        """
+        return {
+            m.name: {
+                'plex_path': m.plex_path,
+                'real_path': m.real_path,
+                'cache_path': m.cache_path,
+                'cacheable': m.cacheable,
+                'enabled': m.enabled
+            }
+            for m in self.mappings
+        }
 
 
 class SubtitleFinder:
