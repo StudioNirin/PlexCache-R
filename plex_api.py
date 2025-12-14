@@ -236,9 +236,11 @@ class PlexManager:
                 # RSS feed uses uuid (hex string), so store both id and uuid
                 if user_id:
                     self._user_id_to_name[str(user_id)] = username
+                    logging.debug(f"[PLEX API] Mapped ID {user_id} -> {username}")
                 user_uuid = user_entry.get("uuid")
                 if user_uuid:
                     self._user_id_to_name[str(user_uuid)] = username
+                    logging.debug(f"[PLEX API] Mapped UUID {user_uuid} -> {username}")
 
                 # Check skip list
                 if username in skip_users or token in skip_users:
@@ -333,6 +335,57 @@ class PlexManager:
         if username in self._user_tokens:
             del self._user_tokens[username]
         self._token_cache.invalidate(username)
+
+    def resolve_user_uuid(self, uuid: str) -> Optional[str]:
+        """Try to resolve a UUID to a username by querying the Plex API.
+
+        Args:
+            uuid: The UUID string to look up (e.g., from RSS feed author).
+
+        Returns:
+            The username if found, None otherwise.
+        """
+        # Check if already in mapping
+        if uuid in self._user_id_to_name:
+            return self._user_id_to_name[uuid]
+
+        # Track UUIDs we've tried to resolve to avoid repeated API calls
+        if not hasattr(self, '_resolved_uuids'):
+            self._resolved_uuids = set()
+
+        if uuid in self._resolved_uuids:
+            return None  # Already tried, not found
+
+        self._resolved_uuids.add(uuid)
+
+        # Re-query Plex API to find this UUID
+        try:
+            self._rate_limited_api_call()
+            account = self.plex.myPlexAccount()
+            users = account.users()
+
+            for user in users:
+                username = user.title
+                # Extract UUID from thumb URL
+                thumb = getattr(user, 'thumb', '')
+                if thumb and '/users/' in thumb:
+                    try:
+                        user_uuid = thumb.split('/users/')[1].split('/')[0]
+                        # Add to mapping
+                        self._user_id_to_name[user_uuid] = username
+                        # Check if this is the one we're looking for
+                        if user_uuid == uuid:
+                            logging.debug(f"[PLEX API] Resolved UUID {uuid} to username: {username}")
+                            return username
+                    except (IndexError, AttributeError):
+                        pass
+
+            logging.debug(f"[PLEX API] Could not resolve UUID: {uuid}")
+            return None
+
+        except Exception as e:
+            _log_api_error(f"resolve UUID {uuid}", e)
+            return None
 
     def get_plex_instance(self, user=None) -> Tuple[Optional[str], Optional[PlexServer]]:
         """Get Plex instance for a specific user using cached tokens."""
@@ -732,8 +785,13 @@ class PlexManager:
                     if author_id and author_id in self._user_id_to_name:
                         rss_username = self._user_id_to_name[author_id]
                     elif author_id:
-                        rss_username = f"User#{author_id}"
-                        unknown_user_ids.add(author_id)
+                        # Try to resolve the unknown UUID via API
+                        resolved_name = self.resolve_user_uuid(author_id)
+                        if resolved_name:
+                            rss_username = resolved_name
+                        else:
+                            rss_username = f"User#{author_id}"
+                            unknown_user_ids.add(author_id)
                     else:
                         rss_username = "Friends (RSS)"
                     cleaned_title = self.clean_rss_title(title)
