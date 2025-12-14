@@ -17,7 +17,7 @@ from config import ConfigManager
 from logging_config import LoggingManager
 from system_utils import SystemDetector, PathConverter, FileUtils, SingleInstanceLock
 from plex_api import PlexManager
-from file_operations import FilePathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, PlexcachedMigration
+from file_operations import FilePathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration
 
 
 class PlexCacheApp:
@@ -259,6 +259,13 @@ class PlexCacheApp:
         watchlist_tracker_file = self.config_manager.get_watchlist_tracker_file()
         self.watchlist_tracker = WatchlistTracker(str(watchlist_tracker_file))
 
+        # Initialize the OnDeck tracker for priority scoring
+        ondeck_tracker_file = os.path.join(
+            self.config_manager.paths.script_folder,
+            "plexcache_ondeck_tracker.json"
+        )
+        self.ondeck_tracker = OnDeckTracker(ondeck_tracker_file)
+
         self.file_filter = FileFilter(
             real_source=self.config_manager.paths.real_source,
             cache_dir=self.config_manager.paths.cache_dir,
@@ -281,6 +288,14 @@ class PlexCacheApp:
         self.cache_cleanup = CacheCleanup(
             self.config_manager.paths.cache_dir,
             self.config_manager.paths.nas_library_folders
+        )
+
+        # Initialize priority manager for smart eviction
+        self.priority_manager = CachePriorityManager(
+            timestamp_tracker=self.timestamp_tracker,
+            watchlist_tracker=self.watchlist_tracker,
+            ondeck_tracker=self.ondeck_tracker,
+            eviction_min_priority=self.config_manager.cache.eviction_min_priority
         )
         logging.debug("All components initialized successfully")
     
@@ -383,9 +398,12 @@ class PlexCacheApp:
         # Use a set to collect already-modified paths (real source paths)
         modified_paths_set = set()
 
-        # Fetch OnDeck Media
+        # Clear OnDeck tracker at start of each run (OnDeck status is ephemeral)
+        self.ondeck_tracker.clear_for_run()
+
+        # Fetch OnDeck Media - returns List[Tuple[str, str]] (file_path, username)
         logging.debug("Fetching OnDeck media...")
-        ondeck_media = self.plex_manager.get_on_deck_media(
+        ondeck_media_tuples = self.plex_manager.get_on_deck_media(
             self.config_manager.plex.valid_sections or [],
             self.config_manager.plex.days_to_monitor,
             self.config_manager.plex.number_episodes,
@@ -393,9 +411,20 @@ class PlexCacheApp:
             self.config_manager.plex.skip_ondeck or []
         )
 
+        # Extract just the file paths for path modification
+        ondeck_files = [file_path for file_path, _ in ondeck_media_tuples]
+
         # Edit file paths for OnDeck media (convert plex paths to real paths)
         logging.debug("Modifying file paths for OnDeck media...")
-        modified_ondeck = self.file_path_modifier.modify_file_paths(list(ondeck_media))
+        modified_ondeck = self.file_path_modifier.modify_file_paths(ondeck_files)
+
+        # Build a mapping from original plex path to modified real path
+        plex_to_real = dict(zip(ondeck_files, modified_ondeck))
+
+        # Populate OnDeck tracker with user info using modified paths
+        for file_path, username in ondeck_media_tuples:
+            real_path = plex_to_real.get(file_path, file_path)
+            self.ondeck_tracker.update_entry(real_path, username)
 
         # Store modified OnDeck items for filtering later
         self.ondeck_items = set(modified_ondeck)
@@ -445,7 +474,7 @@ class PlexCacheApp:
         self.media_to_cache = self.file_path_modifier.modify_file_paths(list(modified_paths_set))
 
         # Log consolidated summary
-        logging.info(f"OnDeck: {len(ondeck_media)} items, Watchlist: {watchlist_count} items, Watched: {watched_count} items")
+        logging.info(f"OnDeck: {len(ondeck_media_tuples)} items, Watchlist: {watchlist_count} items, Watched: {watched_count} items")
 
         # Check for files that should be moved back to array (no longer needed in cache)
         logging.debug("Checking for files to move back to array...")
@@ -704,6 +733,179 @@ class PlexCacheApp:
 
         return files_to_cache
 
+    def _run_smart_eviction(self, needed_space_bytes: int = 0) -> tuple:
+        """Run smart eviction to free cache space for higher-priority items.
+
+        Evicts lowest-priority cached items that fall below the minimum priority
+        threshold. Restores their .plexcached backup files on the array.
+
+        Args:
+            needed_space_bytes: Additional space needed (0 = just evict low-priority items)
+
+        Returns:
+            Tuple of (files_evicted_count, bytes_freed)
+        """
+        eviction_mode = self.config_manager.cache.cache_eviction_mode
+        if eviction_mode == "none":
+            return (0, 0)
+
+        cache_limit_bytes = self.config_manager.cache.cache_limit_bytes
+        if cache_limit_bytes == 0:
+            # No limit set, nothing to evict
+            return (0, 0)
+
+        # Handle percentage-based limit
+        cache_dir = self.config_manager.paths.cache_dir
+        if cache_limit_bytes < 0:
+            percent = abs(cache_limit_bytes)
+            try:
+                total_drive_size = self.file_utils.get_total_drive_size(cache_dir)
+                cache_limit_bytes = int(total_drive_size * percent / 100)
+            except Exception:
+                return (0, 0)
+
+        # Calculate current PlexCache tracked size from exclude file
+        exclude_file = self.config_manager.get_mover_exclude_file()
+        if not exclude_file.exists():
+            return (0, 0)
+
+        cached_files = []
+        plexcache_tracked = 0
+        try:
+            with open(exclude_file, 'r') as f:
+                cached_files = [line.strip() for line in f if line.strip()]
+            for cached_file in cached_files:
+                try:
+                    if os.path.exists(cached_file):
+                        plexcache_tracked += os.path.getsize(cached_file)
+                except (OSError, FileNotFoundError):
+                    pass
+        except Exception as e:
+            logging.warning(f"Error reading exclude file for eviction: {e}")
+            return (0, 0)
+
+        # Check if we need to evict
+        threshold_percent = self.config_manager.cache.cache_eviction_threshold_percent
+        threshold_bytes = cache_limit_bytes * threshold_percent / 100
+
+        if plexcache_tracked < threshold_bytes and needed_space_bytes == 0:
+            logging.debug(f"Cache usage ({plexcache_tracked/1e9:.1f}GB) below threshold ({threshold_bytes/1e9:.1f}GB), skipping eviction")
+            return (0, 0)
+
+        # Calculate how much space to free
+        space_to_free = max(needed_space_bytes, plexcache_tracked - threshold_bytes)
+        if space_to_free <= 0:
+            return (0, 0)
+
+        logging.info(f"Smart eviction: need to free {space_to_free/1e9:.2f}GB")
+
+        # Get eviction candidates based on mode
+        if eviction_mode == "smart":
+            candidates = self.priority_manager.get_eviction_candidates(cached_files, int(space_to_free))
+        elif eviction_mode == "fifo":
+            # FIFO: evict oldest cached files first (by timestamp)
+            candidates = self._get_fifo_eviction_candidates(cached_files, int(space_to_free))
+        else:
+            return (0, 0)
+
+        if not candidates:
+            logging.info("No low-priority items available for eviction")
+            return (0, 0)
+
+        # Log what we're evicting
+        for cache_path in candidates:
+            if eviction_mode == "smart":
+                priority = self.priority_manager.calculate_priority(cache_path)
+                priority_info = f"priority={priority}"
+            else:
+                priority_info = "fifo"
+            try:
+                size_mb = os.path.getsize(cache_path) / (1024**2)
+            except (OSError, FileNotFoundError):
+                size_mb = 0
+            logging.info(f"Evicting ({priority_info}): {os.path.basename(cache_path)} ({size_mb:.1f}MB)")
+
+        if self.dry_run:
+            logging.info(f"DRY-RUN: Would evict {len(candidates)} files")
+            return (0, 0)
+
+        # Perform eviction: restore .plexcached files, remove from exclude list
+        files_evicted = 0
+        bytes_freed = 0
+        real_source = self.config_manager.paths.real_source
+
+        for cache_path in candidates:
+            try:
+                file_size = os.path.getsize(cache_path) if os.path.exists(cache_path) else 0
+
+                # Find and restore .plexcached backup
+                array_path = cache_path.replace(cache_dir, real_source, 1)
+                plexcached_path = array_path + ".plexcached"
+
+                if os.path.exists(plexcached_path):
+                    # Restore: rename .plexcached back to original
+                    os.rename(plexcached_path, array_path)
+                    logging.debug(f"Restored .plexcached: {array_path}")
+
+                # Delete cache copy
+                if os.path.exists(cache_path):
+                    os.remove(cache_path)
+
+                # Clean up tracking
+                self.file_filter.remove_files_from_exclude_list([cache_path])
+                self.timestamp_tracker.remove_entry(cache_path)
+
+                files_evicted += 1
+                bytes_freed += file_size
+
+            except Exception as e:
+                logging.warning(f"Failed to evict {cache_path}: {e}")
+
+        logging.info(f"Smart eviction complete: freed {bytes_freed/1e9:.2f}GB from {files_evicted} files")
+        return (files_evicted, bytes_freed)
+
+    def _get_fifo_eviction_candidates(self, cached_files: List[str], target_bytes: int) -> List[str]:
+        """Get files to evict using FIFO (oldest first) strategy.
+
+        Args:
+            cached_files: List of cache file paths.
+            target_bytes: Amount of space needed to free.
+
+        Returns:
+            List of cache file paths to evict, in eviction order.
+        """
+        if target_bytes <= 0:
+            return []
+
+        # Get files with their cache timestamps, sorted by oldest first
+        files_with_age = []
+        for cache_path in cached_files:
+            hours_cached = self.priority_manager._get_hours_since_cached(cache_path)
+            files_with_age.append((cache_path, hours_cached if hours_cached >= 0 else float('inf')))
+
+        # Sort by age descending (oldest first)
+        files_with_age.sort(key=lambda x: x[1], reverse=True)
+
+        candidates = []
+        bytes_accumulated = 0
+
+        for cache_path, hours in files_with_age:
+            if not os.path.exists(cache_path):
+                continue
+
+            try:
+                file_size = os.path.getsize(cache_path)
+            except (OSError, IOError):
+                continue
+
+            candidates.append(cache_path)
+            bytes_accumulated += file_size
+
+            if bytes_accumulated >= target_bytes:
+                break
+
+        return candidates
+
     def _check_free_space_and_move_files(self, media_files: List[str], destination: str,
                                         real_source: str, cache_dir: str,
                                         source_map: dict = None) -> None:
@@ -711,6 +913,10 @@ class PlexCacheApp:
         media_files_filtered = self.file_filter.filter_files(
             media_files, destination, self.media_to_cache, set(self.files_to_skip)
         )
+
+        # Run smart eviction before applying cache limit (if enabled)
+        if destination == 'cache':
+            self._run_smart_eviction()
 
         # Apply cache size limit when moving to cache
         if destination == 'cache':
@@ -823,6 +1029,7 @@ def main():
     restore_plexcached = "--restore-plexcached" in sys.argv
     quiet = "--quiet" in sys.argv or "--notify-errors-only" in sys.argv
     verbose = "--verbose" in sys.argv or "-v" in sys.argv or "--v" in sys.argv
+    show_priorities = "--show-priorities" in sys.argv
 
     # Derive config path from the script's actual location (matches plexcache_setup.py behavior)
     script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -831,6 +1038,11 @@ def main():
     # Handle emergency restore mode
     if restore_plexcached:
         _run_plexcached_restore(config_file, dry_run, verbose)
+        return
+
+    # Handle show priorities mode
+    if show_priorities:
+        _run_show_priorities(config_file, verbose)
         return
 
     app = PlexCacheApp(config_file, dry_run, quiet, verbose)
@@ -887,6 +1099,60 @@ def _run_plexcached_restore(config_file: str, dry_run: bool, verbose: bool = Fal
         logging.info(f"Restore complete: {success} files restored, {errors} errors")
     else:
         logging.info("Restore cancelled.")
+
+
+def _run_show_priorities(config_file: str, verbose: bool = False) -> None:
+    """Show priority scores for all cached files."""
+    import logging
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
+    print("*** PlexCache Priority Report ***\n")
+
+    # Load config
+    config_manager = ConfigManager(config_file)
+    config_manager.load_config()
+
+    # Get the mover exclude file to find cached files
+    mover_exclude = config_manager.get_mover_exclude_file()
+    if not mover_exclude.exists():
+        print("No exclude file found. No files are currently cached.")
+        return
+
+    # Read cached files from exclude list
+    with open(mover_exclude, 'r') as f:
+        cached_files = [line.strip() for line in f if line.strip()]
+
+    if not cached_files:
+        print("Exclude file is empty. No files are currently cached.")
+        return
+
+    # Initialize trackers
+    script_folder = config_manager.paths.script_folder
+    timestamp_file = config_manager.get_timestamp_file()
+    watchlist_tracker_file = config_manager.get_watchlist_tracker_file()
+    ondeck_tracker_file = os.path.join(script_folder, "plexcache_ondeck_tracker.json")
+
+    timestamp_tracker = CacheTimestampTracker(str(timestamp_file))
+    watchlist_tracker = WatchlistTracker(str(watchlist_tracker_file))
+    ondeck_tracker = OnDeckTracker(ondeck_tracker_file)
+
+    # Get eviction settings (use defaults if not set)
+    eviction_min_priority = getattr(config_manager.cache, 'eviction_min_priority', 60)
+
+    # Initialize priority manager
+    priority_manager = CachePriorityManager(
+        timestamp_tracker=timestamp_tracker,
+        watchlist_tracker=watchlist_tracker,
+        ondeck_tracker=ondeck_tracker,
+        eviction_min_priority=eviction_min_priority
+    )
+
+    # Generate and print report
+    report = priority_manager.get_priority_report(cached_files)
+    print(report)
 
 
 if __name__ == "__main__":

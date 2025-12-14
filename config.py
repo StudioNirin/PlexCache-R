@@ -98,6 +98,14 @@ class CacheConfig:
     cache_limit: str = ""
     cache_limit_bytes: int = 0  # Parsed value in bytes (computed from cache_limit)
 
+    # Smart cache eviction settings
+    # cache_eviction_mode: "smart" (priority-based), "fifo" (oldest first), or "none" (disabled)
+    cache_eviction_mode: str = "none"
+    # Start evicting when cache reaches this percentage of cache_limit (e.g., 90 = 90%)
+    cache_eviction_threshold_percent: int = 90
+    # Only evict items with priority score below this threshold (0-100)
+    eviction_min_priority: int = 60
+
 
 
 @dataclass
@@ -216,7 +224,22 @@ class ConfigManager:
         self.cache.cache_limit = self.settings_data.get('cache_limit', "")
         self.cache.cache_limit_bytes = self._parse_cache_limit(self.cache.cache_limit)
 
-    
+        # Load smart eviction settings (default: disabled)
+        self.cache.cache_eviction_mode = self.settings_data.get('cache_eviction_mode', "none")
+        self.cache.cache_eviction_threshold_percent = self.settings_data.get('cache_eviction_threshold_percent', 90)
+        self.cache.eviction_min_priority = self.settings_data.get('eviction_min_priority', 60)
+
+        # Validate eviction settings
+        if self.cache.cache_eviction_mode not in ("smart", "fifo", "none"):
+            logging.warning(f"Invalid cache_eviction_mode '{self.cache.cache_eviction_mode}', using 'none'")
+            self.cache.cache_eviction_mode = "none"
+        if not 1 <= self.cache.cache_eviction_threshold_percent <= 100:
+            logging.warning(f"Invalid cache_eviction_threshold_percent '{self.cache.cache_eviction_threshold_percent}', using 90")
+            self.cache.cache_eviction_threshold_percent = 90
+        if not 0 <= self.cache.eviction_min_priority <= 100:
+            logging.warning(f"Invalid eviction_min_priority '{self.cache.eviction_min_priority}', using 60")
+            self.cache.eviction_min_priority = 60
+
     def _load_path_config(self) -> None:
         """Load path-related configuration."""
         self.paths.plex_source = self._add_trailing_slashes(self.settings_data['plex_source'])

@@ -511,6 +511,445 @@ class WatchlistTracker:
         return 0
 
 
+class OnDeckTracker:
+    """Thread-safe tracker for OnDeck items and their users.
+
+    Tracks which users have each file OnDeck, similar to WatchlistTracker.
+    Used for priority scoring - items OnDeck for multiple users have higher priority.
+
+    Storage format:
+    {
+        "/path/to/file.mkv": {
+            "users": ["Brandon", "Home"],
+            "last_seen": "2025-12-03T10:00:00.000000"
+        }
+    }
+    """
+
+    def __init__(self, tracker_file: str):
+        """Initialize the tracker with the path to the tracker file.
+
+        Args:
+            tracker_file: Path to the JSON file storing OnDeck data.
+        """
+        self.tracker_file = tracker_file
+        self._lock = threading.Lock()
+        self._data: Dict[str, dict] = {}
+        self._load()
+
+    def _load(self) -> None:
+        """Load tracker data from file."""
+        try:
+            if os.path.exists(self.tracker_file):
+                with open(self.tracker_file, 'r', encoding='utf-8') as f:
+                    self._data = json.load(f)
+                logging.debug(f"Loaded {len(self._data)} OnDeck entries from {self.tracker_file}")
+        except (json.JSONDecodeError, IOError) as e:
+            logging.warning(f"Could not load OnDeck tracker file: {type(e).__name__}: {e}")
+            self._data = {}
+
+    def _save(self) -> None:
+        """Save tracker data to file."""
+        try:
+            with open(self.tracker_file, 'w', encoding='utf-8') as f:
+                json.dump(self._data, f, indent=2)
+        except IOError as e:
+            logging.error(f"Could not save OnDeck tracker file: {type(e).__name__}: {e}")
+
+    def update_entry(self, file_path: str, username: str) -> None:
+        """Update or create an entry for an OnDeck item.
+
+        Args:
+            file_path: The path to the media file.
+            username: The user who has this on their OnDeck.
+        """
+        with self._lock:
+            now_iso = datetime.now().isoformat()
+
+            if file_path in self._data:
+                entry = self._data[file_path]
+                # Add user if not already in list
+                if username not in entry.get('users', []):
+                    entry.setdefault('users', []).append(username)
+                # Always update last_seen
+                entry['last_seen'] = now_iso
+            else:
+                # New entry
+                self._data[file_path] = {
+                    'users': [username],
+                    'last_seen': now_iso
+                }
+                logging.debug(f"Added new OnDeck entry: {file_path} (user: {username})")
+
+            self._save()
+
+    def get_entry(self, file_path: str) -> Optional[dict]:
+        """Get the tracker entry for a file.
+
+        Args:
+            file_path: The path to the media file.
+
+        Returns:
+            The entry dict or None if not found.
+        """
+        with self._lock:
+            return self._data.get(file_path)
+
+    def get_user_count(self, file_path: str) -> int:
+        """Get the number of users who have this file OnDeck.
+
+        Args:
+            file_path: The path to the media file.
+
+        Returns:
+            Number of users, or 0 if not found.
+        """
+        with self._lock:
+            entry = self._data.get(file_path)
+            if entry:
+                return len(entry.get('users', []))
+            return 0
+
+    def clear_for_run(self) -> None:
+        """Clear all entries at the start of a run.
+
+        OnDeck status is ephemeral - items are only OnDeck for the current run.
+        This is called at the start of each run to reset the tracker.
+        """
+        with self._lock:
+            self._data = {}
+            self._save()
+            logging.debug("Cleared OnDeck tracker for new run")
+
+    def cleanup_stale_entries(self, max_days_since_seen: int = 1) -> int:
+        """Remove entries that haven't been seen recently.
+
+        OnDeck items change frequently, so we use a shorter retention than watchlist.
+
+        Args:
+            max_days_since_seen: Remove entries not seen in this many days.
+
+        Returns:
+            Number of entries removed.
+        """
+        with self._lock:
+            stale = []
+            now = datetime.now()
+            for path, entry in self._data.items():
+                last_seen_str = entry.get('last_seen')
+                if last_seen_str:
+                    try:
+                        last_seen = datetime.fromisoformat(last_seen_str)
+                        days_since = (now - last_seen).total_seconds() / 86400
+                        if days_since > max_days_since_seen:
+                            stale.append(path)
+                    except ValueError:
+                        stale.append(path)
+                else:
+                    stale.append(path)
+
+            for path in stale:
+                del self._data[path]
+
+            if stale:
+                self._save()
+                logging.debug(f"Cleaned up {len(stale)} stale OnDeck tracker entries")
+
+            return len(stale)
+
+
+class CachePriorityManager:
+    """Manages priority scoring and smart eviction for cached files.
+
+    Uses metadata from CacheTimestampTracker, WatchlistTracker, and OnDeckTracker
+    to calculate priority scores. Lower-priority items are evicted first when
+    cache space is needed.
+
+    Priority Score (0-100):
+    - Base score: 50
+    - Source type: +20 for ondeck, +0 for watchlist (OnDeck = actively watching)
+    - User count: +5 per user (max +15) - multiple users = popular
+    - Cache recency: +5 to +15 based on hours cached (avoid churn)
+    - Watchlist age: +10 if fresh, 0 if >30 days, -10 if >60 days
+    - OnDeck age: +10 if recently watched, 0 if >30 days, -10 if >60 days
+
+    Eviction Philosophy:
+    - Watchlist items are evicted first (lower base priority)
+    - Only when watchlist is exhausted should OnDeck items be considered
+    - Recently added items (watchlist or ondeck) get priority boost
+    """
+
+    def __init__(self, timestamp_tracker: CacheTimestampTracker,
+                 watchlist_tracker: WatchlistTracker,
+                 ondeck_tracker: OnDeckTracker,
+                 eviction_min_priority: int = 60):
+        """Initialize the priority manager.
+
+        Args:
+            timestamp_tracker: Tracker for cache timestamps and source.
+            watchlist_tracker: Tracker for watchlist items and users.
+            ondeck_tracker: Tracker for OnDeck items and users.
+            eviction_min_priority: Only evict items with priority below this threshold.
+        """
+        self.timestamp_tracker = timestamp_tracker
+        self.watchlist_tracker = watchlist_tracker
+        self.ondeck_tracker = ondeck_tracker
+        self.eviction_min_priority = eviction_min_priority
+
+    def calculate_priority(self, cache_path: str) -> int:
+        """Calculate 0-100 priority score for a cached file.
+
+        Higher score = more likely to be watched soon = keep longer.
+        Lower score = evict first when space is needed.
+
+        Eviction philosophy: Watchlist items evicted first, OnDeck protected.
+
+        Args:
+            cache_path: Path to the cached file.
+
+        Returns:
+            Priority score between 0 and 100.
+        """
+        score = 50  # Base score
+
+        # Factor 1: Source Type (+20 for ondeck, +0 for watchlist)
+        # OnDeck means user is actively watching this content - protect it
+        source = self.timestamp_tracker.get_source(cache_path)
+        is_ondeck = source == "ondeck"
+        if is_ondeck:
+            score += 20
+
+        # Factor 2: User Count (+5 per user, max +15)
+        # Items on multiple users' OnDeck/watchlists are more popular
+        user_count = 0
+
+        # Check OnDeck tracker first
+        ondeck_entry = self.ondeck_tracker.get_entry(cache_path)
+        if ondeck_entry:
+            user_count = len(ondeck_entry.get('users', []))
+
+        # Also check watchlist tracker if not found or for additional users
+        watchlist_entry = self.watchlist_tracker.get_entry(cache_path)
+        if watchlist_entry:
+            watchlist_users = len(watchlist_entry.get('users', []))
+            user_count = max(user_count, watchlist_users)
+
+        score += min(user_count * 5, 15)
+
+        # Factor 3: Cache Recency (+15 if cached in last 24h, scaled down)
+        # Recently cached = recent interest, avoid churn from moving back and forth
+        hours_cached = self._get_hours_since_cached(cache_path)
+        if hours_cached >= 0:  # -1 means no timestamp
+            if hours_cached < 24:
+                score += 15
+            elif hours_cached < 72:
+                score += 10
+            elif hours_cached < 168:  # 7 days
+                score += 5
+
+        # Factor 4: Watchlist Age (+10 fresh, 0 if >30 days, -10 if >60 days)
+        # Recently added to watchlist = user intends to watch soon
+        # Old watchlist items (>60 days) = likely forgotten
+        if watchlist_entry and watchlist_entry.get('watchlisted_at'):
+            days_on_watchlist = self._get_days_on_watchlist(watchlist_entry)
+            if days_on_watchlist >= 0:
+                if days_on_watchlist < 7:
+                    score += 10  # Fresh watchlist item
+                elif days_on_watchlist > 60:
+                    score -= 10  # Very old, likely forgotten
+                # 7-60 days: no adjustment (0)
+
+        # Factor 5: OnDeck Age (+10 if recently watched, 0 if >30 days, -10 if >60 days)
+        # Items that haven't been watched lately get lower priority
+        # But still protected vs watchlist due to +20 base for ondeck
+        if is_ondeck and ondeck_entry:
+            last_seen_str = ondeck_entry.get('last_seen')
+            if last_seen_str:
+                days_since_seen = self._get_days_since_last_seen(last_seen_str)
+                if days_since_seen >= 0:
+                    if days_since_seen < 7:
+                        score += 10  # Recently watched
+                    elif days_since_seen > 60:
+                        score -= 10  # Stale OnDeck item
+                    # 7-60 days: no adjustment (0)
+
+        return max(0, min(100, score))
+
+    def _get_days_since_last_seen(self, last_seen_str: str) -> float:
+        """Get days since an item was last seen in OnDeck/watchlist.
+
+        Args:
+            last_seen_str: ISO format timestamp string.
+
+        Returns:
+            Days since last seen, or -1 if invalid timestamp.
+        """
+        try:
+            last_seen = datetime.fromisoformat(last_seen_str)
+            return (datetime.now() - last_seen).total_seconds() / 86400
+        except (ValueError, TypeError):
+            return -1
+
+    def get_all_priorities(self, cached_files: List[str]) -> List[Tuple[str, int]]:
+        """Get priority scores for all cached files.
+
+        Args:
+            cached_files: List of cache file paths.
+
+        Returns:
+            List of (cache_path, priority_score) tuples, sorted by score ascending
+            (lowest priority first, for eviction order).
+        """
+        priorities = []
+        for cache_path in cached_files:
+            score = self.calculate_priority(cache_path)
+            priorities.append((cache_path, score))
+
+        # Sort by score ascending (lowest priority first)
+        priorities.sort(key=lambda x: x[1])
+        return priorities
+
+    def get_eviction_candidates(self, cached_files: List[str], target_bytes: int) -> List[str]:
+        """Get files to evict to free target_bytes of space.
+
+        Only considers files with priority below eviction_min_priority.
+        Returns lowest-priority files first, accumulating until target_bytes reached.
+
+        Args:
+            cached_files: List of cache file paths.
+            target_bytes: Amount of space needed to free.
+
+        Returns:
+            List of cache file paths to evict, in eviction order.
+        """
+        if target_bytes <= 0:
+            return []
+
+        # Get all priorities, sorted by score ascending
+        priorities = self.get_all_priorities(cached_files)
+
+        candidates = []
+        bytes_accumulated = 0
+
+        for cache_path, score in priorities:
+            # Only evict files below minimum priority threshold
+            if score >= self.eviction_min_priority:
+                logging.debug(f"Skipping eviction candidate (score {score} >= {self.eviction_min_priority}): {os.path.basename(cache_path)}")
+                continue
+
+            # Check file exists and get size
+            if not os.path.exists(cache_path):
+                continue
+
+            try:
+                file_size = os.path.getsize(cache_path)
+            except (OSError, IOError):
+                continue
+
+            candidates.append(cache_path)
+            bytes_accumulated += file_size
+
+            logging.debug(f"Eviction candidate (score {score}): {os.path.basename(cache_path)} ({file_size / (1024**2):.1f}MB)")
+
+            if bytes_accumulated >= target_bytes:
+                break
+
+        return candidates
+
+    def get_priority_report(self, cached_files: List[str]) -> str:
+        """Generate a human-readable priority report for all cached files.
+
+        Args:
+            cached_files: List of cache file paths.
+
+        Returns:
+            Formatted string showing priority scores and metadata.
+        """
+        priorities = self.get_all_priorities(cached_files)
+        # Reverse to show highest priority first
+        priorities.reverse()
+
+        lines = []
+        lines.append("Cache Priority Report")
+        lines.append("=" * 60)
+        lines.append(f"{'Score':>5} | {'Size':>8} | {'Source':>9} | {'Days':>4} | File")
+        lines.append("-" * 60)
+
+        evictable_count = 0
+        evictable_bytes = 0
+
+        for cache_path, score in priorities:
+            # Get file info
+            try:
+                if os.path.exists(cache_path):
+                    size_bytes = os.path.getsize(cache_path)
+                    size_str = f"{size_bytes / (1024**3):.1f}GB" if size_bytes >= 1024**3 else f"{size_bytes / (1024**2):.0f}MB"
+                else:
+                    size_str = "N/A"
+                    size_bytes = 0
+            except (OSError, IOError):
+                size_str = "N/A"
+                size_bytes = 0
+
+            source = self.timestamp_tracker.get_source(cache_path)
+            hours_cached = self._get_hours_since_cached(cache_path)
+            days_cached = hours_cached / 24 if hours_cached >= 0 else -1
+
+            filename = os.path.basename(cache_path)
+            if len(filename) > 40:
+                filename = filename[:37] + "..."
+
+            evict_marker = " *" if score < self.eviction_min_priority else ""
+            lines.append(f"{score:>5} | {size_str:>8} | {source:>9} | {days_cached:>4.0f} | {filename}{evict_marker}")
+
+            if score < self.eviction_min_priority:
+                evictable_count += 1
+                evictable_bytes += size_bytes
+
+        lines.append("-" * 60)
+        lines.append(f"Items below eviction threshold ({self.eviction_min_priority}): {evictable_count}")
+        lines.append(f"Space that would be freed: {evictable_bytes / (1024**3):.2f}GB")
+        lines.append("")
+        lines.append("* = Would be evicted when space is needed")
+
+        return "\n".join(lines)
+
+    def _get_hours_since_cached(self, cache_path: str) -> float:
+        """Get hours since file was cached.
+
+        Args:
+            cache_path: Path to the cached file.
+
+        Returns:
+            Hours since cached, or -1 if no timestamp.
+        """
+        # Use the retention_remaining method with a large retention to get the age
+        remaining = self.timestamp_tracker.get_retention_remaining(cache_path, 10000)
+        if remaining == 0:
+            return -1  # No timestamp
+        # remaining = retention - age, so age = retention - remaining
+        return 10000 - remaining
+
+    def _get_days_on_watchlist(self, entry: dict) -> float:
+        """Get days since item was added to watchlist.
+
+        Args:
+            entry: Watchlist tracker entry dict.
+
+        Returns:
+            Days on watchlist, or -1 if no timestamp.
+        """
+        watchlisted_at_str = entry.get('watchlisted_at')
+        if not watchlisted_at_str:
+            return -1
+
+        try:
+            watchlisted_at = datetime.fromisoformat(watchlisted_at_str)
+            return (datetime.now() - watchlisted_at).total_seconds() / 86400
+        except (ValueError, TypeError):
+            return -1
+
+
 class PlexcachedMigration:
     """One-time migration to create .plexcached backups for existing cached files.
 

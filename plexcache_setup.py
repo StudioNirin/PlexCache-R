@@ -618,6 +618,67 @@ def setup():
         else:
             print('No cache limit set.')
 
+    # ---------------- Smart Cache Eviction ----------------
+    if 'cache_eviction_mode' not in settings_data:
+        print('\n--- Smart Cache Eviction ---')
+        print('When cache space is limited, smart eviction can automatically move')
+        print('low-priority items back to the array to make room for high-priority content.')
+        print('\nEviction modes:')
+        print('  - "none"  : Disabled - new files are skipped when cache is full (default)')
+        print('  - "smart" : Priority-based - evict lowest priority items first')
+        print('  - "fifo"  : First-in-first-out - evict oldest cached items first')
+        while True:
+            eviction_mode = input('\nEnter eviction mode (none/smart/fifo) [default: none]: ').strip().lower()
+            if eviction_mode == '':
+                eviction_mode = 'none'
+                break
+            elif eviction_mode in ['none', 'smart', 'fifo']:
+                break
+            else:
+                print('Invalid option. Please enter: none, smart, or fifo.')
+        settings_data['cache_eviction_mode'] = eviction_mode
+        print(f'Eviction mode set to: {eviction_mode}')
+
+        # Only prompt for threshold and min priority if eviction is enabled
+        if eviction_mode in ['smart', 'fifo']:
+            print('\nEviction threshold: What percentage of cache_limit should trigger eviction?')
+            print('Example: 90 means eviction starts when cache is 90% full.')
+            while True:
+                threshold_input = input('Enter threshold percentage (1-100) [default: 90]: ').strip()
+                if threshold_input == '':
+                    threshold = 90
+                    break
+                try:
+                    threshold = int(threshold_input)
+                    if 1 <= threshold <= 100:
+                        break
+                    else:
+                        print('Please enter a number between 1 and 100.')
+                except ValueError:
+                    print('Please enter a valid number.')
+            settings_data['cache_eviction_threshold_percent'] = threshold
+            print(f'Eviction threshold set to: {threshold}%')
+
+            if eviction_mode == 'smart':
+                print('\nMinimum priority: Only items with priority below this score will be evicted.')
+                print('Priority scores range from 0-100 (higher = more likely to be watched soon).')
+                print('Example: 60 means only items with score < 60 can be evicted.')
+                while True:
+                    min_priority_input = input('Enter minimum priority (0-100) [default: 60]: ').strip()
+                    if min_priority_input == '':
+                        min_priority = 60
+                        break
+                    try:
+                        min_priority = int(min_priority_input)
+                        if 0 <= min_priority <= 100:
+                            break
+                        else:
+                            print('Please enter a number between 0 and 100.')
+                    except ValueError:
+                        print('Please enter a valid number.')
+                settings_data['eviction_min_priority'] = min_priority
+                print(f'Minimum eviction priority set to: {min_priority}')
+
     # ---------------- Notification Level ----------------
     if 'unraid_level' not in settings_data:
         print('\nNotification level controls when you receive Unraid notifications from PlexCache.')
@@ -746,6 +807,9 @@ def check_for_missing_settings(settings: dict) -> list:
         'cache_limit',
         'unraid_level',
         'watchlist_retention_days',
+        'cache_eviction_mode',
+        'cache_eviction_threshold_percent',
+        'eviction_min_priority',
     ]
     missing = [s for s in optional_new_settings if s not in settings]
     return missing

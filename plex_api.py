@@ -364,8 +364,12 @@ class PlexManager:
         return self.plex.sessions()
     
     def get_on_deck_media(self, valid_sections: List[int], days_to_monitor: int,
-                        number_episodes: int, users_toggle: bool, skip_ondeck: List[str]) -> List[str]:
-        """Get OnDeck media files using cached tokens (no plex.tv API calls)."""
+                        number_episodes: int, users_toggle: bool, skip_ondeck: List[str]) -> List[Tuple[str, str]]:
+        """Get OnDeck media files using cached tokens (no plex.tv API calls).
+
+        Returns:
+            List of (file_path, username) tuples for OnDeck items.
+        """
         on_deck_files = []
 
         # Build list of users to fetch using cached tokens
@@ -392,7 +396,7 @@ class PlexManager:
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {
                 executor.submit(
-                    self._fetch_user_on_deck_media, 
+                    self._fetch_user_on_deck_media,
                     valid_sections, days_to_monitor, number_episodes, user
                 )
                 for user in users_to_fetch
@@ -408,8 +412,12 @@ class PlexManager:
 
     
     def _fetch_user_on_deck_media(self, valid_sections: List[int], days_to_monitor: int,
-                                number_episodes: int, user=None) -> List[str]:
-        """Fetch onDeck media for a specific user using cached tokens."""
+                                number_episodes: int, user=None) -> List[Tuple[str, str]]:
+        """Fetch onDeck media for a specific user using cached tokens.
+
+        Returns:
+            List of (file_path, username) tuples for OnDeck items.
+        """
         username = user.title if user else "main"
         try:
             username, plex_instance = self.get_plex_instance(user)
@@ -448,11 +456,18 @@ class PlexManager:
                 self.invalidate_user_token(username)
             return []
     
-    def _process_episode_ondeck(self, video: Episode, number_episodes: int, on_deck_files: List[str], username: str = "unknown") -> None:
-        """Process an episode from onDeck."""
+    def _process_episode_ondeck(self, video: Episode, number_episodes: int, on_deck_files: List[Tuple[str, str]], username: str = "unknown") -> None:
+        """Process an episode from onDeck.
+
+        Args:
+            video: The episode video object.
+            number_episodes: Number of next episodes to fetch.
+            on_deck_files: List to append (file_path, username) tuples to.
+            username: The user who has this OnDeck.
+        """
         for media in video.media:
             for part in media.parts:
-                on_deck_files.append(part.file)
+                on_deck_files.append((part.file, username))
                 logging.debug(f"OnDeck found ({username}): {part.file}")
 
         # Skip fetching next episodes if current episode has missing index data
@@ -469,14 +484,20 @@ class PlexManager:
         for episode in next_episodes:
             for media in episode.media:
                 for part in media.parts:
-                    on_deck_files.append(part.file)
+                    on_deck_files.append((part.file, username))
                     logging.debug(f"OnDeck found ({username}): {part.file}")
     
-    def _process_movie_ondeck(self, video: Movie, on_deck_files: List[str], username: str = "unknown") -> None:
-        """Process a movie from onDeck."""
+    def _process_movie_ondeck(self, video: Movie, on_deck_files: List[Tuple[str, str]], username: str = "unknown") -> None:
+        """Process a movie from onDeck.
+
+        Args:
+            video: The movie video object.
+            on_deck_files: List to append (file_path, username) tuples to.
+            username: The user who has this OnDeck.
+        """
         for media in video.media:
             for part in media.parts:
-                on_deck_files.append(part.file)
+                on_deck_files.append((part.file, username))
                 logging.debug(f"OnDeck found ({username}): {part.file}")
     
     def _get_next_episodes(self, episodes: List[Episode], current_season: int,
