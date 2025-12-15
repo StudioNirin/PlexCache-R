@@ -24,6 +24,11 @@ import requests
 # API delay between plex.tv calls (seconds)
 PLEX_API_DELAY = 1.0
 
+# RSS feed retry and cache settings
+RSS_CACHE_FILE = "plexcache_rss_cache.json"
+RSS_MAX_RETRIES = 3
+RSS_TIMEOUT = 15  # seconds
+
 
 def _log_api_error(context: str, error: Exception) -> None:
     """Log API errors with specific detection for common HTTP status codes."""
@@ -518,12 +523,16 @@ class PlexManager:
             home_users = []
 
         def fetch_rss_titles(url: str) -> List[Tuple[str, str, Optional[datetime], str]]:
-            """Fetch titles, categories, pubDate, and author ID from a Plex RSS feed."""
+            """Fetch titles, categories, pubDate, and author ID from a Plex RSS feed.
+
+            Retries up to RSS_MAX_RETRIES times with exponential backoff.
+            Falls back to cached data if all retries fail.
+            """
             from email.utils import parsedate_to_datetime
-            try:
-                resp = requests.get(url, timeout=10)
-                resp.raise_for_status()
-                root = ET.fromstring(resp.text)
+
+            def _parse_rss_response(text: str) -> List[Tuple[str, str, Optional[datetime], str]]:
+                """Parse RSS XML response into list of items."""
+                root = ET.fromstring(text)
                 items = []
                 for item in root.findall("channel/item"):
                     title = item.find("title").text
@@ -544,9 +553,67 @@ class PlexManager:
                         author_id = author_elem.text
                     items.append((title, category, pub_date, author_id))
                 return items
-            except Exception as e:
-                logging.error(f"Failed to fetch or parse RSS feed {url}: {e}")
+
+            def _save_rss_cache(items: List[Tuple[str, str, Optional[datetime], str]]) -> None:
+                """Save RSS items to cache file."""
+                try:
+                    cache_data = {
+                        'timestamp': datetime.now().isoformat(),
+                        'url': url,
+                        'items': [
+                            (title, category, pub_date.isoformat() if pub_date else None, author_id)
+                            for title, category, pub_date, author_id in items
+                        ]
+                    }
+                    with open(RSS_CACHE_FILE, 'w') as f:
+                        json.dump(cache_data, f)
+                    logging.debug(f"Saved {len(items)} RSS items to cache")
+                except Exception as e:
+                    logging.debug(f"Failed to save RSS cache: {e}")
+
+            def _load_rss_cache() -> List[Tuple[str, str, Optional[datetime], str]]:
+                """Load RSS items from cache file."""
+                try:
+                    if os.path.exists(RSS_CACHE_FILE):
+                        with open(RSS_CACHE_FILE, 'r') as f:
+                            cache_data = json.load(f)
+                        items = []
+                        for title, category, pub_date_str, author_id in cache_data['items']:
+                            pub_date = datetime.fromisoformat(pub_date_str) if pub_date_str else None
+                            items.append((title, category, pub_date, author_id))
+                        cache_time = datetime.fromisoformat(cache_data['timestamp'])
+                        cache_age = datetime.now() - cache_time
+                        cache_age_hours = cache_age.total_seconds() / 3600
+                        logging.warning(f"Using cached RSS data ({len(items)} items, {cache_age_hours:.1f} hours old)")
+                        return items
+                except Exception as e:
+                    logging.debug(f"Failed to load RSS cache: {e}")
                 return []
+
+            # Retry loop with exponential backoff
+            last_error = None
+            for attempt in range(RSS_MAX_RETRIES):
+                try:
+                    resp = requests.get(url, timeout=RSS_TIMEOUT)
+                    resp.raise_for_status()
+                    items = _parse_rss_response(resp.text)
+                    _save_rss_cache(items)  # Cache successful result
+                    return items
+                except Exception as e:
+                    last_error = e
+                    if attempt < RSS_MAX_RETRIES - 1:
+                        wait_time = 2 ** attempt  # 1s, 2s, 4s
+                        logging.warning(f"RSS fetch attempt {attempt + 1}/{RSS_MAX_RETRIES} failed: {e}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+
+            # All retries failed - try cache
+            logging.error(f"Failed to fetch RSS feed after {RSS_MAX_RETRIES} attempts: {last_error}")
+            cached_items = _load_rss_cache()
+            if cached_items:
+                return cached_items
+
+            logging.error("No cached RSS data available - remote watchlist items will be missing!")
+            return []
 
         def process_show(file, watchlist_episodes: int, username: str, watchlisted_at: Optional[datetime]) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
             """Process a show and yield episode file paths with metadata."""
