@@ -354,9 +354,11 @@ class PlexCacheApp:
                 (self.config_manager.plex.skip_watchlist or [])
             ))
             # Pass users from settings file (includes remote users with tokens)
+            # Use "main" as fallback username if plex.tv unreachable
             self.plex_manager.load_user_tokens(
                 skip_users=skip_users,
-                settings_users=self.config_manager.plex.users
+                settings_users=self.config_manager.plex.users,
+                main_username="main"  # Fallback if plex.tv unreachable
             )
     
     def _check_active_sessions(self) -> None:
@@ -514,9 +516,14 @@ class PlexCacheApp:
 
         # Check for files that should be moved back to array (no longer needed in cache)
         # Only check if watched_move is enabled - otherwise files stay on cache indefinitely
+        # Skip if watchlist data is incomplete (plex.tv unreachable) to prevent accidental moves
         if self.config_manager.cache.watched_move:
-            logging.debug("Checking for files to move back to array...")
-            self._check_files_to_move_back_to_array()
+            if not self.plex_manager.is_watchlist_data_complete():
+                logging.warning("Skipping array restore - watchlist data incomplete (plex.tv unreachable)")
+                logging.warning("Files will remain on cache until next successful run")
+            else:
+                logging.debug("Checking for files to move back to array...")
+                self._check_files_to_move_back_to_array()
 
     def _process_watchlist(self) -> set:
         """Process watchlist media (local API + remote RSS) and return a set of modified file paths and subtitles.
