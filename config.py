@@ -329,12 +329,22 @@ class ConfigManager:
 
     def _load_path_config(self) -> None:
         """Load path-related configuration."""
-        # Load legacy single-path settings (still needed for backwards compatibility)
-        self.paths.plex_source = self._add_trailing_slashes(self.settings_data['plex_source'])
-        self.paths.real_source = self._add_trailing_slashes(self.settings_data['real_source'])
+        # Load cache_dir (always required)
         self.paths.cache_dir = self._add_trailing_slashes(self.settings_data['cache_dir'])
-        self.paths.nas_library_folders = self._remove_all_slashes(self.settings_data['nas_library_folders'])
-        self.paths.plex_library_folders = self._remove_all_slashes(self.settings_data['plex_library_folders'])
+
+        # Load legacy single-path settings (optional if path_mappings configured)
+        plex_source = self.settings_data.get('plex_source', '')
+        real_source = self.settings_data.get('real_source', '')
+        self.paths.plex_source = self._add_trailing_slashes(plex_source) if plex_source else ''
+        self.paths.real_source = self._add_trailing_slashes(real_source) if real_source else ''
+
+        # Load legacy library folder arrays (optional if path_mappings configured)
+        self.paths.nas_library_folders = self._remove_all_slashes(
+            self.settings_data.get('nas_library_folders', [])
+        )
+        self.paths.plex_library_folders = self._remove_all_slashes(
+            self.settings_data.get('plex_library_folders', [])
+        )
 
         # Load multi-path mappings (new format)
         self.paths.path_mappings = []
@@ -379,13 +389,22 @@ class ConfigManager:
         """Validate that all required fields exist in the configuration."""
         logging.debug("Validating required fields...")
 
+        # Check if path_mappings is configured (makes legacy path fields optional)
+        has_path_mappings = bool(self.settings_data.get('path_mappings'))
+
+        # Core required fields (always required)
         required_fields = [
             'PLEX_URL', 'PLEX_TOKEN', 'number_episodes', 'valid_sections',
             'days_to_monitor', 'users_toggle', 'watchlist_toggle',
-            'watchlist_episodes', 'watched_move', 'plex_source', 'cache_dir',
-            'real_source', 'nas_library_folders', 'plex_library_folders',
+            'watchlist_episodes', 'watched_move', 'cache_dir',
             'max_concurrent_moves_array', 'max_concurrent_moves_cache'
         ]
+
+        # Legacy path fields (only required if path_mappings not configured)
+        if not has_path_mappings:
+            required_fields.extend([
+                'plex_source', 'real_source', 'nas_library_folders', 'plex_library_folders'
+            ])
 
         missing_fields = [field for field in required_fields if field not in self.settings_data]
         if missing_fields:
@@ -398,6 +417,10 @@ class ConfigManager:
         """Validate that configuration values have correct types."""
         logging.debug("Validating configuration types...")
 
+        # Check if path_mappings is configured (makes legacy path fields optional)
+        has_path_mappings = bool(self.settings_data.get('path_mappings'))
+
+        # Core type checks (always validated)
         type_checks = {
             'PLEX_URL': str,
             'PLEX_TOKEN': str,
@@ -408,14 +431,19 @@ class ConfigManager:
             'watchlist_toggle': bool,
             'watchlist_episodes': int,
             'watched_move': bool,
-            'plex_source': str,
             'cache_dir': str,
-            'real_source': str,
-            'nas_library_folders': list,
-            'plex_library_folders': list,
             'max_concurrent_moves_array': int,
             'max_concurrent_moves_cache': int,
         }
+
+        # Legacy path field types (only checked if path_mappings not configured)
+        if not has_path_mappings:
+            type_checks.update({
+                'plex_source': str,
+                'real_source': str,
+                'nas_library_folders': list,
+                'plex_library_folders': list,
+            })
 
         type_errors = []
         for field, expected_type in type_checks.items():
@@ -438,8 +466,14 @@ class ConfigManager:
         logging.debug("Validating configuration values...")
         errors = []
 
-        # Validate non-empty paths
-        path_fields = ['plex_source', 'real_source', 'cache_dir']
+        # Check if path_mappings is configured (makes legacy path fields optional)
+        has_path_mappings = bool(self.settings_data.get('path_mappings'))
+
+        # Validate non-empty paths (legacy fields only required if no path_mappings)
+        if has_path_mappings:
+            path_fields = ['cache_dir']  # Only cache_dir needed with path_mappings
+        else:
+            path_fields = ['plex_source', 'real_source', 'cache_dir']
         for field in path_fields:
             if not self.settings_data.get(field, '').strip():
                 errors.append(f"'{field}' cannot be empty")
@@ -470,16 +504,23 @@ class ConfigManager:
     def _save_updated_config(self) -> None:
         """Save updated configuration back to file."""
         try:
+            # Core settings (always saved)
             self.settings_data.update({
                 'cache_dir': self.paths.cache_dir,
-                'real_source': self.paths.real_source,
-                'plex_source': self.paths.plex_source,
-                'nas_library_folders': self.paths.nas_library_folders,
-                'plex_library_folders': self.paths.plex_library_folders,
                 'skip_ondeck': self.plex.skip_ondeck,
                 'skip_watchlist': self.plex.skip_watchlist,
                 'exit_if_active_session': self.exit_if_active_session,
             })
+
+            # Legacy path fields (only save if they have values - allows clean removal)
+            if self.paths.plex_source:
+                self.settings_data['plex_source'] = self.paths.plex_source
+            if self.paths.real_source:
+                self.settings_data['real_source'] = self.paths.real_source
+            if self.paths.nas_library_folders:
+                self.settings_data['nas_library_folders'] = self.paths.nas_library_folders
+            if self.paths.plex_library_folders:
+                self.settings_data['plex_library_folders'] = self.paths.plex_library_folders
 
             # Save path_mappings if present
             if self.paths.path_mappings:
@@ -581,4 +622,31 @@ class ConfigManager:
     def get_watchlist_tracker_file(self) -> Path:
         """Get the path for the watchlist retention tracker file."""
         script_folder = Path(self.paths.script_folder)
-        return script_folder / "plexcache_watchlist_tracker.json" 
+        return script_folder / "plexcache_watchlist_tracker.json"
+
+    def has_legacy_path_arrays(self) -> bool:
+        """Check if legacy path arrays are still in use.
+
+        Returns True if nas_library_folders or plex_library_folders are populated
+        alongside path_mappings. These legacy arrays are deprecated and should be
+        migrated to path_mappings.
+
+        Returns:
+            True if legacy arrays are present and should be deprecated.
+        """
+        has_mappings = bool(self.paths.path_mappings)
+        has_legacy = bool(self.paths.nas_library_folders) or bool(self.paths.plex_library_folders)
+        return has_mappings and has_legacy
+
+    def get_legacy_array_info(self) -> str:
+        """Get info about legacy path arrays for deprecation messages.
+
+        Returns:
+            String describing which legacy arrays are present.
+        """
+        arrays = []
+        if self.paths.nas_library_folders:
+            arrays.append(f"nas_library_folders ({len(self.paths.nas_library_folders)} entries)")
+        if self.paths.plex_library_folders:
+            arrays.append(f"plex_library_folders ({len(self.paths.plex_library_folders)} entries)")
+        return ", ".join(arrays) if arrays else "none"

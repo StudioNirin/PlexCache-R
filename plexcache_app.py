@@ -17,7 +17,7 @@ from config import ConfigManager
 from logging_config import LoggingManager
 from system_utils import SystemDetector, PathConverter, FileUtils, SingleInstanceLock
 from plex_api import PlexManager, OnDeckItem
-from file_operations import FilePathModifier, MultiPathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration
+from file_operations import MultiPathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration
 
 
 class PlexCacheApp:
@@ -219,22 +219,18 @@ class PlexCacheApp:
         # Initialize file operation components
         logging.debug("Initializing file operation components...")
 
-        # Use MultiPathModifier if path_mappings is configured, otherwise legacy FilePathModifier
-        if self.config_manager.paths.path_mappings:
-            all_mappings = self.config_manager.paths.path_mappings
-            enabled_mappings = [m for m in all_mappings if m.enabled]
-            logging.info(f"Using multi-path mode with {len(all_mappings)} mappings ({len(enabled_mappings)} enabled)")
-            self.file_path_modifier = MultiPathModifier(
-                mappings=all_mappings
-            )
-        else:
-            logging.debug("Using legacy single-path mode")
-            self.file_path_modifier = FilePathModifier(
-                plex_source=self.config_manager.paths.plex_source,
-                real_source=self.config_manager.paths.real_source,
-                plex_library_folders=self.config_manager.paths.plex_library_folders or [],
-                nas_library_folders=self.config_manager.paths.nas_library_folders or []
-            )
+        # Always use MultiPathModifier (legacy settings are auto-migrated by config.py)
+        all_mappings = self.config_manager.paths.path_mappings or []
+        enabled_mappings = [m for m in all_mappings if m.enabled]
+        logging.info(f"Using multi-path mode with {len(all_mappings)} mappings ({len(enabled_mappings)} enabled)")
+        self.file_path_modifier = MultiPathModifier(mappings=all_mappings)
+
+        # Show deprecation warning if legacy path arrays are still present
+        if self.config_manager.has_legacy_path_arrays():
+            legacy_info = self.config_manager.get_legacy_array_info()
+            logging.info(f"Legacy path arrays detected: {legacy_info}")
+            logging.info("These are deprecated and can be removed from your settings file.")
+            logging.info("Path conversion now uses path_mappings exclusively.")
         
         self.subtitle_finder = SubtitleFinder()
         
@@ -277,8 +273,8 @@ class PlexCacheApp:
         )
         self.ondeck_tracker = OnDeckTracker(ondeck_tracker_file)
 
-        # Pass path_modifier for multi-path support (None for legacy single-path mode)
-        path_modifier = self.file_path_modifier if isinstance(self.file_path_modifier, MultiPathModifier) else None
+        # Pass path_modifier for multi-path support (always available now)
+        path_modifier = self.file_path_modifier
 
         self.file_filter = FileFilter(
             real_source=self.config_manager.paths.real_source,
@@ -303,26 +299,23 @@ class PlexCacheApp:
             path_modifier=path_modifier
         )
         
-        # Get cache folders from path_mappings if available, otherwise fall back to nas_library_folders
+        # Get cache folders from path_mappings (always available after migration)
         cache_folders = []
-        if self.config_manager.paths.path_mappings:
-            cache_dir = self.config_manager.paths.cache_dir
-            for mapping in self.config_manager.paths.path_mappings:
-                if mapping.cacheable and mapping.enabled and mapping.cache_path:
-                    # Extract the relative folder from cache_path
-                    # e.g., /mnt/cache_downloads/Movies/ -> Movies
-                    cache_path = mapping.cache_path.rstrip('/')
-                    if cache_path.startswith(cache_dir.rstrip('/')):
-                        rel_path = cache_path[len(cache_dir.rstrip('/')):].lstrip('/')
-                        if rel_path and rel_path not in cache_folders:
-                            cache_folders.append(rel_path)
-                    else:
-                        # cache_path is not under cache_dir, use full path's last component
-                        folder_name = os.path.basename(cache_path)
-                        if folder_name and folder_name not in cache_folders:
-                            cache_folders.append(folder_name)
-        else:
-            cache_folders = self.config_manager.paths.nas_library_folders
+        cache_dir = self.config_manager.paths.cache_dir
+        for mapping in self.config_manager.paths.path_mappings or []:
+            if mapping.cacheable and mapping.enabled and mapping.cache_path:
+                # Extract the relative folder from cache_path
+                # e.g., /mnt/cache_downloads/Movies/ -> Movies
+                cache_path = mapping.cache_path.rstrip('/')
+                if cache_path.startswith(cache_dir.rstrip('/')):
+                    rel_path = cache_path[len(cache_dir.rstrip('/')):].lstrip('/')
+                    if rel_path and rel_path not in cache_folders:
+                        cache_folders.append(rel_path)
+                else:
+                    # cache_path is not under cache_dir, use full path's last component
+                    folder_name = os.path.basename(cache_path)
+                    if folder_name and folder_name not in cache_folders:
+                        cache_folders.append(folder_name)
 
         self.cache_cleanup = CacheCleanup(
             self.config_manager.paths.cache_dir,

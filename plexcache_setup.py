@@ -638,7 +638,6 @@ def setup(advanced_mode: bool = False):
 
             valid_sections = []
             selected_libraries = []
-            plex_library_folders = []
             path_mappings = []
 
             # ============================================================
@@ -702,47 +701,9 @@ def setup(advanced_mode: bool = False):
             settings_data['path_mappings'] = path_mappings
             settings_data['cache_dir'] = cache_root  # Store cache root
 
-            # Derive legacy fields from path mappings for backward compatibility
-            if path_mappings:
-                plex_paths = [m['plex_path'] for m in path_mappings]
-                plex_source = find_common_root(plex_paths)
-                if not plex_source.endswith('/'):
-                    plex_source = plex_source + '/'
-                settings_data['plex_source'] = plex_source
-
-                real_paths = [m['real_path'] for m in path_mappings]
-                real_source = find_common_root(real_paths)
-                if not real_source.endswith('/'):
-                    real_source = real_source + '/'
-                settings_data['real_source'] = real_source
-
-                # plex_library_folders = relative paths from plex_source
-                for m in path_mappings:
-                    plex_path = m['plex_path'].rstrip('/')
-                    plex_src = settings_data['plex_source'].rstrip('/')
-                    if plex_path.startswith(plex_src):
-                        rel = plex_path[len(plex_src):].strip('/')
-                    else:
-                        rel = plex_path.strip('/')
-                    rel = rel.replace('\\', '/')
-                    if rel and rel not in plex_library_folders:
-                        plex_library_folders.append(rel)
-
-                # nas_library_folders = relative paths from real_source
-                nas_library_folders = []
-                for m in path_mappings:
-                    real_path = m['real_path'].rstrip('/')
-                    real_src = settings_data['real_source'].rstrip('/')
-                    if real_path.startswith(real_src):
-                        rel = real_path[len(real_src):].strip('/')
-                    else:
-                        rel = real_path.strip('/')
-                    rel = rel.replace('\\', '/')
-                    if rel and rel not in nas_library_folders:
-                        nas_library_folders.append(rel)
-                settings_data['nas_library_folders'] = nas_library_folders
-
-            settings_data['plex_library_folders'] = plex_library_folders
+            # Note: Legacy fields (plex_source, real_source, plex_library_folders,
+            # nas_library_folders) are deprecated and no longer generated.
+            # Path conversion now uses path_mappings exclusively.
 
             # Show library summary
             print("-" * 60)
