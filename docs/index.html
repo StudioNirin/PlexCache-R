@@ -520,6 +520,7 @@
         }
 
         .timeline-item.success::before { background: var(--success); }
+        .timeline-item.info::before { background: var(--success); }
         .timeline-item.warning::before { background: var(--warning); }
         .timeline-item.error::before { background: var(--error); }
 
@@ -1487,13 +1488,7 @@ Example log format:
                 severity: "warning",
                 suggestion: "Someone is actively streaming. The script exited to avoid interruption."
             },
-            {
-                pattern: /Skipped (\d+) active session/i,
-                title: "Active Sessions Skipped",
-                severity: "info",
-                suggestion: "Files being actively played were skipped (this is normal behavior).",
-                extractDetail: (match) => `${match[1]} session(s)`
-            },
+            // Note: "Skipped N active sessions" is NOT a problem - it's normal behavior
 
             // Cache Issues
             {
