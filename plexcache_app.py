@@ -80,6 +80,9 @@ class PlexCacheApp:
             # Set up notification handlers now that config is loaded
             self._setup_notification_handlers()
 
+            # Set debug mode early so all debug messages show
+            self._set_debug_mode()
+
             # Log startup diagnostics after log level is configured
             if self.verbose:
                 self._log_startup_diagnostics()
@@ -97,9 +100,6 @@ class PlexCacheApp:
 
             # Connect to Plex
             self._connect_to_plex()
-
-            # Set debug mode (before processing)
-            self._set_debug_mode()
 
             # Check for active sessions
             self._check_active_sessions()
