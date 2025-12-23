@@ -63,7 +63,6 @@ class PlexCacheApp:
                 logging.warning("DRY-RUN MODE - No files will be moved")
             if self.verbose:
                 logging.debug("VERBOSE MODE - Showing DEBUG level logs")
-                self._log_startup_diagnostics()
 
             # Prevent multiple instances from running simultaneously
             script_folder = os.path.dirname(os.path.abspath(__file__))
@@ -80,6 +79,10 @@ class PlexCacheApp:
 
             # Set up notification handlers now that config is loaded
             self._setup_notification_handlers()
+
+            # Log startup diagnostics after log level is configured
+            if self.verbose:
+                self._log_startup_diagnostics()
 
             # Initialize components that depend on config
             logging.debug("Initializing components...")
