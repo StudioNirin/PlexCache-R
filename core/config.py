@@ -13,6 +13,13 @@ from dataclasses import dataclass
 # Get the directory where config.py is located
 _SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
+# Project root detection: if we're in core/, go up one level
+# This allows paths to work correctly whether config.py is in root or core/
+if _SCRIPT_DIR.name == 'core':
+    _PROJECT_ROOT = _SCRIPT_DIR.parent
+else:
+    _PROJECT_ROOT = _SCRIPT_DIR
+
 
 @dataclass
 class NotificationConfig:
@@ -49,8 +56,9 @@ class PathMapping:
 @dataclass
 class PathConfig:
     """Configuration for file paths and directories."""
-    script_folder: str = str(_SCRIPT_DIR)
-    logs_folder: str = str(_SCRIPT_DIR / "logs")
+    script_folder: str = str(_PROJECT_ROOT)
+    logs_folder: str = str(_PROJECT_ROOT / "logs")
+    data_folder: str = str(_PROJECT_ROOT / "data")
 
     # Multi-path mapping support (new)
     path_mappings: Optional[List[PathMapping]] = None
@@ -237,6 +245,10 @@ class ConfigManager:
         self._load_all_configs()
         self._validate_values()
         self._save_updated_config()
+
+        # Ensure data folder exists and migrate tracking files if needed
+        self.ensure_data_folder()
+
         logging.debug("Configuration loaded and validated successfully")
     
     def _process_first_start(self) -> None:
@@ -598,11 +610,15 @@ class ConfigManager:
         """Remove all slashes from a list of paths."""
         return [value.strip('/\\') for value in value_list]
     
+    def get_data_folder(self) -> Path:
+        """Get the path for the data folder (tracking files)."""
+        return Path(self.paths.data_folder)
+
     def get_mover_exclude_file(self) -> Path:
-        """Get the path for the mover exclude file."""
+        """Get the path for the mover exclude file (stays in root for Unraid)."""
         script_folder = Path(self.paths.script_folder)
         return script_folder / "plexcache_mover_files_to_exclude.txt"
-    
+
     def get_unraid_mover_exclusions_file(self) -> Path:
         """Get the path for the final Unraid mover exclusions file."""
         script_folder = Path(self.paths.script_folder)
@@ -610,13 +626,28 @@ class ConfigManager:
 
     def get_timestamp_file(self) -> Path:
         """Get the path for the cache timestamp tracking file."""
-        script_folder = Path(self.paths.script_folder)
-        return script_folder / "plexcache_timestamps.json"
+        return self.get_data_folder() / "timestamps.json"
 
     def get_watchlist_tracker_file(self) -> Path:
         """Get the path for the watchlist retention tracker file."""
+        return self.get_data_folder() / "watchlist_tracker.json"
+
+    def get_ondeck_tracker_file(self) -> Path:
+        """Get the path for the OnDeck tracker file."""
+        return self.get_data_folder() / "ondeck_tracker.json"
+
+    def get_user_tokens_file(self) -> Path:
+        """Get the path for the user tokens cache file."""
+        return self.get_data_folder() / "user_tokens.json"
+
+    def get_rss_cache_file(self) -> Path:
+        """Get the path for the RSS feed cache file."""
+        return self.get_data_folder() / "rss_cache.json"
+
+    def get_lock_file(self) -> Path:
+        """Get the path for the instance lock file."""
         script_folder = Path(self.paths.script_folder)
-        return script_folder / "plexcache_watchlist_tracker.json"
+        return script_folder / "plexcache.lock"
 
     def has_legacy_path_arrays(self) -> bool:
         """Check if legacy path arrays are still in use.
@@ -644,3 +675,47 @@ class ConfigManager:
         if self.paths.plex_library_folders:
             arrays.append(f"plex_library_folders ({len(self.paths.plex_library_folders)} entries)")
         return ", ".join(arrays) if arrays else "none"
+
+    def ensure_data_folder(self) -> None:
+        """Ensure the data folder exists and migrate tracking files from root if needed."""
+        import shutil
+
+        data_folder = self.get_data_folder()
+        script_folder = Path(self.paths.script_folder)
+
+        # Create data folder if it doesn't exist
+        if not data_folder.exists():
+            data_folder.mkdir(parents=True, exist_ok=True)
+            logging.debug(f"Created data folder: {data_folder}")
+
+        # Define migration mapping: (old_name_in_root, new_name_in_data)
+        migrations = [
+            ("plexcache_timestamps.json", "timestamps.json"),
+            ("plexcache_ondeck_tracker.json", "ondeck_tracker.json"),
+            ("plexcache_watchlist_tracker.json", "watchlist_tracker.json"),
+            ("plexcache_user_tokens.json", "user_tokens.json"),
+            ("plexcache_rss_cache.json", "rss_cache.json"),
+        ]
+
+        migrated_count = 0
+        for old_name, new_name in migrations:
+            old_path = script_folder / old_name
+            new_path = data_folder / new_name
+
+            # Skip if old file doesn't exist or new file already exists
+            if not old_path.exists():
+                continue
+            if new_path.exists():
+                logging.debug(f"Skipping migration of {old_name}: {new_name} already exists in data/")
+                continue
+
+            # Migrate the file
+            try:
+                shutil.move(str(old_path), str(new_path))
+                logging.info(f"Migrated {old_name} -> data/{new_name}")
+                migrated_count += 1
+            except (OSError, shutil.Error) as e:
+                logging.warning(f"Failed to migrate {old_name}: {e}")
+
+        if migrated_count > 0:
+            logging.info(f"Migrated {migrated_count} tracking file(s) to data/ folder")

@@ -13,10 +13,10 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Set, Optional, Tuple, Dict, TYPE_CHECKING
 import re
 
-from logging_config import get_console_lock
+from core.logging_config import get_console_lock
 
 if TYPE_CHECKING:
-    from config import PathMapping
+    from core.config import PathMapping
 
 # Extension used to mark array files that have been cached
 PLEXCACHED_EXTENSION = ".plexcached"
@@ -1596,7 +1596,7 @@ class MultiPathModifier:
                       and sorted by plex_path length (descending) for longest-prefix matching.
         """
         # Import here to avoid circular imports
-        from config import PathMapping
+        from core.config import PathMapping
 
         # Keep all mappings for disabled path checking, sorted by plex_path length (longest first)
         self.all_mappings = sorted(

@@ -45,7 +45,6 @@ class OnDeckItem:
 PLEX_API_DELAY = 1.0
 
 # RSS feed retry and cache settings
-RSS_CACHE_FILE = "plexcache_rss_cache.json"
 RSS_MAX_RETRIES = 3
 RSS_TIMEOUT = 15  # seconds
 
@@ -171,13 +170,14 @@ class PlexManager:
     """Manages Plex server connections and operations."""
 
     def __init__(self, plex_url: str, plex_token: str, retry_limit: int = 3, delay: int = 5,
-                 token_cache_file: Optional[str] = None):
+                 token_cache_file: Optional[str] = None, rss_cache_file: Optional[str] = None):
         self.plex_url = plex_url
         self.plex_token = plex_token
         self.retry_limit = retry_limit
         self.delay = delay
         self.plex = None
         self._token_cache = UserTokenCache(cache_file=token_cache_file, cache_expiry_hours=24)
+        self._rss_cache_file = rss_cache_file  # Path to RSS cache file
         self._user_tokens: Dict[str, str] = {}  # username -> token (populated at startup)
         self._user_id_to_name: Dict[str, str] = {}  # user_id (str) -> username (for RSS author lookup)
         self._resolved_uuids: Set[str] = set()  # UUIDs we've tried to resolve (avoid repeated API calls)
@@ -800,6 +800,8 @@ class PlexManager:
 
     def _save_rss_cache(self, url: str, items: List[Tuple[str, str, Optional[datetime], str, str]]) -> None:
         """Save RSS items to cache file."""
+        if not self._rss_cache_file:
+            return
         try:
             cache_data = {
                 'timestamp': datetime.now().isoformat(),
@@ -809,7 +811,7 @@ class PlexManager:
                     for title, category, pub_date, author_id, guid in items
                 ]
             }
-            with open(RSS_CACHE_FILE, 'w') as f:
+            with open(self._rss_cache_file, 'w') as f:
                 json.dump(cache_data, f)
             logging.debug(f"Saved {len(items)} RSS items to cache")
         except IOError as e:
@@ -817,9 +819,11 @@ class PlexManager:
 
     def _load_rss_cache(self) -> List[Tuple[str, str, Optional[datetime], str, str]]:
         """Load RSS items from cache file."""
+        if not self._rss_cache_file:
+            return []
         try:
-            if os.path.exists(RSS_CACHE_FILE):
-                with open(RSS_CACHE_FILE, 'r') as f:
+            if os.path.exists(self._rss_cache_file):
+                with open(self._rss_cache_file, 'r') as f:
                     cache_data = json.load(f)
                 items = []
                 for item_data in cache_data['items']:
