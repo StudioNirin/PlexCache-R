@@ -8,6 +8,7 @@ import time
 import logging
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 import os
@@ -75,6 +76,13 @@ class PlexCacheApp:
             if not self.instance_lock.acquire():
                 logging.critical("Another instance of PlexCache is already running. Exiting.")
                 print("ERROR: Another instance of PlexCache is already running. Exiting.")
+                return
+
+            # Check if Unraid mover is running (prevents race condition)
+            if self._is_mover_running():
+                logging.warning("Unraid mover is currently running. Exiting to prevent race condition.")
+                logging.warning("PlexCache will run on the next scheduled execution after mover completes.")
+                print("WARNING: Unraid mover is running. Exiting to avoid conflicts.")
                 return
 
             # Load configuration
@@ -240,6 +248,41 @@ class PlexCacheApp:
         if folders_failed > 0:
             logging.debug(f"Empty folders failed: {folders_failed}")
         logging.debug("==========================")
+
+    def _is_mover_running(self) -> bool:
+        """Check if the Unraid mover is currently running.
+
+        This prevents race conditions where PlexCache caches files while
+        the mover is actively moving files, which can result in files
+        being moved back to the array before they're added to the exclude list.
+
+        Returns:
+            True if mover is running, False otherwise.
+        """
+        if not self.system_detector.is_unraid:
+            return False
+
+        try:
+            # Check for mover process using pgrep
+            result = subprocess.run(
+                ['pgrep', '-f', '/usr/local/sbin/mover'],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return True
+
+            # Also check for the age_mover script (CA Mover Tuning plugin)
+            result = subprocess.run(
+                ['pgrep', '-f', 'age_mover'],
+                capture_output=True,
+                text=True
+            )
+            return result.returncode == 0 and result.stdout.strip() != ''
+
+        except (subprocess.SubprocessError, FileNotFoundError):
+            # If we can't check, assume mover is not running
+            return False
 
     def _initialize_components(self) -> None:
         """Initialize components that depend on configuration."""
@@ -843,48 +886,77 @@ class PlexCacheApp:
             else:
                 logging.critical(error_msg)
                 sys.exit(1)
-    
+
+    def _get_effective_cache_limit(self, cache_dir: str) -> tuple:
+        """Calculate effective cache limit in bytes, handling percentage-based limits.
+
+        Args:
+            cache_dir: Path to the cache directory.
+
+        Returns:
+            Tuple of (limit_bytes, limit_readable_str). Returns (0, None) if no limit set.
+        """
+        cache_limit_bytes = self.config_manager.cache.cache_limit_bytes
+
+        if cache_limit_bytes == 0:
+            return (0, None)
+
+        if cache_limit_bytes < 0:
+            # Negative value indicates percentage
+            percent = abs(cache_limit_bytes)
+            try:
+                total_drive_size = self.file_utils.get_total_drive_size(cache_dir)
+                limit_bytes = int(total_drive_size * percent / 100)
+                limit_readable = f"{percent}% of {total_drive_size / (1024**3):.1f}GB = {limit_bytes / (1024**3):.1f}GB"
+                return (limit_bytes, limit_readable)
+            except Exception as e:
+                logging.warning(f"Could not calculate cache drive size for percentage limit: {e}")
+                return (0, None)
+        else:
+            limit_readable = f"{cache_limit_bytes / (1024**3):.1f}GB"
+            return (cache_limit_bytes, limit_readable)
+
+    def _get_plexcache_tracked_size(self) -> tuple:
+        """Calculate current PlexCache tracked size from exclude file.
+
+        Returns:
+            Tuple of (total_bytes, cached_files_list). Returns (0, []) on error.
+        """
+        exclude_file = self.config_manager.get_mover_exclude_file()
+        if not exclude_file.exists():
+            return (0, [])
+
+        plexcache_tracked = 0
+        cached_files = []
+        try:
+            with open(exclude_file, 'r') as f:
+                cached_files = [line.strip() for line in f if line.strip()]
+            for cached_file in cached_files:
+                try:
+                    if os.path.exists(cached_file):
+                        plexcache_tracked += os.path.getsize(cached_file)
+                except (OSError, FileNotFoundError):
+                    pass
+        except Exception as e:
+            logging.warning(f"Error reading exclude file: {e}")
+            return (0, [])
+
+        return (plexcache_tracked, cached_files)
+
     def _apply_cache_limit(self, media_files: List[str], cache_dir: str) -> List[str]:
         """Apply cache size limit, filtering out files that would exceed the limit.
 
         Returns the list of files that fit within the cache limit.
         Files are prioritized in the order they appear (OnDeck items should come first).
         """
-        cache_limit_bytes = self.config_manager.cache.cache_limit_bytes
+        cache_limit_bytes, limit_readable = self._get_effective_cache_limit(cache_dir)
 
-        # No limit set
+        # No limit set or error calculating
         if cache_limit_bytes == 0:
             return media_files
 
-        # Calculate effective limit (handle percentage)
-        if cache_limit_bytes < 0:
-            # Negative value indicates percentage
-            percent = abs(cache_limit_bytes)
-            try:
-                total_drive_size = self.file_utils.get_total_drive_size(cache_dir)
-                cache_limit_bytes = int(total_drive_size * percent / 100)
-                limit_readable = f"{percent}% of {total_drive_size / (1024**3):.1f}GB = {cache_limit_bytes / (1024**3):.1f}GB"
-            except Exception as e:
-                logging.warning(f"Could not calculate cache drive size for percentage limit: {e}")
-                return media_files
-        else:
-            limit_readable = f"{cache_limit_bytes / (1024**3):.1f}GB"
-
-        # Calculate current PlexCache tracked size from exclude file
-        plexcache_tracked = 0
-        exclude_file = self.config_manager.get_mover_exclude_file()
-        if exclude_file.exists():
-            try:
-                with open(exclude_file, 'r') as f:
-                    cached_files = [line.strip() for line in f if line.strip()]
-                for cached_file in cached_files:
-                    try:
-                        if os.path.exists(cached_file):
-                            plexcache_tracked += os.path.getsize(cached_file)
-                    except (OSError, FileNotFoundError):
-                        pass
-            except Exception as e:
-                logging.warning(f"Error reading exclude file for cache limit calculation: {e}")
+        # Get current PlexCache tracked size
+        plexcache_tracked, _ = self._get_plexcache_tracked_size()
 
         # Get total cache drive usage
         try:
@@ -938,39 +1010,14 @@ class PlexCacheApp:
         if eviction_mode == "none":
             return (0, 0)
 
-        cache_limit_bytes = self.config_manager.cache.cache_limit_bytes
-        if cache_limit_bytes == 0:
-            # No limit set, nothing to evict
-            return (0, 0)
-
-        # Handle percentage-based limit
         cache_dir = self.config_manager.paths.cache_dir
-        if cache_limit_bytes < 0:
-            percent = abs(cache_limit_bytes)
-            try:
-                total_drive_size = self.file_utils.get_total_drive_size(cache_dir)
-                cache_limit_bytes = int(total_drive_size * percent / 100)
-            except Exception:
-                return (0, 0)
-
-        # Calculate current PlexCache tracked size from exclude file
-        exclude_file = self.config_manager.get_mover_exclude_file()
-        if not exclude_file.exists():
+        cache_limit_bytes, _ = self._get_effective_cache_limit(cache_dir)
+        if cache_limit_bytes == 0:
             return (0, 0)
 
-        cached_files = []
-        plexcache_tracked = 0
-        try:
-            with open(exclude_file, 'r') as f:
-                cached_files = [line.strip() for line in f if line.strip()]
-            for cached_file in cached_files:
-                try:
-                    if os.path.exists(cached_file):
-                        plexcache_tracked += os.path.getsize(cached_file)
-                except (OSError, FileNotFoundError):
-                    pass
-        except Exception as e:
-            logging.warning(f"Error reading exclude file for eviction: {e}")
+        # Get current PlexCache tracked size and file list
+        plexcache_tracked, cached_files = self._get_plexcache_tracked_size()
+        if not cached_files:
             return (0, 0)
 
         # Check if we need to evict

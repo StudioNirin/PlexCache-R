@@ -71,6 +71,13 @@ def _log_api_error(context: str, error: Exception) -> None:
         logging.error(f"[PLEX API] Error ({context}): {error}")
 
 
+class UserProxy:
+    """Simple proxy object to pass username to methods expecting a user object."""
+
+    def __init__(self, title: str):
+        self.title = title
+
+
 class UserTokenCache:
     """Cache for user tokens to reduce API calls to plex.tv.
 
@@ -545,10 +552,6 @@ class PlexManager:
                 if username in skip_ondeck or token in skip_ondeck:
                     logging.info(f"[USER:{username}] Skipping for OnDeck — in skip list")
                     continue
-                # Create a simple object to pass username to get_plex_instance
-                class UserProxy:
-                    def __init__(self, title):
-                        self.title = title
                 users_to_fetch.append(UserProxy(username))
 
         logging.debug(f"Fetching OnDeck media for {len(users_to_fetch)} users (using cached tokens)")
@@ -1061,10 +1064,6 @@ class PlexManager:
                 # Only include home/managed users - remote users' watchlists are handled via RSS feed
                 if username not in home_users:
                     continue
-                # Create a simple object to pass username
-                class UserProxy:
-                    def __init__(self, title):
-                        self.title = title
                 users_to_fetch.append(UserProxy(username))
 
         logging.debug(f"Processing {len(users_to_fetch)} users for watchlist (main + {len(users_to_fetch)-1} home users)")

@@ -22,6 +22,27 @@ if TYPE_CHECKING:
 PLEXCACHED_EXTENSION = ".plexcached"
 
 
+def format_bytes(bytes_value: int) -> str:
+    """Format bytes into human-readable string (e.g., '1.5 GB').
+
+    Args:
+        bytes_value: Size in bytes to format.
+
+    Returns:
+        Human-readable string with appropriate unit.
+    """
+    if bytes_value < 1024:
+        return f"{bytes_value} B"
+    elif bytes_value < 1024 ** 2:
+        return f"{bytes_value / 1024:.1f} KB"
+    elif bytes_value < 1024 ** 3:
+        return f"{bytes_value / (1024 ** 2):.1f} MB"
+    elif bytes_value < 1024 ** 4:
+        return f"{bytes_value / (1024 ** 3):.1f} GB"
+    else:
+        return f"{bytes_value / (1024 ** 4):.1f} TB"
+
+
 def get_media_identity(filepath: str) -> str:
     """Extract the core media identity from a filename, ignoring quality/codec info.
 
@@ -1412,7 +1433,7 @@ class PlexcachedMigration:
                             del self._active_files[thread_id]
                         self._print_progress()
                     # Log to file (outside lock for performance)
-                    logging.info(f"Migrated: {filename} ({self._format_bytes(file_size)})")
+                    logging.info(f"Migrated: {filename} ({format_bytes(file_size)})")
                     return 0
                 else:
                     logging.error(f"Failed to verify: {plexcached_file}")
@@ -1462,17 +1483,6 @@ class PlexcachedMigration:
         except IOError as e:
             logging.error(f"Could not create migration flag: {type(e).__name__}: {e}")
 
-    def _format_bytes(self, bytes_value: int) -> str:
-        """Format bytes into human-readable string (e.g., '1.5 GB')."""
-        if bytes_value < 1024:
-            return f"{bytes_value} B"
-        elif bytes_value < 1024 ** 2:
-            return f"{bytes_value / 1024:.1f} KB"
-        elif bytes_value < 1024 ** 3:
-            return f"{bytes_value / (1024 ** 2):.1f} MB"
-        else:
-            return f"{bytes_value / (1024 ** 3):.1f} GB"
-
     def _print_progress(self, final: bool = False) -> None:
         """Print progress bar for migration with active file queue display."""
         if self._total_files == 0:
@@ -1485,8 +1495,8 @@ class PlexcachedMigration:
         bar = '█' * filled + '░' * (bar_width - filled)
 
         # Format data progress
-        completed_str = self._format_bytes(self._completed_bytes)
-        total_str = self._format_bytes(self._total_bytes)
+        completed_str = format_bytes(self._completed_bytes)
+        total_str = format_bytes(self._total_bytes)
         data_progress = f"{completed_str} / {total_str}"
 
         active_files = list(self._active_files.values())
@@ -1511,7 +1521,7 @@ class PlexcachedMigration:
                     lines.append(f"  Currently copying ({len(active_files)} active):")
                     for filename, file_size in active_files[:5]:  # Limit to 5 active files shown
                         display_name = filename[:50] + '...' if len(filename) > 50 else filename
-                        size_str = self._format_bytes(file_size)
+                        size_str = format_bytes(file_size)
                         lines.append(f"    -> {display_name} ({size_str})")
                     if len(active_files) > 5:
                         lines.append(f"    ... and {len(active_files) - 5} more")
@@ -2469,16 +2479,6 @@ class FileMover:
         # Source tracking: maps cache file paths to their source (ondeck/watchlist)
         self._source_map: Dict[str, str] = {}
 
-    def _format_size(self, size_bytes: int) -> str:
-        """Format file size in human-readable format."""
-        if size_bytes >= 1024 ** 3:
-            return f"{size_bytes / (1024 ** 3):.1f}GB"
-        elif size_bytes >= 1024 ** 2:
-            return f"{size_bytes / (1024 ** 2):.1f}MB"
-        elif size_bytes >= 1024:
-            return f"{size_bytes / 1024:.1f}KB"
-        return f"{size_bytes}B"
-
     def move_media_files(self, files: List[str], destination: str,
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
                         source_map: Optional[Dict[str, str]] = None) -> None:
@@ -2747,7 +2747,7 @@ class FileMover:
             # Create tqdm progress bar with data size info
             # ncols=80 keeps bar compact, mininterval=0.5 forces more frequent updates
             import sys
-            total_size_str = self._format_bytes(total_bytes)
+            total_size_str = format_bytes(total_bytes)
             with tqdm(total=total_count, desc=f"Moving to {destination} (0 B / {total_size_str})",
                       unit="file", bar_format="{l_bar}{bar:20}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
                       mininterval=0.5, ncols=80, file=sys.stdout) as pbar:
@@ -2800,8 +2800,8 @@ class FileMover:
                 self._completed_bytes += file_size
                 if self._tqdm_pbar:
                     # Update description to show data progress
-                    completed_str = self._format_bytes(self._completed_bytes)
-                    total_str = self._format_bytes(self._total_bytes)
+                    completed_str = format_bytes(self._completed_bytes)
+                    total_str = format_bytes(self._total_bytes)
                     self._tqdm_pbar.set_description(f"Moving to {destination} ({completed_str} / {total_str})")
                     self._tqdm_pbar.update(1)
                     self._tqdm_pbar.refresh()  # Force display update
@@ -2888,7 +2888,7 @@ class FileMover:
             # Log successful move using tqdm.write to avoid progress bar interference
             from tqdm import tqdm
             file_size = os.path.getsize(cache_file_name)
-            size_str = self._format_bytes(file_size) if hasattr(self, '_format_bytes') else f"{file_size} bytes"
+            size_str = format_bytes(file_size)
             with get_console_lock():
                 tqdm.write(f"Successfully cached: {os.path.basename(cache_file_name)} ({size_str})")
 
@@ -2927,7 +2927,7 @@ class FileMover:
 
                 if cache_size > 0 and cache_size != plexcached_size:
                     # In-place upgrade: same filename but different file content
-                    logging.info(f"In-place upgrade detected ({self._format_size(plexcached_size)} -> {self._format_size(cache_size)}): {os.path.basename(cache_file)}")
+                    logging.info(f"In-place upgrade detected ({format_bytes(plexcached_size)} -> {format_bytes(cache_size)}): {os.path.basename(cache_file)}")
                     os.remove(plexcached_file)
                     self.file_utils.copy_file_with_permissions(cache_file, array_file, verbose=True)
                     logging.debug(f"Copied upgraded file to array: {array_file}")
@@ -3027,16 +3027,6 @@ class FileMover:
         except Exception as e:
             logging.error(f"Error during cleanup: {type(e).__name__}: {e}")
 
-    def _format_bytes(self, bytes_value: int) -> str:
-        """Format bytes into human-readable string (e.g., '1.5 GB')."""
-        if bytes_value < 1024:
-            return f"{bytes_value} B"
-        elif bytes_value < 1024 ** 2:
-            return f"{bytes_value / 1024:.1f} KB"
-        elif bytes_value < 1024 ** 3:
-            return f"{bytes_value / (1024 ** 2):.1f} MB"
-        else:
-            return f"{bytes_value / (1024 ** 3):.1f} GB"
 
 class PlexcachedRestorer:
     """Emergency restore utility to rename all .plexcached files back to originals."""
