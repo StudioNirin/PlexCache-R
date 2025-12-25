@@ -21,11 +21,6 @@ class NotificationConfig:
     unraid_level: str = "summary"
     webhook_level: str = ""
     webhook_url: str = ""
-    webhook_headers: Optional[Dict[str, str]] = None
-
-    def __post_init__(self):
-        if self.webhook_headers is None:
-            self.webhook_headers = {}
 
 
 @dataclass
@@ -371,7 +366,6 @@ class ConfigManager:
         self.notification.unraid_level = self.settings_data.get('unraid_level', 'summary')
         self.notification.webhook_level = self.settings_data.get('webhook_level', '')
         self.notification.webhook_url = self.settings_data.get('webhook_url', '')
-        self.notification.webhook_headers = self.settings_data.get('webhook_headers', {})
 
     def _load_misc_config(self) -> None:
         """Load miscellaneous configuration."""

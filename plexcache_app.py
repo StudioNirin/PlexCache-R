@@ -27,7 +27,6 @@ class PlexCacheApp:
                  quiet: bool = False, verbose: bool = False):
         self.config_file = config_file
         self.dry_run = dry_run  # Don't move files, just simulate
-        self.debug = dry_run  # Alias for backwards compatibility in code
         self.quiet = quiet  # Override notification level to errors-only
         self.verbose = verbose  # Enable DEBUG level logging
         self.start_time = time.time()
@@ -329,7 +328,7 @@ class PlexCacheApp:
         if migration.needs_migration():
             logging.info("Running one-time migration for .plexcached backups...")
             max_concurrent = self.config_manager.performance.max_concurrent_moves_array
-            migration.run_migration(dry_run=self.debug, max_concurrent=max_concurrent)
+            migration.run_migration(dry_run=self.dry_run, max_concurrent=max_concurrent)
 
         self.timestamp_tracker = CacheTimestampTracker(str(timestamp_file))
 
@@ -361,7 +360,7 @@ class PlexCacheApp:
             cache_dir=self.config_manager.paths.cache_dir,
             is_unraid=self.system_detector.is_unraid,
             file_utils=self.file_utils,
-            debug=self.debug,
+            debug=self.dry_run,
             mover_cache_exclude_file=str(mover_exclude),
             timestamp_tracker=self.timestamp_tracker,
             path_modifier=self.file_path_modifier
@@ -891,7 +890,7 @@ class PlexCacheApp:
             )
         except Exception as e:
             error_msg = f"Error moving media files to {destination}: {type(e).__name__}: {e}"
-            if self.debug:
+            if self.dry_run:
                 logging.error(error_msg)
             else:
                 logging.critical(error_msg)
@@ -1208,7 +1207,7 @@ class PlexCacheApp:
             free_space_kb = free_space * size_multipliers.get(free_space_unit, 1)
             
             if total_size_kb > free_space_kb:
-                if not self.debug:
+                if not self.dry_run:
                     sys.exit(f"Not enough space on {destination} drive.")
                 else:
                     logging.error(f"Not enough space on {destination} drive.")

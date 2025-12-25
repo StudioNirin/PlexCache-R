@@ -6,10 +6,12 @@ Handles Plex server connections and media fetching operations.
 import json
 import logging
 import os
+import re
 import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Generator, Tuple, Dict, Set
 from dataclasses import dataclass
@@ -178,6 +180,7 @@ class PlexManager:
         self._token_cache = UserTokenCache(cache_file=token_cache_file, cache_expiry_hours=24)
         self._user_tokens: Dict[str, str] = {}  # username -> token (populated at startup)
         self._user_id_to_name: Dict[str, str] = {}  # user_id (str) -> username (for RSS author lookup)
+        self._resolved_uuids: Set[str] = set()  # UUIDs we've tried to resolve (avoid repeated API calls)
         self._users_loaded = False
         self._api_lock = threading.Lock()  # For rate limiting plex.tv calls
         self._plex_tv_reachable = True  # Track if plex.tv is accessible
@@ -433,10 +436,6 @@ class PlexManager:
         # Check if already in mapping
         if uuid in self._user_id_to_name:
             return self._user_id_to_name[uuid]
-
-        # Track UUIDs we've tried to resolve to avoid repeated API calls
-        if not hasattr(self, '_resolved_uuids'):
-            self._resolved_uuids = set()
 
         if uuid in self._resolved_uuids:
             return None  # Already tried, not found
@@ -762,7 +761,6 @@ class PlexManager:
 
     def clean_rss_title(self, title: str) -> str:
         """Remove trailing year in parentheses from a title, e.g. 'Movie (2023)' -> 'Movie'."""
-        import re
         return re.sub(r"\s\(\d{4}\)$", "", title)
 
     # -------------------- Watchlist Helper Methods --------------------
@@ -773,8 +771,6 @@ class PlexManager:
         Returns list of tuples: (title, category, pub_date, author_id, guid)
         The guid contains IMDB/TVDB IDs like 'imdb://tt0898367' or 'tvdb://267247'
         """
-        from email.utils import parsedate_to_datetime
-
         root = ET.fromstring(text)
         items = []
         for item in root.findall("channel/item"):
@@ -950,8 +946,7 @@ class PlexManager:
 
         # --- Obtain Plex account instance ---
         try:
-            import requests as req
-            fresh_session = req.Session()
+            fresh_session = requests.Session()
 
             if user is None:
                 # Main account - use the main token with a fresh session
