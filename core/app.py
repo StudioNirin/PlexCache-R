@@ -243,7 +243,11 @@ class PlexCacheApp:
         """Log diagnostic summary at end of run in verbose mode."""
         logging.debug("")
         logging.debug("=== Diagnostic Summary ===")
-        logging.debug(f"Files moved to cache: {len(self.media_to_cache)}")
+        # Get accurate counts from file_filter and file_mover
+        already_cached = getattr(self.file_filter, 'last_already_cached_count', 0) if self.file_filter else 0
+        actually_moved = getattr(self.file_mover, 'last_cache_moves_count', 0) if self.file_mover else 0
+        logging.debug(f"Files already on cache: {already_cached}")
+        logging.debug(f"Files moved to cache: {actually_moved}")
         logging.debug(f"Files moved to array: {len(self.media_to_array)}")
         logging.debug(f"Empty folders removed: {folders_cleaned}")
         if folders_failed > 0:

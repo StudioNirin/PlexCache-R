@@ -94,9 +94,8 @@ def load_settings():
                 CACHE_DIRS.append(os.path.join(cache_dir, folder))
                 ARRAY_DIRS.append(os.path.join(array_source, folder))
 
-        # Files are in script directory
-        EXCLUDE_FILE = os.path.join(SCRIPT_DIR, "plexcache_mover_files_to_exclude.txt")
-        TIMESTAMPS_FILE = os.path.join(SCRIPT_DIR, "plexcache_timestamps.json")
+        # Note: EXCLUDE_FILE and TIMESTAMPS_FILE are already set correctly
+        # at module level (PROJECT_ROOT and DATA_DIR respectively)
 
         print(f"Loaded settings from: {SETTINGS_FILE}")
         print(f"Cache directories: {CACHE_DIRS}")
@@ -147,6 +146,48 @@ def get_timestamp_files():
             data = json.load(f)
             timestamp_files = set(data.keys())
     return timestamp_files
+
+def get_orphaned_plexcached_files():
+    """Find .plexcached files on array that have no corresponding cache file.
+
+    These are backup files where:
+    - The .plexcached backup exists on array
+    - No corresponding file exists on cache
+    - No original (restored) file exists on array
+
+    This can happen if cache was cleared without proper restoration.
+    """
+    orphaned = []
+    cache_files = get_cache_files()
+
+    for array_dir in ARRAY_DIRS:
+        if not os.path.exists(array_dir):
+            continue
+        for root, dirs, files in os.walk(array_dir):
+            for f in files:
+                if f.endswith('.plexcached'):
+                    plexcached_path = os.path.join(root, f)
+                    original_name = f[:-11]  # Remove .plexcached suffix
+                    original_array_path = os.path.join(root, original_name)
+
+                    # Find corresponding cache path
+                    for i, arr_dir in enumerate(ARRAY_DIRS):
+                        if plexcached_path.startswith(arr_dir):
+                            cache_path = os.path.join(
+                                CACHE_DIRS[i],
+                                os.path.relpath(original_array_path, arr_dir)
+                            )
+                            break
+                    else:
+                        cache_path = None
+
+                    # Check if orphaned: no cache copy AND no restored original
+                    if cache_path and cache_path not in cache_files:
+                        if not os.path.exists(original_array_path):
+                            orphaned.append((plexcached_path, original_array_path))
+
+    return orphaned
+
 
 def cache_to_array_path(cache_file):
     """Convert a cache file path to its corresponding array path."""
@@ -474,6 +515,38 @@ def clean_timestamps(dry_run=True):
             print(f"\nERROR writing to timestamps file: {e}")
 
 
+def restore_plexcached(dry_run=True):
+    """
+    Restore orphaned .plexcached files on array to their original names.
+    These are backup files where the cache copy was deleted without restoration.
+    """
+    orphaned = get_orphaned_plexcached_files()
+
+    if not orphaned:
+        print("No orphaned .plexcached files found on array.")
+        return
+
+    print(f"\n{'[DRY RUN] ' if dry_run else ''}Restoring {len(orphaned)} orphaned .plexcached files:")
+
+    for plexcached_path, original_path in sorted(orphaned):
+        filename = os.path.basename(original_path)
+
+        if dry_run:
+            print(f"  Would restore: {os.path.basename(plexcached_path)}")
+            print(f"            to: {filename}")
+        else:
+            try:
+                os.rename(plexcached_path, original_path)
+                print(f"  Restored: {filename}")
+            except Exception as e:
+                print(f"  ERROR restoring {filename}: {e}")
+
+    if dry_run:
+        print(f"\n[DRY RUN] Run with --restore-plexcached --execute to apply changes.")
+    else:
+        print(f"\n✅ Restored {len(orphaned)} files to their original names.")
+
+
 def main():
     print("=" * 80)
     print("PLEXCACHE AUDIT")
@@ -520,7 +593,8 @@ def main():
             print(f"      ... and {len(has_backup) - 10} more")
 
     if no_backup:
-        print(f"\n   ⚠️  NO .plexcached backup ({len(no_backup)}) - need to rsync back:")
+        print(f"\n   ⚠️  NO .plexcached backup ({len(no_backup)}) - need to sync to array:")
+        print("      (These are likely new downloads from Radarr/Sonarr that went directly to cache)")
         for f in sorted(no_backup)[:10]:
             print(f"      - {os.path.basename(f)}")
         if len(no_backup) > 10:
@@ -542,7 +616,7 @@ def main():
 
     # On cache but not in timestamps (older files, no retention tracking)
     print(f"\n🟡 On cache but NOT in timestamps ({len(on_cache_not_in_timestamps)}):")
-    print("   (Cached before timestamp tracking was added)")
+    print("   (Cached before timestamp tracking, or new Radarr/Sonarr downloads)")
     if on_cache_not_in_timestamps:
         for f in sorted(on_cache_not_in_timestamps)[:20]:
             print(f"   - {os.path.basename(f)}")
@@ -562,6 +636,18 @@ def main():
     else:
         print("   None - all good!")
 
+    # Orphaned .plexcached files on array (no cache copy, not restored)
+    orphaned_plexcached = get_orphaned_plexcached_files()
+    print(f"\n🔴 Orphaned .plexcached on array ({len(orphaned_plexcached)}):")
+    print("   (Backup files with no cache copy - need to restore to original name)")
+    if orphaned_plexcached:
+        for plexcached_path, original_path in sorted(orphaned_plexcached)[:10]:
+            print(f"   - {os.path.basename(plexcached_path)}")
+        if len(orphaned_plexcached) > 10:
+            print(f"   ... and {len(orphaned_plexcached) - 10} more")
+    else:
+        print("   None - all good!")
+
     print("\n" + "=" * 80)
     print("SUMMARY")
     print("=" * 80)
@@ -571,6 +657,52 @@ def main():
         print("   Run the script to add them to exclude list, or sync them back to array.")
     else:
         print("\n✅ All cache files are properly tracked in exclude list.")
+
+    if orphaned_plexcached:
+        print(f"\n⚠️  WARNING: {len(orphaned_plexcached)} orphaned .plexcached files on array!")
+        print("   Use --restore-plexcached to rename them back to original filenames.")
+
+    # Only show fix options if there are issues to fix
+    any_issues = (has_backup or no_backup or in_exclude_not_on_cache or
+                  in_timestamps_not_on_cache or orphaned_plexcached)
+
+    if any_issues:
+        print("\n" + "=" * 80)
+        print("FIX OPTIONS")
+        print("=" * 80)
+
+        if has_backup:
+            print(f"\nFor {len(has_backup)} files WITH .plexcached backup:")
+            print("  --fix-with-backup          Dry run (preview)")
+            print("  --fix-with-backup --execute   Apply changes")
+
+        if no_backup:
+            print(f"\nFor {len(no_backup)} files WITHOUT backup (need to copy to array):")
+            print("  --sync-to-array            Dry run (preview)")
+            print("  --sync-to-array --execute     Apply changes")
+
+        if has_backup or no_backup:
+            print(f"\nTo protect all {len(on_cache_not_in_exclude)} unprotected files (add to exclude list):")
+            print("  --add-to-exclude           Dry run (preview)")
+            print("  --add-to-exclude --execute    Apply changes")
+
+        if in_exclude_not_on_cache:
+            print(f"\nTo clean {len(in_exclude_not_on_cache)} stale entries from exclude list:")
+            print("  --clean-exclude            Dry run (preview)")
+            print("  --clean-exclude --execute     Apply changes")
+
+        if in_timestamps_not_on_cache:
+            print(f"\nTo clean {len(in_timestamps_not_on_cache)} stale entries from timestamps file:")
+            print("  --clean-timestamps         Dry run (preview)")
+            print("  --clean-timestamps --execute  Apply changes")
+
+        if orphaned_plexcached:
+            print(f"\nTo restore {len(orphaned_plexcached)} orphaned .plexcached files on array:")
+            print("  --restore-plexcached       Dry run (preview)")
+            print("  --restore-plexcached --execute  Apply changes")
+
+        print("\nRun with --help for full documentation")
+
 
 def print_help():
     """Print help message with available options."""
@@ -597,6 +729,9 @@ Fix Options (use with --execute to apply):
   --clean-timestamps   Remove stale entries from timestamps file
                        (files listed but no longer on cache)
 
+  --restore-plexcached Restore orphaned .plexcached files on array
+                       (backups with no cache copy - rename to original)
+
   --execute            Actually apply changes (without this, shows dry run)
 
 Legacy Options:
@@ -613,6 +748,8 @@ Examples:
   python3 audit_cache.py --clean-exclude --execute     # Remove stale exclude entries
   python3 audit_cache.py --clean-timestamps       # Dry run - show stale timestamp entries
   python3 audit_cache.py --clean-timestamps --execute  # Remove stale timestamp entries
+  python3 audit_cache.py --restore-plexcached     # Dry run - show orphaned .plexcached files
+  python3 audit_cache.py --restore-plexcached --execute  # Restore orphaned .plexcached files
 """)
 
 
@@ -632,28 +769,11 @@ if __name__ == "__main__":
         clean_exclude(dry_run=not execute)
     elif "--clean-timestamps" in args:
         clean_timestamps(dry_run=not execute)
+    elif "--restore-plexcached" in args:
+        restore_plexcached(dry_run=not execute)
     elif "--cleanup" in args:
         cleanup_duplicates(dry_run=False)
     elif "--dry-run" in args:
         cleanup_duplicates(dry_run=True)
     else:
         main()
-        print("\n" + "=" * 80)
-        print("FIX OPTIONS")
-        print("=" * 80)
-        print("\nFor files WITH .plexcached backup:")
-        print("  --fix-with-backup          Dry run (preview)")
-        print("  --fix-with-backup --execute   Apply changes")
-        print("\nFor files WITHOUT backup (need to copy to array):")
-        print("  --sync-to-array            Dry run (preview)")
-        print("  --sync-to-array --execute     Apply changes")
-        print("\nTo protect files (add to exclude list):")
-        print("  --add-to-exclude           Dry run (preview)")
-        print("  --add-to-exclude --execute    Apply changes")
-        print("\nTo clean stale entries from exclude list:")
-        print("  --clean-exclude            Dry run (preview)")
-        print("  --clean-exclude --execute     Apply changes")
-        print("\nTo clean stale entries from timestamps file:")
-        print("  --clean-timestamps         Dry run (preview)")
-        print("  --clean-timestamps --execute  Apply changes")
-        print("\nRun with --help for full documentation")

@@ -1880,6 +1880,7 @@ class FileFilter:
         self.ondeck_tracker = ondeck_tracker
         self.watchlist_tracker = watchlist_tracker
         self.path_modifier = path_modifier  # For multi-path support
+        self.last_already_cached_count = 0  # Track files already on cache during filtering
 
     def _add_to_exclude_file(self, cache_file_name: str) -> None:
         """Add a file to the exclude list."""
@@ -1905,6 +1906,10 @@ class FileFilter:
         media_to = []
         cache_files_to_exclude = []
         cache_files_removed = []  # Track cache files removed during filtering
+
+        # Reset already-cached counter for this filter run
+        if destination == 'cache':
+            self.last_already_cached_count = 0
 
         if not files:
             return []
@@ -2029,6 +2034,9 @@ class FileFilter:
                 self.timestamp_tracker.record_cache_time(cache_file_name, "pre-existing")
 
             logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
+
+            # Track count of files already on cache
+            self.last_already_cached_count += 1
 
             # If array version also exists, remove it (cache is authoritative)
             if os.path.isfile(array_file):
@@ -2539,6 +2547,8 @@ class FileMover:
         self._last_display_lines = 0
         # Source tracking: maps cache file paths to their source (ondeck/watchlist)
         self._source_map: Dict[str, str] = {}
+        # Track actual moves by destination for accurate reporting
+        self.last_cache_moves_count = 0
 
     def move_media_files(self, files: List[str], destination: str,
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
@@ -2589,6 +2599,10 @@ class FileMover:
                 logging.debug(f"No move command generated for: {file_to_move}")
 
         logging.debug(f"Generated {len(move_commands)} move commands for {destination}")
+
+        # Track actual cache moves for accurate diagnostic reporting
+        if destination == 'cache':
+            self.last_cache_moves_count = len(move_commands)
 
         # Execute the move commands
         self._execute_move_commands(move_commands, max_concurrent_moves_array,
