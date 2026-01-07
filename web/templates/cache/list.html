@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="database"></i>
+        </div>
+        <div>
+            <h1>Cached Files</h1>
+            <p>Files currently cached for fast access</p>
+        </div>
+    </div>
+    <div class="action-buttons">
+        <a href="/cache/priorities" class="btn btn-secondary">
+            <i data-lucide="bar-chart-2"></i>
+            Priority Report
+        </a>
+    </div>
+</header>
+
+<!-- Filters -->
+<div class="card mb-2">
+    <div class="card-body">
+        <div class="grid grid-3">
+            <div class="form-group mb-0">
+                <label for="source-filter">Filter by Source</label>
+                <select id="source-filter" name="source"
+                        hx-get="/api/cache/files"
+                        hx-target="#cache-table-body"
+                        hx-include=".cache-filter">
+                    <option value="all" {% if source_filter == 'all' %}selected{% endif %}>All Sources</option>
+                    <option value="ondeck" {% if source_filter == 'ondeck' %}selected{% endif %}>OnDeck Only</option>
+                    <option value="watchlist" {% if source_filter == 'watchlist' %}selected{% endif %}>Watchlist Only</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label for="search-input">Search</label>
+                <input type="search" id="search-input" name="search" placeholder="Search files..." class="cache-filter"
+                       hx-get="/api/cache/files"
+                       hx-trigger="keyup changed delay:500ms"
+                       hx-target="#cache-table-body"
+                       hx-include=".cache-filter">
+            </div>
+            <div class="form-group mb-0">
+                <label>&nbsp;</label>
+                <div class="flex gap-1">
+                    <button class="btn btn-secondary" hx-get="/api/cache/files" hx-target="#cache-table-body" hx-include=".cache-filter">
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh
+                    </button>
+                    <button id="bulk-evict-btn" class="btn btn-danger" style="display: none;"
+                            onclick="bulkEvict()">
+                        <i data-lucide="trash-2"></i>
+                        <span id="bulk-evict-count">Evict (0)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- Hidden inputs for sort state -->
+        <input type="hidden" id="sort-input" name="sort" value="{{ sort_by|default('priority') }}" class="cache-filter">
+        <input type="hidden" id="dir-input" name="dir" value="{{ sort_dir|default('desc') }}" class="cache-filter">
+    </div>
+</div>
+
+<!-- Alert container for eviction messages -->
+<div id="alert-container"></div>
+
+<!-- Cache Table -->
+<div class="card">
+    <div class="card-body" style="padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 40px;">
+                        <input type="checkbox" id="select-all" onclick="toggleSelectAll(this)" title="Select all">
+                    </th>
+                    <th class="sortable" data-sort="filename" onclick="sortTable('filename')">
+                        File
+                        <span class="sort-icon">
+                            {% if sort_by == 'filename' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="size" onclick="sortTable('size')">
+                        Size
+                        <span class="sort-icon">
+                            {% if sort_by == 'size' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="priority" onclick="sortTable('priority')">
+                        Priority
+                        <span class="sort-icon">
+                            {% if sort_by == 'priority' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="source" onclick="sortTable('source')">
+                        Source
+                        <span class="sort-icon">
+                            {% if sort_by == 'source' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="users" onclick="sortTable('users')">
+                        Users
+                        <span class="sort-icon">
+                            {% if sort_by == 'users' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="age" onclick="sortTable('age')">
+                        Age
+                        <span class="sort-icon">
+                            {% if sort_by == 'age' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="cache-table-body"
+                   hx-get="/api/cache/files"
+                   hx-trigger="load, refresh, every 30s"
+                   hx-include=".cache-filter">
+                {% if files %}
+                    {% for file in files %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" class="file-checkbox" value="{{ file.path }}" onchange="updateBulkActions()">
+                        </td>
+                        <td title="{{ file.path }}">{{ file.filename }}</td>
+                        <td class="text-muted">{{ file.size_display }}</td>
+                        <td>
+                            <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                                {{ file.priority_score }}
+                            </span>
+                        </td>
+                        <td class="source-badges">
+                            {% if file.is_ondeck %}
+                            <span class="badge badge-info">OnDeck</span>
+                            {% endif %}
+                            {% if file.is_watchlist %}
+                            <span class="badge badge-muted">Watchlist</span>
+                            {% endif %}
+                            {% if not file.is_ondeck and not file.is_watchlist %}
+                                {% if file.source == 'ondeck' %}
+                                <span class="badge badge-warning">Stale OnDeck</span>
+                                {% elif file.source == 'watchlist' %}
+                                <span class="badge badge-warning">Stale Watchlist</span>
+                                {% else %}
+                                <span class="badge badge-warning">Other</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if file.users %}
+                                {% for user in file.users %}
+                                <span class="badge badge-success" style="margin-right: 0.25rem;">{{ user }}</span>
+                                {% endfor %}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted">{{ file.cache_age_hours|round(1) }}h</td>
+                        <td>
+                            <button class="btn btn-sm btn-secondary"
+                                    hx-post="/api/cache/evict/{{ file.path|urlencode }}"
+                                    hx-target="#alert-container"
+                                    hx-swap="innerHTML"
+                                    hx-confirm="Evict this file from cache?">
+                                <i data-lucide="x"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">
+                            <i data-lucide="inbox" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
+                            No cached files
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+            <tfoot id="cache-table-footer">
+                {% if files %}
+                <tr class="totals-row">
+                    <td colspan="8">
+                        <div class="totals-summary">
+                            <span class="totals-item">
+                                <i data-lucide="files"></i>
+                                <strong>{{ totals.total_files }}</strong> files
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <i data-lucide="hard-drive"></i>
+                                <strong>{{ totals.total_size_display }}</strong> total
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <span class="badge badge-info">OnDeck</span>
+                                <strong>{{ totals.ondeck_count }}</strong>
+                            </span>
+                            <span class="totals-item">
+                                <span class="badge badge-muted">Watchlist</span>
+                                <strong>{{ totals.watchlist_count }}</strong>
+                            </span>
+                            {% if totals.other_count > 0 %}
+                            <span class="totals-item">
+                                <span class="badge badge-warning">Other</span>
+                                <strong>{{ totals.other_count }}</strong>
+                            </span>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function sortTable(column) {
+    const sortInput = document.getElementById('sort-input');
+    const dirInput = document.getElementById('dir-input');
+    const currentSort = sortInput.value;
+    const currentDir = dirInput.value;
+
+    // Toggle direction if same column, otherwise default to desc (except filename which defaults to asc)
+    if (currentSort === column) {
+        dirInput.value = currentDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortInput.value = column;
+        dirInput.value = column === 'filename' ? 'asc' : 'desc';
+    }
+
+    // Trigger HTMX request
+    htmx.ajax('GET', '/api/cache/files', {
+        target: '#cache-table-body',
+        values: {
+            source: document.getElementById('source-filter').value,
+            search: document.getElementById('search-input').value,
+            sort: sortInput.value,
+            dir: dirInput.value
+        }
+    }).then(() => {
+        // Update header icons after content loads
+        updateSortIcons(sortInput.value, dirInput.value);
+        // Reset selection state after refresh
+        updateBulkActions();
+        document.getElementById('select-all').checked = false;
+    });
+}
+
+function updateSortIcons(sortBy, sortDir) {
+    // Remove all existing sort icons
+    document.querySelectorAll('th.sortable .sort-icon').forEach(icon => {
+        icon.innerHTML = '';
+    });
+
+    // Add icon to current sort column
+    const activeHeader = document.querySelector(`th.sortable[data-sort="${sortBy}"] .sort-icon`);
+    if (activeHeader) {
+        const iconName = sortDir === 'asc' ? 'chevron-up' : 'chevron-down';
+        activeHeader.innerHTML = `<i data-lucide="${iconName}"></i>`;
+        lucide.createIcons();
+    }
+}
+
+// Bulk selection functions
+function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateBulkActions();
+}
+
+function updateBulkActions() {
+    const checked = document.querySelectorAll('.file-checkbox:checked');
+    const bulkBtn = document.getElementById('bulk-evict-btn');
+    const countSpan = document.getElementById('bulk-evict-count');
+
+    if (checked.length > 0) {
+        bulkBtn.style.display = 'inline-flex';
+        countSpan.textContent = `Evict (${checked.length})`;
+    } else {
+        bulkBtn.style.display = 'none';
+    }
+}
+
+function bulkEvict() {
+    const checked = document.querySelectorAll('.file-checkbox:checked');
+    if (checked.length === 0) return;
+
+    const count = checked.length;
+    if (!confirm(`Evict ${count} file${count > 1 ? 's' : ''} from cache?`)) {
+        return;
+    }
+
+    // Build form data
+    const formData = new FormData();
+    checked.forEach(cb => {
+        formData.append('paths', cb.value);
+    });
+
+    // Send bulk evict request
+    fetch('/api/cache/evict-bulk', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.text())
+    .then(html => {
+        document.getElementById('alert-container').innerHTML = html;
+        lucide.createIcons();
+    })
+    .catch(err => {
+        document.getElementById('alert-container').innerHTML = `
+            <div class="alert alert-error">
+                <i data-lucide="alert-circle"></i>
+                <span>Error: ${err.message}</span>
+            </div>
+        `;
+        lucide.createIcons();
+    });
+}
+
+// Reset selection after HTMX swaps
+document.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target.id === 'cache-table-body') {
+        updateBulkActions();
+        const selectAll = document.getElementById('select-all');
+        if (selectAll) selectAll.checked = false;
+    }
+});
+</script>
+{% endblock %}

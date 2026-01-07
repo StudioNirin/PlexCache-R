@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="bar-chart-2"></i>
+        </div>
+        <div>
+            <h1>Priority Report</h1>
+            <p>Cache priority scores and eviction candidates</p>
+        </div>
+    </div>
+    <div class="action-buttons">
+        <a href="/cache" class="btn btn-secondary">
+            <i data-lucide="arrow-left"></i>
+            Back to Cache
+        </a>
+    </div>
+</header>
+
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="file-text"></i>
+        <h2>Priority Analysis</h2>
+    </div>
+    <div class="card-body">
+        <div class="log-viewer">{{ report if report else 'No cached files to analyze' }}</div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,455 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<!-- Schedule Status Card -->
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="activity"></i>
+        <h2>Schedule Status</h2>
+    </div>
+    <div class="card-body">
+        <div class="schedule-status" id="schedule-status">
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-label">Status</div>
+                    <div class="status-value">
+                        {% if schedule.enabled %}
+                        <span class="badge badge-success">Enabled</span>
+                        {% else %}
+                        <span class="badge badge-muted">Disabled</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Schedule</div>
+                    <div class="status-value">{{ schedule.schedule_description }}</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Next Run</div>
+                    <div class="status-value {% if schedule.enabled %}text-success{% endif %}">
+                        {{ schedule.next_run_display }}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Last Run</div>
+                    <div class="status-value">{{ schedule.last_run_display }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Schedule Settings Card -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="clock"></i>
+        <h2>Schedule Settings</h2>
+    </div>
+    <div class="card-body">
+        <form id="schedule-form" hx-post="/api/settings/schedule" hx-target="#settings-alert-container" hx-swap="innerHTML">
+            <!-- Enable Toggle -->
+            <div class="form-group">
+                <label class="switch">
+                    <input type="checkbox" name="enabled" id="schedule-enabled"
+                           {% if schedule.enabled %}checked{% endif %}
+                           onchange="toggleScheduleOptions()">
+                    <span>Enable scheduled runs</span>
+                </label>
+                <div class="form-hint">When enabled, PlexCache will run automatically on schedule while the Web UI is running.</div>
+            </div>
+
+            <div id="schedule-options" {% if not schedule.enabled %}style="opacity: 0.5; pointer-events: none;"{% endif %}>
+                <!-- Schedule Type -->
+                <div class="form-group">
+                    <label>Schedule Type</label>
+                    <div class="schedule-type-selector">
+                        <label class="radio-card">
+                            <input type="radio" name="schedule_type" value="interval"
+                                   {% if schedule.schedule_type == 'interval' %}checked{% endif %}
+                                   onchange="toggleScheduleType()">
+                            <div class="radio-card-content">
+                                <i data-lucide="repeat"></i>
+                                <span>Simple Interval</span>
+                                <small>Run every X hours</small>
+                            </div>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="schedule_type" value="cron"
+                                   {% if schedule.schedule_type == 'cron' %}checked{% endif %}
+                                   onchange="toggleScheduleType()">
+                            <div class="radio-card-content">
+                                <i data-lucide="calendar-clock"></i>
+                                <span>Cron Expression</span>
+                                <small>Advanced scheduling</small>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Interval Options -->
+                <div id="interval-options" {% if schedule.schedule_type != 'interval' %}style="display: none;"{% endif %}>
+                    <div class="interval-grid">
+                        <div class="form-group">
+                            <label for="interval-hours">Run Every</label>
+                            <select name="interval_hours" id="interval-hours">
+                                <option value="1" {% if schedule.interval_hours == 1 %}selected{% endif %}>1 hour</option>
+                                <option value="2" {% if schedule.interval_hours == 2 %}selected{% endif %}>2 hours</option>
+                                <option value="4" {% if schedule.interval_hours == 4 %}selected{% endif %}>4 hours</option>
+                                <option value="6" {% if schedule.interval_hours == 6 %}selected{% endif %}>6 hours</option>
+                                <option value="12" {% if schedule.interval_hours == 12 %}selected{% endif %}>12 hours</option>
+                                <option value="24" {% if schedule.interval_hours == 24 %}selected{% endif %}>24 hours</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="interval-start-time">Starting At</label>
+                            <input type="time" name="interval_start_time" id="interval-start-time"
+                                   value="{{ schedule.interval_start_time|default('00:00') }}">
+                            <div class="form-hint">Anchor time for the schedule (e.g., 02:00 means runs at 02:00, 06:00, 10:00... for 4-hour intervals)</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cron Options -->
+                <div id="cron-options" {% if schedule.schedule_type != 'cron' %}style="display: none;"{% endif %}>
+                    <div class="form-group">
+                        <label for="cron-expression">Cron Expression</label>
+                        <div class="cron-input-group">
+                            <input type="text" name="cron_expression" id="cron-expression"
+                                   value="{{ schedule.cron_expression }}"
+                                   placeholder="0 */4 * * *">
+                            <button type="button" class="btn btn-secondary" onclick="validateCron()">
+                                <i data-lucide="check"></i>
+                                Validate
+                            </button>
+                        </div>
+                        <div class="form-hint">
+                            Format: minute hour day month weekday<br>
+                            Examples: <code>0 */4 * * *</code> (every 4 hours), <code>0 6,18 * * *</code> (6am and 6pm), <code>0 3 * * *</code> (daily at 3am)
+                        </div>
+                        <div id="cron-validation" class="cron-validation"></div>
+                    </div>
+                </div>
+
+                <!-- Run Options -->
+                <div class="form-group">
+                    <label>Run Options</label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-item">
+                            <input type="checkbox" name="dry_run" {% if schedule.dry_run %}checked{% endif %}>
+                            <span>Dry Run</span>
+                            <small>Simulate without moving files</small>
+                        </label>
+                        <label class="checkbox-item">
+                            <input type="checkbox" name="verbose" {% if schedule.verbose %}checked{% endif %}>
+                            <span>Verbose Logging</span>
+                            <small>Enable detailed debug output</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Save Button -->
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <i data-lucide="save"></i>
+                    Save Schedule
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.schedule-status {
+    background: var(--plex-bg-input);
+    border-radius: 6px;
+    padding: 1rem;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+}
+
+.status-item {
+    text-align: center;
+}
+
+.status-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--plex-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.25rem;
+}
+
+.status-value {
+    font-size: 0.95rem;
+    color: var(--plex-text);
+}
+
+.schedule-type-selector {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.interval-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    align-items: start;
+}
+
+.interval-grid input[type="time"] {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--plex-bg-input);
+    border: 1px solid var(--plex-border);
+    border-radius: 4px;
+    color: var(--plex-text);
+    font-size: 0.95rem;
+}
+
+.interval-grid input[type="time"]:focus {
+    outline: none;
+    border-color: var(--plex-orange);
+}
+
+@media (max-width: 500px) {
+    .interval-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.radio-card {
+    display: block;
+    cursor: pointer;
+}
+
+.radio-card input {
+    display: none;
+}
+
+.radio-card-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1.25rem;
+    background: var(--plex-bg-input);
+    border: 2px solid var(--plex-border);
+    border-radius: 8px;
+    transition: all 0.15s ease;
+    text-align: center;
+}
+
+.radio-card-content i {
+    width: 24px;
+    height: 24px;
+    color: var(--plex-text-muted);
+}
+
+.radio-card-content span {
+    font-weight: 500;
+    color: var(--plex-text);
+}
+
+.radio-card-content small {
+    font-size: 0.8rem;
+    color: var(--plex-text-muted);
+}
+
+.radio-card input:checked + .radio-card-content {
+    border-color: var(--plex-orange);
+    background: rgba(229, 160, 13, 0.1);
+}
+
+.radio-card input:checked + .radio-card-content i {
+    color: var(--plex-orange);
+}
+
+.radio-card:hover .radio-card-content {
+    border-color: var(--plex-border-light);
+}
+
+.cron-input-group {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.cron-input-group input {
+    flex: 1;
+    font-family: 'SF Mono', Monaco, monospace;
+}
+
+.cron-validation {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    display: none;
+}
+
+.cron-validation.valid {
+    display: block;
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    color: var(--plex-success);
+}
+
+.cron-validation.invalid {
+    display: block;
+    background: rgba(244, 67, 54, 0.1);
+    border: 1px solid rgba(244, 67, 54, 0.3);
+    color: var(--plex-error);
+}
+
+.cron-validation .next-runs {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--plex-text-muted);
+}
+
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: var(--plex-bg-input);
+    border: 1px solid var(--plex-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.checkbox-item:hover {
+    border-color: var(--plex-border-light);
+}
+
+.checkbox-item input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--plex-orange);
+}
+
+.checkbox-item span {
+    font-weight: 500;
+    flex: 1;
+}
+
+.checkbox-item small {
+    font-size: 0.8rem;
+    color: var(--plex-text-muted);
+}
+
+.form-actions {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--plex-border);
+}
+
+code {
+    background: var(--plex-bg-hover);
+    padding: 0.125rem 0.375rem;
+    border-radius: 3px;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 0.85em;
+}
+
+@media (max-width: 600px) {
+    .schedule-type-selector {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+
+<script>
+function toggleScheduleOptions() {
+    const enabled = document.getElementById('schedule-enabled').checked;
+    const options = document.getElementById('schedule-options');
+    options.style.opacity = enabled ? '1' : '0.5';
+    options.style.pointerEvents = enabled ? 'auto' : 'none';
+}
+
+function toggleScheduleType() {
+    const isInterval = document.querySelector('input[name="schedule_type"]:checked').value === 'interval';
+    document.getElementById('interval-options').style.display = isInterval ? 'block' : 'none';
+    document.getElementById('cron-options').style.display = isInterval ? 'none' : 'block';
+}
+
+function validateCron() {
+    const expression = document.getElementById('cron-expression').value;
+    const validationDiv = document.getElementById('cron-validation');
+
+    fetch('/api/settings/schedule/validate-cron?expression=' + encodeURIComponent(expression))
+        .then(response => response.json())
+        .then(data => {
+            validationDiv.className = 'cron-validation ' + (data.valid ? 'valid' : 'invalid');
+
+            if (data.valid) {
+                let html = '<i data-lucide="check-circle"></i> ' + data.message;
+                if (data.next_runs && data.next_runs.length > 0) {
+                    html += '<div class="next-runs">Next runs: ' + data.next_runs.join(', ') + '</div>';
+                }
+                validationDiv.innerHTML = html;
+            } else {
+                validationDiv.innerHTML = '<i data-lucide="x-circle"></i> ' + data.message;
+            }
+
+            lucide.createIcons();
+        })
+        .catch(err => {
+            validationDiv.className = 'cron-validation invalid';
+            validationDiv.innerHTML = '<i data-lucide="x-circle"></i> Error validating expression';
+            lucide.createIcons();
+        });
+}
+
+function refreshScheduleStatus() {
+    fetch('/api/settings/schedule/status')
+        .then(response => response.json())
+        .then(data => {
+            // Update status badge
+            const statusEl = document.querySelector('.status-item:nth-child(1) .status-value');
+            if (statusEl) {
+                if (data.enabled) {
+                    statusEl.innerHTML = '<span class="badge badge-success">Enabled</span>';
+                } else {
+                    statusEl.innerHTML = '<span class="badge badge-muted">Disabled</span>';
+                }
+            }
+
+            // Update schedule description
+            const scheduleEl = document.querySelector('.status-item:nth-child(2) .status-value');
+            if (scheduleEl) {
+                scheduleEl.textContent = data.schedule_description;
+            }
+
+            // Update next run display
+            const nextRunEl = document.querySelector('.status-item:nth-child(3) .status-value');
+            if (nextRunEl) {
+                nextRunEl.textContent = data.next_run_display;
+                nextRunEl.className = 'status-value' + (data.enabled ? ' text-success' : '');
+            }
+
+            // Update last run display
+            const lastRunEl = document.querySelector('.status-item:nth-child(4) .status-value');
+            if (lastRunEl) {
+                lastRunEl.textContent = data.last_run_display;
+            }
+        })
+        .catch(() => {});
+}
+
+// Refresh status periodically
+setInterval(refreshScheduleStatus, 30000); // Every 30 seconds
+</script>
+{% endblock %}

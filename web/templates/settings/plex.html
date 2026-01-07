@@ -1,0 +1,300 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<form hx-put="/settings/plex" hx-target="#settings-alert-container" hx-swap="innerHTML">
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="link"></i>
+        <h2>Server Connection</h2>
+    </div>
+    <div class="card-body">
+        <div class="grid grid-2">
+            <div class="form-group">
+                <label for="plex_url">Plex URL</label>
+                <input type="url" id="plex_url" name="plex_url"
+                       value="{{ settings.plex_url | default('http://localhost:32400') }}"
+                       placeholder="http://localhost:32400" required>
+            </div>
+
+            <div class="form-group mb-0">
+                <label for="plex_token">Plex Token</label>
+                <div class="flex gap-1">
+                    <input type="password" id="plex_token" name="plex_token"
+                           value="{{ settings.plex_token | default('') }}"
+                           placeholder="Your Plex token" style="flex: 1;" required>
+                    <button type="button" class="btn btn-secondary oauth-btn" onclick="startPlexOAuth()" title="Sign in with Plex to get token automatically">
+                        <i data-lucide="key"></i>
+                        <span>Get Token</span>
+                    </button>
+                </div>
+                <div class="form-hint">
+                    Enter manually or click "Get Token" to sign in with your Plex account
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="library"></i>
+        <h2>Library Settings</h2>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <label>Library Sections</label>
+            <div class="library-checkboxes" id="library-sections">
+                {% if libraries %}
+                    {% for lib in libraries %}
+                    <label class="checkbox-card">
+                        <input type="checkbox" name="valid_sections" value="{{ lib.id }}"
+                               {% if lib.id in settings.valid_sections %}checked{% endif %}>
+                        <span class="checkbox-content">
+                            <span class="library-name">{{ lib.title }}</span>
+                            <span class="library-meta">{{ lib.type_label }} &middot; Section {{ lib.id }}</span>
+                        </span>
+                    </label>
+                    {% endfor %}
+                {% else %}
+                    <div class="no-libraries">
+                        <i data-lucide="alert-circle"></i>
+                        <span>Unable to fetch libraries. Check Plex URL and token.</span>
+                    </div>
+                {% endif %}
+            </div>
+            <div class="form-hint">Leave all unchecked to include all sections</div>
+        </div>
+
+        <div class="grid grid-2">
+            <div class="form-group">
+                <label for="number_episodes">Episodes to Prefetch</label>
+                <input type="number" id="number_episodes" name="number_episodes"
+                       value="{{ settings.number_episodes | default(3) }}" min="0" max="10">
+                <div class="form-hint">Number of upcoming episodes to cache for in-progress shows</div>
+            </div>
+
+            <div class="form-group mb-0">
+                <label for="days_to_monitor">Days to Monitor</label>
+                <input type="number" id="days_to_monitor" name="days_to_monitor"
+                       value="{{ settings.days_to_monitor | default(7) }}" min="1" max="30">
+                <div class="form-hint">How far back to check OnDeck for recently watched items</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="users"></i>
+        <h2>Multi-User Support</h2>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <label class="switch">
+                <input type="checkbox" name="users_toggle" id="users_toggle"
+                       {% if settings.users_toggle %}checked{% endif %}
+                       onchange="document.getElementById('user-list-section').style.display = this.checked ? 'block' : 'none'">
+                <span>Enable Multi-User Support</span>
+            </label>
+            <div class="form-hint">Cache media from all Plex Home users, not just the admin account</div>
+        </div>
+
+        <div id="user-list-section" style="{% if not settings.users_toggle %}display: none;{% endif %}">
+            <div class="form-group mb-0">
+                <label>User Permissions</label>
+                <div class="form-hint mb-1">Select which data sources to include for each user</div>
+                {% if users %}
+                    <div class="user-list user-list-scrollable">
+                        <div class="user-list-header">
+                            <span class="user-col">User</span>
+                            <span class="toggle-col">OnDeck</span>
+                            <span class="toggle-col">Watchlist</span>
+                        </div>
+                        <div class="user-list-body">
+                            {% for user in users %}
+                            <div class="user-row {% if user.is_admin %}user-admin{% endif %}">
+                                <span class="user-col">
+                                    <span class="user-name">{{ user.title }}</span>
+                                    {% if user.is_admin %}
+                                        <span class="badge badge-muted">Admin</span>
+                                    {% elif user.is_home %}
+                                        <span class="badge badge-info">Home</span>
+                                    {% endif %}
+                                </span>
+                                <span class="toggle-col">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" name="include_ondeck" value="{{ user.username }}"
+                                               {% if user.username not in settings.skip_ondeck %}checked{% endif %}
+                                               {% if user.is_admin %}disabled checked{% endif %}>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </span>
+                                <span class="toggle-col">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" name="include_watchlist" value="{{ user.username }}"
+                                               {% if user.username not in settings.skip_watchlist %}checked{% endif %}
+                                               {% if user.is_admin %}disabled checked{% endif %}>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="form-hint mt-1">Toggle OFF to exclude a user's OnDeck or Watchlist data from caching</div>
+                {% else %}
+                    <div class="no-libraries">
+                        <i data-lucide="alert-circle"></i>
+                        <span>Unable to fetch users. Check Plex URL and token.</span>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body" style="padding: 1rem 1.25rem;">
+        <div class="form-group mb-0">
+            <button type="submit" class="btn btn-primary">
+                <i data-lucide="save"></i>
+                Save All Plex Settings
+            </button>
+        </div>
+    </div>
+</div>
+</form>
+
+<!-- Plex OAuth Modal -->
+<div id="plex-oauth-modal" class="modal" style="display: none;">
+    <div class="modal-backdrop" onclick="closePlexOAuthModal()"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Sign in with Plex</h3>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="closePlexOAuthModal()">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="modal-body" id="plex-oauth-body">
+            <div class="text-center">
+                <div class="spinner mb-2"></div>
+                <p>Opening Plex login...</p>
+                <p class="text-muted">A new window will open for you to sign in.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Plex OAuth flow
+    let oauthWindow = null;
+    let oauthPollInterval = null;
+    let plexPinId = null;
+    let plexClientId = 'plexcache-r-web-' + Math.random().toString(36).substr(2, 9);
+
+    async function startPlexOAuth() {
+        const modal = document.getElementById('plex-oauth-modal');
+        const body = document.getElementById('plex-oauth-body');
+        modal.style.display = 'flex';
+
+        body.innerHTML = `
+            <div class="text-center">
+                <div class="spinner mb-2"></div>
+                <p>Requesting PIN from Plex...</p>
+            </div>
+        `;
+
+        try {
+            // Request a PIN from Plex
+            const pinResponse = await fetch('https://plex.tv/api/v2/pins', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Plex-Product': 'PlexCache-R',
+                    'X-Plex-Client-Identifier': plexClientId,
+                    'X-Plex-Version': '1.0'
+                }
+            });
+
+            if (!pinResponse.ok) throw new Error('Failed to get PIN');
+
+            const pinData = await pinResponse.json();
+            plexPinId = pinData.id;
+            const pinCode = pinData.code;
+
+            // Open Plex auth page
+            const authUrl = `https://app.plex.tv/auth#?clientID=${plexClientId}&code=${pinCode}&context%5Bdevice%5D%5Bproduct%5D=PlexCache-R`;
+            oauthWindow = window.open(authUrl, 'PlexAuth', 'width=800,height=600');
+
+            body.innerHTML = `
+                <div class="text-center">
+                    <div class="spinner mb-2"></div>
+                    <p>Waiting for you to sign in...</p>
+                    <p class="text-muted">Complete the sign-in in the popup window.</p>
+                    <button type="button" class="btn btn-secondary mt-2" onclick="closePlexOAuthModal()">Cancel</button>
+                </div>
+            `;
+
+            // Poll for token
+            oauthPollInterval = setInterval(async () => {
+                try {
+                    const checkResponse = await fetch(`https://plex.tv/api/v2/pins/${plexPinId}`, {
+                        headers: {
+                            'Accept': 'application/json',
+                            'X-Plex-Client-Identifier': plexClientId
+                        }
+                    });
+
+                    if (checkResponse.ok) {
+                        const checkData = await checkResponse.json();
+                        if (checkData.authToken) {
+                            // Success! Got the token
+                            clearInterval(oauthPollInterval);
+                            if (oauthWindow) oauthWindow.close();
+
+                            document.getElementById('plex_token').value = checkData.authToken;
+
+                            body.innerHTML = `
+                                <div class="text-center">
+                                    <i data-lucide="check-circle" style="width: 48px; height: 48px; color: var(--plex-success);"></i>
+                                    <p class="mt-2" style="color: var(--plex-success);">Successfully signed in!</p>
+                                    <p class="text-muted">Token has been filled in. Click Save to apply.</p>
+                                    <button type="button" class="btn btn-primary mt-2" onclick="closePlexOAuthModal()">Done</button>
+                                </div>
+                            `;
+                            lucide.createIcons();
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error checking PIN:', e);
+                }
+            }, 2000);
+
+        } catch (error) {
+            body.innerHTML = `
+                <div class="text-center">
+                    <i data-lucide="alert-circle" style="width: 48px; height: 48px; color: var(--plex-error);"></i>
+                    <p class="mt-2" style="color: var(--plex-error);">Failed to start authentication</p>
+                    <p class="text-muted">${error.message}</p>
+                    <button type="button" class="btn btn-secondary mt-2" onclick="closePlexOAuthModal()">Close</button>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+    }
+
+    function closePlexOAuthModal() {
+        const modal = document.getElementById('plex-oauth-modal');
+        modal.style.display = 'none';
+
+        if (oauthPollInterval) {
+            clearInterval(oauthPollInterval);
+            oauthPollInterval = null;
+        }
+        if (oauthWindow && !oauthWindow.closed) {
+            oauthWindow.close();
+            oauthWindow = null;
+        }
+    }
+</script>
+{% endblock %}

@@ -1,3 +1,13 @@
+# Core dependencies
 plexapi>=4.15.0
 requests>=2.25.0
 tqdm>=4.60.0
+
+# Web UI dependencies
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+jinja2>=3.1.0
+python-multipart>=0.0.6
+websockets>=12.0
+aiofiles>=23.2.0
+apscheduler>=3.10.0

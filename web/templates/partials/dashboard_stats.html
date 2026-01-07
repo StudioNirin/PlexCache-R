@@ -1,0 +1,74 @@
+<!-- Dashboard stats cards - refreshed via HTMX -->
+<a href="/cache/drive" class="stat-card stat-card-link">
+    <div class="stat-card-header">
+        <i data-lucide="hard-drive"></i>
+        Cache Drive
+    </div>
+    <div class="stat-value orange">{{ stats.cache_files }}</div>
+    <div class="stat-label">files cached{% if stats.cached_files_size %} ({{ stats.cached_files_size }}){% endif %}</div>
+    <div class="progress-container">
+        <div class="progress-bar">
+            <div class="progress-fill" style="width: {{ stats.usage_percent }}%"></div>
+        </div>
+        <div class="progress-label">
+            <span>{{ stats.cache_size }} / {{ stats.cache_limit }}</span>
+            <span>{{ stats.usage_percent }}%</span>
+        </div>
+    </div>
+</a>
+
+<a href="/cache?source=ondeck" class="stat-card stat-card-link">
+    <div class="stat-card-header">
+        <i data-lucide="play-circle"></i>
+        OnDeck
+    </div>
+    <div class="stat-value">{{ stats.ondeck_count }}</div>
+    <div class="stat-label">items ready</div>
+</a>
+
+<a href="/cache?source=watchlist" class="stat-card stat-card-link">
+    <div class="stat-card-header">
+        <i data-lucide="bookmark"></i>
+        Watchlist
+    </div>
+    <div class="stat-value">{{ stats.watchlist_count }}</div>
+    <div class="stat-label">items tracked</div>
+</a>
+
+<div class="stat-card">
+    <div class="stat-card-header">
+        <i data-lucide="clock"></i>
+        Schedule
+    </div>
+    <div style="display: flex; gap: 1rem; margin-bottom: 0.5rem;">
+        <div style="flex: 1; text-align: center;">
+            <div style="font-size: 0.7rem; text-transform: uppercase; color: var(--plex-text-muted); margin-bottom: 0.25rem;">Last</div>
+            <div style="font-size: 1.25rem; font-weight: 600; color: var(--plex-text);">{{ stats.last_run }}</div>
+        </div>
+        <div style="width: 1px; background: var(--plex-border);"></div>
+        <div style="flex: 1; text-align: center;">
+            <div style="font-size: 0.7rem; text-transform: uppercase; color: var(--plex-text-muted); margin-bottom: 0.25rem;">Next</div>
+            {% if stats.schedule_enabled and stats.next_run_relative %}
+            <div style="font-size: 1.25rem; font-weight: 600; color: var(--plex-orange);">{{ stats.next_run_relative }}</div>
+            <div style="font-size: 0.7rem; color: var(--plex-text-muted);">{{ stats.next_run }}</div>
+            {% elif stats.schedule_enabled %}
+            <div style="font-size: 0.9rem; font-weight: 600; color: var(--plex-orange);">{{ stats.next_run }}</div>
+            {% else %}
+            <div style="font-size: 1rem; color: var(--plex-text-muted);">—</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="mt-1" style="text-align: center;">
+        {% if stats.plex_connected %}
+        <span class="badge badge-success">
+            <i data-lucide="wifi"></i>
+            Connected
+        </span>
+        {% else %}
+        <span class="badge badge-warning">
+            <i data-lucide="wifi-off"></i>
+            Not Connected
+        </span>
+        {% endif %}
+    </div>
+</div>

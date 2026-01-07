@@ -1,0 +1,15 @@
+<!-- Operation logs component - HTMX partial -->
+<div class="log-viewer" style="max-height: 300px; overflow-y: auto;">
+{% if logs %}
+<pre class="log-output">{% for line in logs %}{% if 'ERROR' in line %}<span class="log-error">{{ line }}</span>
+{% elif 'WARNING' in line %}<span class="log-warning">{{ line }}</span>
+{% elif 'INFO' in line %}<span class="log-info">{{ line }}</span>
+{% elif 'DEBUG' in line %}<span class="log-debug">{{ line }}</span>
+{% else %}{{ line }}
+{% endif %}{% endfor %}</pre>
+{% else %}
+<div class="text-muted" style="text-align: center; padding: 1rem;">
+    No log messages yet
+</div>
+{% endif %}
+</div>

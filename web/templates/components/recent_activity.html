@@ -1,0 +1,39 @@
+<!-- Recent Activity component - HTMX partial -->
+{% if activity %}
+{% for item in activity[:10] %}
+<tr>
+    <td>{{ item.time_display }}</td>
+    <td>
+        {% if item.action == 'Cached' %}
+        <span class="badge badge-success">{{ item.action }}</span>
+        {% elif item.action == 'Restored' %}
+        <span class="badge badge-info">{{ item.action }}</span>
+        {% else %}
+        <span class="badge badge-muted">{{ item.action }}</span>
+        {% endif %}
+    </td>
+    <td class="text-muted" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ item.filename }}">{{ item.filename }}</td>
+    <td class="user-badges">
+        {% if item.users and item.users|length > 0 %}
+            {% for user in item.users[:3] %}
+            <span class="badge badge-success badge-sm">{{ user }}</span>
+            {% endfor %}
+            {% if item.users|length > 3 %}
+            <span class="badge badge-muted badge-sm">+{{ item.users|length - 3 }}</span>
+            {% endif %}
+        {% else %}
+        <span class="text-muted">-</span>
+        {% endif %}
+    </td>
+    <td>{{ item.size }}</td>
+</tr>
+{% endfor %}
+{% else %}
+<tr>
+    <td colspan="5" class="text-muted" style="text-align: center; padding: 2rem;">
+        <i data-lucide="inbox" style="width: 32px; height: 32px; margin-bottom: 0.5rem; display: block; margin: 0 auto 0.5rem;"></i>
+        No recent activity
+    </td>
+</tr>
+{% endif %}
+<script>lucide.createIcons();</script>

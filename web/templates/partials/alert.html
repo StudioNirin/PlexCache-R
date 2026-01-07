@@ -1,0 +1,23 @@
+<!-- Alert message partial for HTMX responses -->
+{% if type == 'success' %}
+<div class="alert alert-success" role="alert">
+    <i data-lucide="check-circle"></i>
+    {{ message }}
+</div>
+{% elif type == 'error' %}
+<div class="alert alert-error" role="alert">
+    <i data-lucide="alert-circle"></i>
+    {{ message }}
+</div>
+{% elif type == 'warning' %}
+<div class="alert alert-warning" role="alert">
+    <i data-lucide="alert-triangle"></i>
+    {{ message }}
+</div>
+{% else %}
+<div class="alert alert-info" role="alert">
+    <i data-lucide="info"></i>
+    {{ message }}
+</div>
+{% endif %}
+<script>lucide.createIcons();</script>

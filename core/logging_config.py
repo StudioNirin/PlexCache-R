@@ -476,6 +476,10 @@ class LoggingManager:
         
     def setup_logging(self) -> None:
         """Set up logging configuration."""
+        # Clear any existing handlers to prevent duplicates when running multiple times
+        # (e.g., when web UI runs multiple operations in the same process)
+        self._clear_existing_handlers()
+
         self._ensure_logs_folder()
         self._setup_log_file()
         self._set_log_level()
@@ -486,6 +490,19 @@ class LoggingManager:
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+
+    def _clear_existing_handlers(self) -> None:
+        """Remove existing handlers from the root logger to prevent duplicates."""
+        # Keep track of handler types we manage
+        managed_types = (RotatingFileHandler, ThreadSafeStreamHandler, UnraidHandler, WebhookHandler)
+
+        handlers_to_remove = [h for h in self.logger.handlers if isinstance(h, managed_types)]
+        for handler in handlers_to_remove:
+            try:
+                handler.close()
+            except Exception:
+                pass
+            self.logger.removeHandler(handler)
 
     def update_settings(self, max_log_files: int = None, keep_error_logs_days: int = None) -> None:
         """Update logging settings after config is loaded.

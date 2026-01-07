@@ -1,0 +1,296 @@
+<!-- Storage Overview Stats -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="hard-drive"></i>
+            Total Capacity
+        </div>
+        <div class="stat-value">{{ data.storage.total_display }}</div>
+        <div class="stat-label">drive capacity</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="pie-chart"></i>
+            Used Space
+        </div>
+        <div class="stat-value {% if data.storage.usage_percent >= 90 %}text-error{% elif data.storage.usage_percent >= 75 %}text-warning{% endif %}">{{ data.storage.used_display }}</div>
+        <div class="stat-label">{{ data.storage.usage_percent }}% used</div>
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill {% if data.storage.usage_percent >= 90 %}progress-danger{% elif data.storage.usage_percent >= 75 %}progress-warning{% endif %}" style="width: {{ data.storage.usage_percent }}%"></div>
+            </div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="database"></i>
+            Free Space
+        </div>
+        <div class="stat-value text-success">{{ data.storage.free_display }}</div>
+        <div class="stat-label">available</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="files"></i>
+            Cached Files
+        </div>
+        <div class="stat-value orange">{{ data.storage.file_count }}</div>
+        <div class="stat-label">{{ data.storage.cached_size_display }} total</div>
+    </div>
+</div>
+
+<!-- Breakdown by Source -->
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="pie-chart"></i>
+        <h2>Cache Breakdown by Source</h2>
+    </div>
+    <div class="card-body">
+        <div class="breakdown-grid">
+            <a href="/cache?source=ondeck" class="breakdown-card breakdown-ondeck">
+                <div class="breakdown-header">
+                    <i data-lucide="play-circle"></i>
+                    <span>OnDeck</span>
+                </div>
+                <div class="breakdown-stats">
+                    <div class="breakdown-value">{{ data.breakdown.ondeck.count }}</div>
+                    <div class="breakdown-label">files</div>
+                </div>
+                <div class="breakdown-size">{{ data.breakdown.ondeck.size_display }}</div>
+                <div class="breakdown-bar">
+                    <div class="breakdown-fill ondeck" style="width: {{ data.breakdown.ondeck.percent }}%"></div>
+                </div>
+                <div class="breakdown-percent">{{ data.breakdown.ondeck.percent }}% of cache</div>
+            </a>
+            <a href="/cache?source=watchlist" class="breakdown-card breakdown-watchlist">
+                <div class="breakdown-header">
+                    <i data-lucide="bookmark"></i>
+                    <span>Watchlist</span>
+                </div>
+                <div class="breakdown-stats">
+                    <div class="breakdown-value">{{ data.breakdown.watchlist.count }}</div>
+                    <div class="breakdown-label">files</div>
+                </div>
+                <div class="breakdown-size">{{ data.breakdown.watchlist.size_display }}</div>
+                <div class="breakdown-bar">
+                    <div class="breakdown-fill watchlist" style="width: {{ data.breakdown.watchlist.percent }}%"></div>
+                </div>
+                <div class="breakdown-percent">{{ data.breakdown.watchlist.percent }}% of cache</div>
+            </a>
+            {% if data.breakdown.other.count > 0 %}
+            <div class="breakdown-card breakdown-other">
+                <div class="breakdown-header">
+                    <i data-lucide="help-circle"></i>
+                    <span>Other</span>
+                </div>
+                <div class="breakdown-stats">
+                    <div class="breakdown-value">{{ data.breakdown.other.count }}</div>
+                    <div class="breakdown-label">files</div>
+                </div>
+                <div class="breakdown-size">{{ data.breakdown.other.size_display }}</div>
+                <div class="breakdown-bar">
+                    <div class="breakdown-fill other" style="width: {{ data.breakdown.other.percent }}%"></div>
+                </div>
+                <div class="breakdown-percent">{{ data.breakdown.other.percent }}% of cache</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- File Analysis Section -->
+<div class="grid grid-2 mb-2">
+    <!-- Largest Files -->
+    <div class="card">
+        <div class="card-header">
+            <i data-lucide="arrow-up-wide-narrow"></i>
+            <h2>Largest Files</h2>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            <table class="compact-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Size</th>
+                        <th>Source</th>
+                        <th>Users</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if data.largest_files %}
+                        {% for file in data.largest_files %}
+                        <tr>
+                            <td title="{{ file.path }}">{{ file.filename|truncate(40) }}</td>
+                            <td class="text-muted">{{ file.size_display }}</td>
+                            <td class="source-badges">
+                                {% if file.is_ondeck %}
+                                <span class="badge badge-info badge-sm">OnDeck</span>
+                                {% endif %}
+                                {% if file.is_watchlist %}
+                                <span class="badge badge-muted badge-sm">Watchlist</span>
+                                {% endif %}
+                                {% if not file.is_ondeck and not file.is_watchlist %}
+                                <span class="badge badge-warning badge-sm">Other</span>
+                                {% endif %}
+                            </td>
+                            <td class="user-badges">
+                                {% if file.users %}
+                                    {% for user in file.users %}
+                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4" class="text-muted text-center">No files in cache</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Oldest Files -->
+    <div class="card">
+        <div class="card-header">
+            <i data-lucide="clock"></i>
+            <h2>Oldest Cached Files</h2>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            <table class="compact-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Age</th>
+                        <th>Priority</th>
+                        <th>Users</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if data.oldest_files %}
+                        {% for file in data.oldest_files %}
+                        <tr>
+                            <td title="{{ file.path }}">{{ file.filename|truncate(40) }}</td>
+                            <td class="text-muted">
+                                {% if file.cache_age_hours < 24 %}
+                                    {{ file.cache_age_hours|round(1) }}h
+                                {% else %}
+                                    {{ (file.cache_age_hours / 24)|round(1) }}d
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                                    {{ file.priority_score }}
+                                </span>
+                            </td>
+                            <td class="user-badges">
+                                {% if file.users %}
+                                    {% for user in file.users %}
+                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4" class="text-muted text-center">No files in cache</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Activity and Expiring Section -->
+<div class="grid grid-2 mb-2">
+    <!-- Recent Activity -->
+    <div class="card">
+        <div class="card-header">
+            <i data-lucide="activity"></i>
+            <h2>Cache Activity</h2>
+        </div>
+        <div class="card-body">
+            <div class="activity-stats">
+                <div class="activity-stat">
+                    <div class="activity-value">{{ data.activity.files_last_24h }}</div>
+                    <div class="activity-label">files cached in last 24h</div>
+                </div>
+                <div class="activity-stat">
+                    <div class="activity-value">{{ data.activity.files_last_7d }}</div>
+                    <div class="activity-label">files cached in last 7 days</div>
+                </div>
+            </div>
+            {% if data.activity.recently_cached %}
+            <div class="recent-files-list">
+                <div class="recent-files-header">Recently Cached</div>
+                {% for file in data.activity.recently_cached %}
+                <div class="recent-file-item">
+                    <i data-lucide="file-video"></i>
+                    <span class="recent-file-name" title="{{ file.path }}">{{ file.filename|truncate(30) }}</span>
+                    <span class="recent-file-users">
+                        {% if file.users %}
+                            {% for user in file.users[:2] %}
+                            <span class="badge badge-success badge-sm">{{ user }}</span>
+                            {% endfor %}
+                            {% if file.users|length > 2 %}
+                            <span class="badge badge-muted badge-sm">+{{ file.users|length - 2 }}</span>
+                            {% endif %}
+                        {% endif %}
+                    </span>
+                    <span class="recent-file-time">{{ file.cache_age_hours|round(1) }}h ago</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Expiring Soon -->
+    <div class="card">
+        <div class="card-header">
+            <i data-lucide="timer"></i>
+            <h2>Expiring Soon</h2>
+        </div>
+        <div class="card-body">
+            {% if data.expiring_soon %}
+            <div class="expiring-list">
+                {% for item in data.expiring_soon %}
+                <div class="expiring-item">
+                    <div class="expiring-file">
+                        <i data-lucide="file-video"></i>
+                        <span title="{{ item.file.path }}">{{ item.file.filename|truncate(30) }}</span>
+                    </div>
+                    <div class="expiring-users">
+                        {% if item.file.users %}
+                            {% for user in item.file.users[:2] %}
+                            <span class="badge badge-success badge-sm">{{ user }}</span>
+                            {% endfor %}
+                            {% if item.file.users|length > 2 %}
+                            <span class="badge badge-muted badge-sm">+{{ item.file.users|length - 2 }}</span>
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                    <div class="expiring-time {% if item.days_remaining <= 1 %}text-error{% else %}text-warning{% endif %}">
+                        {{ item.days_remaining }}d
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <i data-lucide="check-circle"></i>
+                <p>No files expiring within 3 days</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<script>lucide.createIcons();</script>

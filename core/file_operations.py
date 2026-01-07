@@ -2972,12 +2972,15 @@ class FileMover:
                 source = self._source_map.get(original_path, "unknown") if original_path else "unknown"
                 self.timestamp_tracker.record_cache_time(cache_file_name, source)
 
-            # Log successful move using tqdm.write to avoid progress bar interference
+            # Log successful move - both to logging (for web UI) and tqdm (for CLI progress bar)
             from tqdm import tqdm
             file_size = os.path.getsize(cache_file_name)
             size_str = format_bytes(file_size)
+            display_name = os.path.basename(cache_file_name)
+            # Log with indented format for web UI activity capture
+            logging.info(f"  [Cached] {display_name} ({size_str})")
             with get_console_lock():
-                tqdm.write(f"Successfully cached: {os.path.basename(cache_file_name)} ({size_str})")
+                tqdm.write(f"Successfully cached: {display_name} ({size_str})")
 
             return 0
         except Exception as e:
@@ -3080,6 +3083,9 @@ class FileMover:
             array_file = os.path.join(array_path, os.path.basename(cache_file))
             plexcached_file = array_file + PLEXCACHED_EXTENSION
 
+            # Track operation type for activity logging
+            operation_type = "Restored"  # Default to restore (fast rename)
+
             # Pre-flight check: verify sufficient disk space on target disk
             has_space, reason = self._check_array_disk_space(cache_file, plexcached_file, array_file)
             if not has_space:
@@ -3094,6 +3100,7 @@ class FileMover:
 
                 if cache_size > 0 and cache_size != plexcached_size:
                     # In-place upgrade: same filename but different file content
+                    operation_type = "Moved"  # Copy operation
                     logging.info(f"In-place upgrade detected ({format_bytes(plexcached_size)} -> {format_bytes(cache_size)}): {os.path.basename(cache_file)}")
                     os.remove(plexcached_file)
                     self.file_utils.copy_file_with_permissions(cache_file, array_file, verbose=True)
@@ -3108,6 +3115,7 @@ class FileMover:
                             return 1
                 else:
                     # Same size (or cache missing), just rename back (fast)
+                    operation_type = "Restored"  # Fast rename
                     os.rename(plexcached_file, array_file)
                     logging.debug(f"Restored array file: {plexcached_file} -> {array_file}")
 
@@ -3118,6 +3126,7 @@ class FileMover:
 
                 # Scenario 2: Upgraded file - old .plexcached exists with different name
                 if old_plexcached and old_plexcached != plexcached_file:
+                    operation_type = "Moved"  # Copy operation (upgrade)
                     old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
                     new_name = os.path.basename(cache_file)
                     logging.info(f"Upgrade detected: {old_name} -> {new_name}")
@@ -3141,6 +3150,7 @@ class FileMover:
 
                 # Scenario 3: No .plexcached at all - copy to array (preserving ownership)
                 elif not os.path.isfile(array_file):
+                    operation_type = "Moved"  # Copy operation (no backup)
                     logging.debug(f"No .plexcached found, copying from cache to array: {cache_file}")
                     cache_size = os.path.getsize(cache_file)
                     self.file_utils.copy_file_with_permissions(cache_file, array_file, verbose=True)
@@ -3168,8 +3178,14 @@ class FileMover:
                 if self.timestamp_tracker:
                     self.timestamp_tracker.remove_entry(cache_file)
 
-                # Log successful restore at DEBUG level (summary already shown at INFO)
-                logging.debug(f"Restored to array: {os.path.basename(array_file)}")
+                # Log successful operation for web UI activity capture
+                display_name = os.path.basename(array_file)
+                try:
+                    file_size = os.path.getsize(array_file)
+                    size_str = format_bytes(file_size)
+                except OSError:
+                    size_str = "-"
+                logging.info(f"  [{operation_type}] {display_name} ({size_str})")
 
                 return 0
             else:

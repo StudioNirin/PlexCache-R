@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="layout-dashboard"></i>
+        </div>
+        <div>
+            <h1>Dashboard</h1>
+            <p>PlexCache-R Status Overview</p>
+        </div>
+    </div>
+    <div class="action-buttons">
+        <form id="run-form" style="display: inline-flex; align-items: center; gap: 0.75rem;" hx-post="/operations/run" hx-target="#operation-status">
+            <label class="switch" style="margin: 0;">
+                <input type="checkbox" id="verbose-toggle" name="verbose" value="true">
+                <span style="font-size: 0.85rem;">Verbose</span>
+            </label>
+            <input type="hidden" id="dry-run-input" name="dry_run" value="false">
+            <button type="submit" class="btn btn-primary"
+                    hx-indicator="#run-spinner"
+                    {% if stats.is_running %}disabled{% endif %}>
+                <span id="run-spinner" class="htmx-indicator spinner"></span>
+                <i data-lucide="play" class="htmx-hide-on-request"></i>
+                <span class="htmx-hide-on-request">Run Now</span>
+            </button>
+            <button type="button" class="btn btn-secondary"
+                    onclick="document.getElementById('dry-run-input').value='true'; document.getElementById('run-form').requestSubmit(); document.getElementById('dry-run-input').value='false';"
+                    {% if stats.is_running %}disabled{% endif %}>
+                <i data-lucide="eye"></i>
+                Dry Run
+            </button>
+        </form>
+    </div>
+</header>
+
+<!-- Operation Status -->
+<div id="operation-status" class="mb-2">
+    {% if stats.is_running %}
+    <div class="alert alert-info">
+        <i data-lucide="loader"></i>
+        Operation in progress...
+    </div>
+    {% endif %}
+</div>
+
+<!-- Stats Row -->
+<div class="stats-row" hx-get="/api/dashboard/stats" hx-trigger="every 30s" hx-swap="innerHTML">
+    {% include "partials/dashboard_stats.html" %}
+</div>
+
+<!-- Recent Activity -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="activity"></i>
+        <h2>Recent Activity</h2>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>File</th>
+                    <th>Users</th>
+                    <th>Size</th>
+                </tr>
+            </thead>
+            <tbody id="recent-activity" hx-get="/operations/activity" hx-trigger="load">
+                <tr>
+                    <td colspan="5" class="text-muted" style="text-align: center; padding: 2rem;">
+                        <i data-lucide="inbox" style="width: 32px; height: 32px; margin-bottom: 0.5rem; display: block; margin: 0 auto 0.5rem;"></i>
+                        No recent activity
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="settings"></i>
+        </div>
+        <div>
+            <h1>Settings</h1>
+            <p>Configure PlexCache-R behavior</p>
+        </div>
+    </div>
+</header>
+
+<!-- Settings Tabs -->
+<div class="tabs">
+    <a href="/settings/plex" class="tab {% if active_tab == 'plex' %}active{% endif %}">
+        <i data-lucide="server"></i> Plex
+    </a>
+    <a href="/settings/paths" class="tab {% if active_tab == 'paths' %}active{% endif %}">
+        <i data-lucide="folder"></i> Paths
+    </a>
+    <a href="/settings/cache" class="tab {% if active_tab == 'cache' %}active{% endif %}">
+        <i data-lucide="hard-drive"></i> Cache
+    </a>
+    <a href="/settings/schedule" class="tab {% if active_tab == 'schedule' %}active{% endif %}">
+        <i data-lucide="clock"></i> Schedule
+    </a>
+    <a href="/settings/notifications" class="tab {% if active_tab == 'notifications' %}active{% endif %}">
+        <i data-lucide="bell"></i> Notifications
+    </a>
+</div>
+
+<!-- Alert container for HTMX form responses -->
+<div id="settings-alert-container" class="mb-2"></div>
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-body" style="text-align: center; padding: 3rem;">
+        <i data-lucide="settings" style="width: 48px; height: 48px; color: var(--plex-text-muted); margin-bottom: 1rem;"></i>
+        <p class="text-muted">Select a settings category from the tabs above.</p>
+    </div>
+</div>
+{% endblock %}
+{% endblock %}

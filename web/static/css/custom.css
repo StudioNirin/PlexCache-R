@@ -1,0 +1,218 @@
+/* PlexCache-R Web UI Custom Styles */
+
+/* Status indicators */
+.status-ok {
+    color: var(--pico-ins-color, #2ecc71);
+}
+
+.status-warn {
+    color: var(--pico-mark-background-color, #f39c12);
+}
+
+.status-error {
+    color: var(--pico-del-color, #e74c3c);
+}
+
+.status-running {
+    color: var(--pico-primary);
+}
+
+/* Priority score colors */
+.priority-score {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+.priority-high {
+    background-color: rgba(46, 204, 113, 0.2);
+    color: #2ecc71;
+}
+
+.priority-medium {
+    background-color: rgba(243, 156, 18, 0.2);
+    color: #f39c12;
+}
+
+.priority-low {
+    background-color: rgba(231, 76, 60, 0.2);
+    color: #e74c3c;
+}
+
+/* Log viewer */
+.log-viewer {
+    max-height: 500px;
+    overflow-y: auto;
+    background-color: var(--pico-code-background-color);
+    padding: 1rem;
+    font-family: var(--pico-font-family-monospace);
+    font-size: 0.85em;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.log-viewer code {
+    background: none;
+    padding: 0;
+}
+
+/* Log level highlighting */
+.log-error {
+    color: #e74c3c;
+}
+
+.log-warning {
+    color: #f39c12;
+}
+
+.log-info {
+    color: #3498db;
+}
+
+.log-debug {
+    color: #95a5a6;
+}
+
+/* Alert styles */
+.alert {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: var(--pico-border-radius);
+    position: relative;
+}
+
+.alert-success {
+    background-color: rgba(46, 204, 113, 0.1);
+    border-left: 4px solid #2ecc71;
+}
+
+.alert-error {
+    background-color: rgba(231, 76, 60, 0.1);
+    border-left: 4px solid #e74c3c;
+}
+
+.alert-warning {
+    background-color: rgba(243, 156, 18, 0.1);
+    border-left: 4px solid #f39c12;
+}
+
+.alert-info {
+    background-color: rgba(52, 152, 219, 0.1);
+    border-left: 4px solid #3498db;
+}
+
+.alert .close {
+    position: absolute;
+    right: 0.5rem;
+    top: 0.5rem;
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    opacity: 0.5;
+}
+
+.alert .close:hover {
+    opacity: 1;
+}
+
+/* HTMX loading indicator */
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline;
+}
+
+.htmx-request .button-text {
+    display: none;
+}
+
+/* Path mapping cards */
+.path-mapping {
+    margin-bottom: 1rem;
+}
+
+.path-mapping dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem;
+}
+
+.path-mapping dt {
+    font-weight: bold;
+}
+
+.path-mapping dd {
+    margin: 0;
+}
+
+/* Small buttons */
+button.small, .button.small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85em;
+}
+
+/* Navigation current page indicator */
+nav a[aria-current="page"] {
+    font-weight: bold;
+    border-bottom: 2px solid var(--pico-primary);
+}
+
+/* Settings tabs navigation */
+article nav ul {
+    display: flex;
+    gap: 1rem;
+    list-style: none;
+    padding: 0;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+article nav ul li {
+    margin: 0;
+}
+
+article nav ul li a {
+    display: block;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+}
+
+article nav ul li a[aria-current="page"] {
+    border-bottom: 2px solid var(--pico-primary);
+    margin-bottom: -1px;
+}
+
+/* Operation status cards */
+.status-success {
+    border-left: 4px solid #2ecc71;
+}
+
+.status-error {
+    border-left: 4px solid #e74c3c;
+}
+
+/* Footer styling */
+footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--pico-muted-border-color);
+    text-align: center;
+    opacity: 0.7;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+
+    .path-mapping dl {
+        grid-template-columns: 1fr;
+    }
+}

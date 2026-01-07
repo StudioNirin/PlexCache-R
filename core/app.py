@@ -768,6 +768,37 @@ class PlexCacheApp:
         except Exception:
             return os.path.basename(file_path)
 
+    def _file_needs_caching(self, file_path: str) -> bool:
+        """Check if a file actually needs to be moved to cache.
+
+        Returns False if the file is already on the cache drive.
+        Uses the same path resolution logic as FileMover to ensure consistency.
+        """
+        try:
+            cache_file_path = None
+
+            # Use the file_path_modifier to get the cache path
+            if hasattr(self, 'file_path_modifier') and self.file_path_modifier:
+                cache_file_path, _ = self.file_path_modifier.convert_real_to_cache(file_path)
+
+            # If convert_real_to_cache returned None, use legacy fallback (matches FileMover behavior)
+            if cache_file_path is None:
+                cache_dir = self.config_manager.paths.cache_dir
+                real_source = self.config_manager.paths.real_source
+                if cache_dir and real_source:
+                    user_path = os.path.dirname(file_path)
+                    relative_path = os.path.relpath(user_path, real_source)
+                    cache_path = os.path.join(cache_dir, relative_path)
+                    cache_file_path = os.path.join(cache_path, os.path.basename(file_path))
+
+            # Check if cache file exists
+            if cache_file_path and os.path.isfile(cache_file_path):
+                return False  # Already on cache
+
+            return True  # Needs caching
+        except Exception:
+            return True  # Assume it needs caching if we can't determine
+
     def _separate_restore_and_move(self, files_to_array: List[str]) -> Tuple[List[str], List[str]]:
         """Separate files into restore (.plexcached exists) vs actual move.
 
@@ -864,6 +895,19 @@ class PlexCacheApp:
 
         # Move files to cache
         logging.debug(f"Files being passed to cache move: {self.media_to_cache}")
+        # Log preview of files to be cached (similar to array move preview)
+        if self.media_to_cache:
+            # Filter to only files that actually need moving (not already on cache)
+            files_to_cache = [f for f in self.media_to_cache if self._file_needs_caching(f)]
+            if files_to_cache:
+                count = len(files_to_cache)
+                unit = "file" if count == 1 else "files"
+                logging.info(f"Caching to cache drive ({count} {unit}):")
+                for f in files_to_cache[:6]:  # Show first 6
+                    display_name = self._extract_display_name(f)
+                    logging.info(f"  {display_name}")
+                if len(files_to_cache) > 6:
+                    logging.info(f"  ...and {len(files_to_cache) - 6} more")
         self._safe_move_files(self.media_to_cache, 'cache')
 
     def _safe_move_files(self, files: List[str], destination: str) -> None:

@@ -1,0 +1,75 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="bell"></i>
+        <h2>Notification Settings</h2>
+    </div>
+    <div class="card-body">
+        <form hx-put="/settings/notifications" hx-target="#settings-alert-container" hx-swap="innerHTML">
+
+            <div class="form-group">
+                <label for="notification_type">Notification Type</label>
+                <select id="notification_type" name="notification_type">
+                    <option value="system" {% if settings.notification_type == 'system' %}selected{% endif %}>System (console only)</option>
+                    <option value="Unraid" {% if settings.notification_type == 'Unraid' %}selected{% endif %}>Unraid</option>
+                    <option value="Webhook" {% if settings.notification_type == 'Webhook' %}selected{% endif %}>Webhook (Discord/Slack)</option>
+                    <option value="Both" {% if settings.notification_type == 'Both' %}selected{% endif %}>Both (Unraid + Webhook)</option>
+                </select>
+            </div>
+
+            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="server" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Unraid Notifications
+            </h3>
+
+            <div class="form-group">
+                <label for="unraid_level">Unraid Notification Level</label>
+                <select id="unraid_level" name="unraid_level">
+                    <option value="summary" {% if settings.unraid_level == 'summary' %}selected{% endif %}>Summary only</option>
+                    <option value="error" {% if settings.unraid_level == 'error' %}selected{% endif %}>Errors only</option>
+                    <option value="warning" {% if settings.unraid_level == 'warning' %}selected{% endif %}>Warnings and above</option>
+                    <option value="info" {% if settings.unraid_level == 'info' %}selected{% endif %}>Info and above</option>
+                    <option value="debug" {% if settings.unraid_level == 'debug' %}selected{% endif %}>Debug (all)</option>
+                </select>
+            </div>
+
+            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="webhook" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Webhook Notifications
+            </h3>
+
+            <div class="form-group">
+                <label for="webhook_url">Webhook URL</label>
+                <input type="url" id="webhook_url" name="webhook_url"
+                       value="{{ settings.webhook_url | default('') }}"
+                       placeholder="https://discord.com/api/webhooks/...">
+                <div class="form-hint">Discord or Slack webhook URL</div>
+            </div>
+
+            <div class="form-group">
+                <label for="webhook_level">Webhook Notification Level</label>
+                <select id="webhook_level" name="webhook_level">
+                    <option value="summary" {% if settings.webhook_level == 'summary' %}selected{% endif %}>Summary only</option>
+                    <option value="error" {% if settings.webhook_level == 'error' %}selected{% endif %}>Errors only</option>
+                    <option value="warning" {% if settings.webhook_level == 'warning' %}selected{% endif %}>Warnings and above</option>
+                    <option value="info" {% if settings.webhook_level == 'info' %}selected{% endif %}>Info and above</option>
+                    <option value="debug" {% if settings.webhook_level == 'debug' %}selected{% endif %}>Debug (all)</option>
+                </select>
+            </div>
+
+            <div class="form-group mb-0">
+                <button type="submit" class="btn btn-primary">
+                    <i data-lucide="save"></i>
+                    Save Notification Settings
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

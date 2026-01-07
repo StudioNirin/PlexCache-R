@@ -1,0 +1,60 @@
+<!-- Operation status component - HTMX partial -->
+{% if status.state == 'running' %}
+<div class="alert alert-info" hx-get="/operations/status" hx-trigger="every 2s" hx-swap="outerHTML">
+    <div class="flex items-center gap-2">
+        <span class="spinner"></span>
+        <div>
+            <strong>{{ 'Dry Run' if status.dry_run else 'Operation' }} in progress...</strong>
+            {% if status.started_at %}
+            <div class="text-muted" style="font-size: 0.85rem;">Started at {{ status.started_at }}</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% elif status.state == 'completed' %}
+<div class="alert alert-success auto-dismiss" id="operation-alert">
+    <i data-lucide="check-circle"></i>
+    <div>
+        <strong>{{ 'Dry Run' if status.dry_run else 'Operation' }} Completed</strong>
+        <div style="font-size: 0.85rem; margin-top: 0.25rem;">
+            {% if status.files_cached > 0 %}Cached: {{ status.files_cached }} files{% endif %}
+            {% if status.files_restored > 0 %}{% if status.files_cached > 0 %} | {% endif %}Restored: {{ status.files_restored }} files{% endif %}
+            {% if status.files_cached == 0 and status.files_restored == 0 %}No files needed processing{% endif %}
+            <br>Duration: {{ status.duration_seconds }}s
+        </div>
+    </div>
+</div>
+<script>
+    lucide.createIcons();
+    // Refresh recent activity after operation completes
+    htmx.ajax('GET', '/operations/activity', {target: '#recent-activity', swap: 'innerHTML'});
+    // Auto-dismiss after 10 seconds
+    setTimeout(function() {
+        var alert = document.getElementById('operation-alert');
+        if (alert) {
+            alert.style.transition = 'opacity 0.5s ease-out';
+            alert.style.opacity = '0';
+            setTimeout(function() { alert.remove(); }, 500);
+        }
+    }, 10000);
+</script>
+{% elif status.state == 'failed' %}
+<div class="alert alert-error">
+    <i data-lucide="alert-circle"></i>
+    <div>
+        <strong>Operation Failed</strong>
+        {% if status.error_message %}
+        <div style="font-size: 0.85rem; margin-top: 0.25rem;">{{ status.error_message }}</div>
+        {% endif %}
+    </div>
+</div>
+<script>lucide.createIcons();</script>
+{% else %}
+{% if message %}
+<div class="alert alert-info">
+    <i data-lucide="info"></i>
+    {{ message }}
+</div>
+<script>lucide.createIcons();</script>
+{% endif %}
+{% endif %}

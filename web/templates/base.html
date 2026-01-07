@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ page_title | default('PlexCache-R') }}{% endblock %} - PlexCache-R</title>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Custom Plex Theme -->
+    <link rel="stylesheet" href="/static/css/plex-theme.css">
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/ws.js"></script>
+
+    <!-- Apply saved theme immediately to prevent flash -->
+    <script>
+        (function() {
+            const saved = localStorage.getItem('theme');
+            if (saved) document.documentElement.setAttribute('data-theme', saved);
+        })();
+    </script>
+
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Mobile Header -->
+    <header class="mobile-header">
+        <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Toggle menu">
+            <i data-lucide="menu"></i>
+        </button>
+        <div class="mobile-brand">
+            <i data-lucide="hard-drive"></i>
+            <span>PlexCache-R</span>
+        </div>
+        <div class="mobile-actions">
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                <i data-lucide="sun" class="icon-sun"></i>
+                <i data-lucide="moon" class="icon-moon"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <div class="app-container">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-brand">
+                <i data-lucide="hard-drive"></i>
+                <span>PlexCache-R</span>
+            </div>
+            <ul class="sidebar-nav">
+                <li>
+                    <a href="/" {% if page_title == 'Dashboard' %}class="active"{% endif %}>
+                        <i data-lucide="layout-dashboard"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/cache" {% if page_title == 'Cached Files' %}class="active"{% endif %}>
+                        <i data-lucide="database"></i>
+                        <span>Cached Files</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/cache/drive" {% if page_title == 'Storage' %}class="active"{% endif %}>
+                        <i data-lucide="hard-drive"></i>
+                        <span>Storage</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/settings" {% if 'Settings' in page_title|default('') %}class="active"{% endif %}>
+                        <i data-lucide="settings"></i>
+                        <span>Settings</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/logs" {% if page_title == 'Logs' %}class="active"{% endif %}>
+                        <i data-lucide="file-text"></i>
+                        <span>Logs</span>
+                    </a>
+                </li>
+            </ul>
+            <div class="sidebar-footer">
+                <small>v0.1.0</small>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                    <i data-lucide="sun" class="icon-sun"></i>
+                    <i data-lucide="moon" class="icon-moon"></i>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="content-wrapper">
+                <!-- Alert container for toast notifications -->
+                <div id="alert-container"></div>
+
+                {% block content %}{% endblock %}
+
+                <footer>
+                    PlexCache-R Web UI
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <!-- Custom JavaScript -->
+    <script src="/static/js/app.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Re-initialize icons after HTMX swaps
+        document.addEventListener('htmx:afterSwap', function() {
+            lucide.createIcons();
+        });
+
+        // Theme toggle
+        function toggleTheme() {
+            const html = document.documentElement;
+            const current = html.getAttribute('data-theme');
+            const next = current === 'light' ? 'dark' : 'light';
+
+            if (next === 'dark') {
+                html.removeAttribute('data-theme');
+                localStorage.removeItem('theme');
+            } else {
+                html.setAttribute('data-theme', next);
+                localStorage.setItem('theme', next);
+            }
+
+            // Re-init icons to update theme toggle icons
+            lucide.createIcons();
+        }
+
+        // Mobile sidebar toggle
+        function toggleSidebar() {
+            document.querySelector('.sidebar').classList.toggle('open');
+            document.querySelector('.sidebar-overlay').classList.toggle('active');
+        }
+
+        function closeSidebar() {
+            document.querySelector('.sidebar').classList.remove('open');
+            document.querySelector('.sidebar-overlay').classList.remove('active');
+        }
+
+        // Close sidebar on nav link click (mobile)
+        document.querySelectorAll('.sidebar-nav a').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    closeSidebar();
+                }
+            });
+        });
+
+        // Close sidebar on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeSidebar();
+            }
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
