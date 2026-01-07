@@ -1,5 +1,5 @@
-# PlexCache-r V2.0: Automate Plex Media Management
-### Updated 5/1/26
+# PlexCache-R V3.0: Automate Plex Media Management
+### Updated 1/7/26
 
 ## Current Bugs / Todo List
 
@@ -22,6 +22,9 @@ The original PlexCache app only worked for local users for most features, due to
 - Search only the specified libraries.
 - Check for free space before moving any file.
 - (New v2) - Cache retention policies, with automatic removals based on age/priority settings.
+- (New v3) - **Web UI Dashboard** - Browser-based interface for monitoring and configuration.
+- (New v3) - **Scheduled Runs** - Automatic execution with interval or cron scheduling.
+- (New v3) - **Enhanced Webhooks** - Discord and Slack rich message formatting.
 - Move watched media present on the cache drive back to the array.
 - Move respective subtitles along with the media moved to or from the cache.
 - Filter media older than a specified number of days.
@@ -40,7 +43,8 @@ The original PlexCache app only worked for local users for most features, due to
 
 ```
 PlexCache-R/
-├── plexcache.py              # Main entry point
+├── plexcache.py              # CLI entry point
+├── plexcache_web.py          # Web UI entry point
 ├── core/                     # Core application modules
 │   ├── app.py                # Main orchestrator (PlexCacheApp class)
 │   ├── setup.py              # Interactive setup wizard
@@ -49,13 +53,38 @@ PlexCache-R/
 │   ├── system_utils.py       # OS detection, path conversions
 │   ├── plex_api.py           # Plex server interactions
 │   └── file_operations.py    # File moving, filtering, subtitles
+├── web/                      # Web UI (FastAPI + HTMX)
+│   ├── main.py               # FastAPI application
+│   ├── routers/              # Route handlers
+│   ├── services/             # Business logic
+│   ├── templates/            # Jinja2 templates (Plex theme)
+│   └── static/               # CSS, JS assets
 ├── tools/                    # Diagnostic utilities
 │   └── audit_cache.py        # Cache diagnostic tool
 ├── data/                     # Runtime tracking files (auto-created)
 └── logs/                     # Log files
 ```
 
-**Legacy entry points** (`plexcache_app.py`, `plexcache_setup.py`) are deprecated but kept for backwards compatibility.
+## Web UI (New in V3.0)
+
+PlexCache-R now includes a browser-based dashboard for monitoring and configuration.
+
+**Start the Web UI:**
+```bash
+python3 plexcache_web.py                 # Start on localhost:5000
+python3 plexcache_web.py --host 0.0.0.0  # Listen on all interfaces
+python3 plexcache_web.py --port 8080     # Custom port
+```
+
+**Features:**
+- **Dashboard** - Real-time cache stats, Plex connection status, recent activity feed
+- **Cached Files** - Sortable file browser with filters, eviction controls
+- **Storage** - Drive analytics, breakdowns by source, largest/oldest files
+- **Settings** - Full configuration UI with Plex OAuth, library selection, user toggles
+- **Schedule** - Automatic runs with interval or cron expressions
+- **Logs** - Real-time log viewer with search, filters, and live streaming
+
+**Tech Stack:** FastAPI, HTMX, Jinja2, Plex-inspired dark theme
 
 ## Installation and Setup
 
