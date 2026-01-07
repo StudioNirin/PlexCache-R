@@ -15,11 +15,17 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/ws.js"></script>
 
-    <!-- Apply saved theme immediately to prevent flash -->
+    <!-- Apply saved theme and sidebar state immediately to prevent flash -->
     <script>
         (function() {
-            const saved = localStorage.getItem('theme');
-            if (saved) document.documentElement.setAttribute('data-theme', saved);
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+
+            // Apply saved sidebar collapsed state
+            const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (sidebarCollapsed) {
+                document.documentElement.classList.add('sidebar-collapsed-init');
+            }
         })();
     </script>
 
@@ -55,47 +61,53 @@
             </div>
             <ul class="sidebar-nav">
                 <li>
-                    <a href="/" {% if page_title == 'Dashboard' %}class="active"{% endif %}>
+                    <a href="/" data-tooltip="Dashboard" {% if page_title == 'Dashboard' %}class="active"{% endif %}>
                         <i data-lucide="layout-dashboard"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li>
-                    <a href="/cache" {% if page_title == 'Cached Files' %}class="active"{% endif %}>
+                    <a href="/cache" data-tooltip="Cached Files" {% if page_title == 'Cached Files' %}class="active"{% endif %}>
                         <i data-lucide="database"></i>
                         <span>Cached Files</span>
                     </a>
                 </li>
                 <li>
-                    <a href="/cache/drive" {% if page_title == 'Storage' %}class="active"{% endif %}>
+                    <a href="/cache/drive" data-tooltip="Storage" {% if page_title == 'Storage' %}class="active"{% endif %}>
                         <i data-lucide="hard-drive"></i>
                         <span>Storage</span>
                     </a>
                 </li>
                 <li>
-                    <a href="/settings" {% if 'Settings' in page_title|default('') %}class="active"{% endif %}>
+                    <a href="/settings" data-tooltip="Settings" {% if 'Settings' in page_title|default('') %}class="active"{% endif %}>
                         <i data-lucide="settings"></i>
                         <span>Settings</span>
                     </a>
                 </li>
                 <li>
-                    <a href="/logs" {% if page_title == 'Logs' %}class="active"{% endif %}>
+                    <a href="/logs" data-tooltip="Logs" {% if page_title == 'Logs' %}class="active"{% endif %}>
                         <i data-lucide="file-text"></i>
                         <span>Logs</span>
                     </a>
                 </li>
             </ul>
             <div class="sidebar-footer">
-                <small>v0.1.0</small>
-                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
-                    <i data-lucide="sun" class="icon-sun"></i>
-                    <i data-lucide="moon" class="icon-moon"></i>
+                <button class="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse sidebar">
+                    <i data-lucide="panel-left-close"></i>
                 </button>
             </div>
         </nav>
 
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Top right controls (theme toggle) -->
+            <div class="top-controls">
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                    <i data-lucide="sun" class="icon-sun"></i>
+                    <i data-lucide="moon" class="icon-moon"></i>
+                </button>
+            </div>
+
             <div class="content-wrapper">
                 <!-- Alert container for toast notifications -->
                 <div id="alert-container"></div>
@@ -103,7 +115,7 @@
                 {% block content %}{% endblock %}
 
                 <footer>
-                    PlexCache-R Web UI
+                    PlexCache-R Web UI <span class="version">v0.1.0</span>
                 </footer>
             </div>
         </main>
@@ -164,6 +176,38 @@
                 closeSidebar();
             }
         });
+
+        // Sidebar collapse toggle (desktop)
+        function toggleSidebarCollapse() {
+            const sidebar = document.querySelector('.sidebar');
+            const appContainer = document.querySelector('.app-container');
+            const isCollapsed = sidebar.classList.toggle('collapsed');
+            appContainer.classList.toggle('sidebar-collapsed', isCollapsed);
+
+            // Persist state
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+
+            // Remove init class if present (no longer needed after first toggle)
+            document.documentElement.classList.remove('sidebar-collapsed-init');
+
+            // Re-init icons
+            lucide.createIcons();
+        }
+
+        // Initialize sidebar collapsed state on page load
+        (function initSidebarState() {
+            const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (sidebarCollapsed) {
+                const sidebar = document.querySelector('.sidebar');
+                const appContainer = document.querySelector('.app-container');
+                if (sidebar && appContainer) {
+                    sidebar.classList.add('collapsed');
+                    appContainer.classList.add('sidebar-collapsed');
+                }
+                // Remove the init class since we've applied the proper classes
+                document.documentElement.classList.remove('sidebar-collapsed-init');
+            }
+        })();
     </script>
     {% block scripts %}{% endblock %}
 </body>

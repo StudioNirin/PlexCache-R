@@ -6,6 +6,16 @@
     box-sizing: border-box;
 }
 
+html {
+    overflow-x: hidden;
+    scrollbar-gutter: stable; /* Prevent layout shift from scrollbar */
+}
+
+body {
+    overflow-x: hidden;
+    max-width: 100vw;
+}
+
 :root {
     /* Shared colors */
     --plex-orange: #e5a00d;
@@ -61,6 +71,8 @@ body {
 .app-container {
     display: flex;
     min-height: 100vh;
+    overflow-x: hidden;
+    width: 100%;
 }
 
 /* ==================== Sidebar ==================== */
@@ -72,6 +84,7 @@ body {
     position: fixed;
     height: 100vh;
     overflow-y: auto;
+    overflow-x: clip; /* Clip overflow without affecting scroll behavior */
     display: flex;
     flex-direction: column;
     z-index: 100;
@@ -137,6 +150,156 @@ body {
     border-top: 1px solid var(--plex-border);
     color: var(--plex-text-muted);
     font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Top right controls (theme toggle, etc.) - positioned in main content area */
+.top-controls {
+    position: fixed;
+    top: 1rem;
+    right: 1.5rem;
+    z-index: 101;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.top-controls .theme-toggle {
+    background: transparent;
+    border: none;
+    color: var(--plex-text-muted);
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.top-controls .theme-toggle:hover {
+    background: var(--plex-bg-hover);
+    color: var(--plex-text);
+}
+
+.top-controls .theme-toggle i {
+    width: 20px;
+    height: 20px;
+}
+
+/* Collapse toggle button */
+.sidebar-collapse-btn {
+    background: none;
+    border: none;
+    color: var(--plex-text-muted);
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.sidebar-collapse-btn:hover {
+    background: var(--plex-bg-hover);
+    color: var(--plex-text);
+}
+
+.sidebar-collapse-btn i {
+    width: 18px;
+    height: 18px;
+    transition: transform 0.3s ease;
+}
+
+/* ==================== Collapsed Sidebar ==================== */
+
+.sidebar.collapsed {
+    width: var(--sidebar-collapsed);
+}
+
+.sidebar.collapsed .sidebar-brand span,
+.sidebar.collapsed .sidebar-nav li a span,
+.sidebar.collapsed .sidebar-footer small {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-brand {
+    justify-content: center;
+    padding: 1.25rem 0.5rem;
+}
+
+.sidebar.collapsed .sidebar-nav li a {
+    justify-content: center;
+    padding: 0.75rem;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    position: relative;
+}
+
+.sidebar.collapsed .sidebar-nav li a.active {
+    border-left: none;
+    border-bottom-color: var(--plex-orange);
+}
+
+.sidebar.collapsed .sidebar-footer {
+    justify-content: center;
+    padding: 1rem 0.5rem;
+}
+
+.sidebar.collapsed .sidebar-collapse-btn i {
+    transform: rotate(180deg);
+}
+
+/* Tooltip for collapsed sidebar */
+.sidebar.collapsed .sidebar-nav li a::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--plex-bg-card);
+    color: var(--plex-text);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease, visibility 0.15s ease;
+    margin-left: 0.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    z-index: 1000;
+    border: 1px solid var(--plex-border);
+}
+
+.sidebar.collapsed .sidebar-nav li a:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Main content adjusts with sidebar collapse */
+.app-container.sidebar-collapsed .main-content {
+    margin-left: var(--sidebar-collapsed);
+}
+
+/* Initial collapsed state (applied before body loads to prevent flash) */
+.sidebar-collapsed-init .sidebar {
+    width: var(--sidebar-collapsed);
+}
+
+.sidebar-collapsed-init .main-content {
+    margin-left: var(--sidebar-collapsed);
+}
+
+/* Smooth transition for sidebar collapse */
+.sidebar {
+    transition: width 0.3s ease;
+}
+
+.main-content {
+    transition: margin-left 0.3s ease;
 }
 
 /* ==================== Main Content ==================== */
@@ -165,6 +328,7 @@ body {
     margin-bottom: 2rem;
     flex-wrap: wrap;
     gap: 1rem;
+    padding-right: 50px; /* Leave room for theme toggle */
 }
 
 .page-title {
@@ -1650,6 +1814,12 @@ footer {
     margin-top: 2rem;
 }
 
+footer .version {
+    color: var(--plex-text-muted);
+    opacity: 0.7;
+    margin-left: 0.5rem;
+}
+
 /* ==================== Theme Toggle ==================== */
 
 .theme-toggle {
@@ -1819,6 +1989,31 @@ footer {
         display: block;
     }
 
+    /* Hide collapse button and top controls on mobile */
+    .sidebar-collapse-btn,
+    .top-controls {
+        display: none;
+    }
+
+    /* Reset collapsed state on mobile */
+    .sidebar.collapsed {
+        width: var(--sidebar-width);
+    }
+
+    .sidebar.collapsed .sidebar-brand span,
+    .sidebar.collapsed .sidebar-nav li a span {
+        display: inline;
+    }
+
+    .sidebar.collapsed .sidebar-nav li a {
+        justify-content: flex-start;
+        padding: 0.75rem 1.25rem;
+    }
+
+    .sidebar.collapsed .sidebar-nav li a::after {
+        display: none;
+    }
+
     .main-content {
         margin-left: 0;
         padding: 1rem;
@@ -1826,9 +2021,16 @@ footer {
         max-width: 100vw;
     }
 
+    /* Ignore collapsed state on mobile */
+    .app-container.sidebar-collapsed .main-content,
+    .sidebar-collapsed-init .main-content {
+        margin-left: 0;
+    }
+
     .page-header {
         flex-direction: column;
         align-items: flex-start;
+        padding-right: 0; /* Reset padding on mobile */
     }
 
     .stats-row {
