@@ -21,6 +21,15 @@ if TYPE_CHECKING:
 # Extension used to mark array files that have been cached
 PLEXCACHED_EXTENSION = ".plexcached"
 
+# Subtitle file extensions (excluded from upgrade detection)
+SUBTITLE_EXTENSIONS = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx', '.sbv'}
+
+
+def is_subtitle_file(filepath: str) -> bool:
+    """Check if a file is a subtitle based on its extension."""
+    ext = os.path.splitext(filepath)[1].lower()
+    return ext in SUBTITLE_EXTENSIONS
+
 
 def format_bytes(bytes_value: int) -> str:
     """Format bytes into human-readable string (e.g., '1.5 GB').
@@ -74,15 +83,19 @@ def get_media_identity(filepath: str) -> str:
     return name
 
 
-def find_matching_plexcached(array_path: str, media_identity: str) -> Optional[str]:
+def find_matching_plexcached(array_path: str, media_identity: str, source_file: str) -> Optional[str]:
     """Find a .plexcached file in the array path that matches the media identity.
 
     This handles the case where Radarr/Sonarr upgraded a file - the .plexcached
     backup may have a different quality suffix but same core identity.
 
+    Only matches files of the same type (video matches video, subtitle matches subtitle)
+    to prevent cross-type false matches.
+
     Args:
         array_path: Directory path on the array to search
         media_identity: The core media identity to match (from get_media_identity)
+        source_file: The file being cached/uncached (used to determine file type)
 
     Returns:
         Full path to matching .plexcached file, or None if not found
@@ -90,9 +103,16 @@ def find_matching_plexcached(array_path: str, media_identity: str) -> Optional[s
     if not os.path.isdir(array_path):
         return None
 
+    source_is_subtitle = is_subtitle_file(source_file)
+
     try:
         for entry in os.scandir(array_path):
             if entry.is_file() and entry.name.endswith(PLEXCACHED_EXTENSION):
+                # Only match same file type (video<->video, subtitle<->subtitle)
+                entry_original_name = entry.name.replace(PLEXCACHED_EXTENSION, '')
+                entry_is_subtitle = is_subtitle_file(entry_original_name)
+                if source_is_subtitle != entry_is_subtitle:
+                    continue
                 entry_identity = get_media_identity(entry.name)
                 if entry_identity == media_identity:
                     return entry.path
@@ -2006,7 +2026,7 @@ class FileFilter:
         # NOTE: Only treat as upgrade if the .plexcached has a DIFFERENT name than expected
         expected_plexcached = array_file + PLEXCACHED_EXTENSION
         cache_identity = get_media_identity(cache_file_name)
-        old_plexcached = find_matching_plexcached(array_path, cache_identity)
+        old_plexcached = find_matching_plexcached(array_path, cache_identity, cache_file_name)
         if old_plexcached and old_plexcached != expected_plexcached:
             # Found a .plexcached with different filename - this is a true upgrade scenario
             # Let _move_to_array handle it
@@ -2900,7 +2920,7 @@ class FileMover:
             old_cache_file_to_remove = None
             if not os.path.isfile(plexcached_file):
                 cache_identity = get_media_identity(cache_file_name)
-                old_plexcached = find_matching_plexcached(array_path, cache_identity)
+                old_plexcached = find_matching_plexcached(array_path, cache_identity, array_file)
                 if old_plexcached and old_plexcached != plexcached_file:
                     old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
                     new_name = os.path.basename(cache_file_name)
@@ -3008,7 +3028,7 @@ class FileMover:
             # Scenario 2: Check for filename-change upgrade (different .plexcached with same media identity)
             elif os.path.isfile(cache_file):
                 cache_identity = get_media_identity(cache_file)
-                old_plexcached = find_matching_plexcached(array_path, cache_identity)
+                old_plexcached = find_matching_plexcached(array_path, cache_identity, cache_file)
 
                 # Scenario 2: Upgraded file - old .plexcached exists with different name
                 if old_plexcached and old_plexcached != plexcached_file:
