@@ -2701,6 +2701,22 @@ class FileMover:
 
             # Check if file exists on array to copy
             if os.path.isfile(user_file_name):
+                # Check for hard links - files with multiple hard links (e.g., from jdupes
+                # for seeding) cannot be safely cached because:
+                # 1. Renaming to .plexcached breaks the hard link relationship
+                # 2. The other hard link (e.g., in downloads/) would become a separate file
+                # 3. This could break seeding or cause data inconsistency
+                try:
+                    stat_info = os.stat(user_file_name)
+                    if stat_info.st_nlink > 1:
+                        logging.warning(
+                            f"Skipping hard-linked file (has {stat_info.st_nlink} links): "
+                            f"{os.path.basename(user_file_name)} - Remove hard links to enable caching"
+                        )
+                        return None
+                except OSError as e:
+                    logging.debug(f"Could not check hard link count for {user_file_name}: {e}")
+
                 # Only create directories if not in debug mode (true dry-run)
                 if not self.debug:
                     self.file_utils.create_directory_with_permissions(cache_path, user_file_name)
