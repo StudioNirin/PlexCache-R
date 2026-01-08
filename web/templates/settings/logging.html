@@ -1,0 +1,50 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="file-text"></i>
+        <h2>Logging Settings</h2>
+    </div>
+    <div class="card-body">
+        <form hx-put="/settings/logging" hx-target="#settings-alert-container" hx-swap="innerHTML">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="archive" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Log Retention
+            </h3>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="max_log_files">Maximum Log Files</label>
+                    <input type="number" id="max_log_files" name="max_log_files"
+                           value="{{ settings.max_log_files | default(24) }}" min="1" max="100">
+                    <div class="form-hint">Number of log files to keep (default: 24 for hourly runs = 1 day)</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="keep_error_logs_days">Error Log Retention (days)</label>
+                    <input type="number" id="keep_error_logs_days" name="keep_error_logs_days"
+                           value="{{ settings.keep_error_logs_days | default(7) }}" min="0" max="90">
+                    <div class="form-hint">Days to keep logs containing warnings/errors (0 = disabled)</div>
+                </div>
+            </div>
+
+            <div class="form-hint" style="margin-top: 1rem; padding: 1rem; background: var(--plex-surface); border-radius: 6px;">
+                <strong>How it works:</strong>
+                <ul style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                    <li><strong>Max Log Files:</strong> PlexCache creates a new log file each run. Older logs are automatically deleted when this limit is reached.</li>
+                    <li><strong>Error Log Retention:</strong> Logs containing WARNING or ERROR messages are preserved in <code>logs/errors/</code> for longer-term debugging.</li>
+                </ul>
+            </div>
+
+            <div class="form-group mb-0" style="margin-top: 1.5rem;">
+                <button type="submit" class="btn btn-primary">
+                    <i data-lucide="save"></i>
+                    Save Logging Settings
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

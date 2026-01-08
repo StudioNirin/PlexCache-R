@@ -523,6 +523,57 @@ async def test_webhook(request: Request, webhook_url: str = Form(...)):
         )
 
 
+@router.get("/logging", response_class=HTMLResponse)
+async def settings_logging(request: Request):
+    """Logging settings tab"""
+    settings_service = get_settings_service()
+    settings = settings_service.get_logging_settings()
+
+    return templates.TemplateResponse(
+        "settings/logging.html",
+        {
+            "request": request,
+            "page_title": "Logging Settings",
+            "active_tab": "logging",
+            "settings": settings
+        }
+    )
+
+
+@router.put("/logging", response_class=HTMLResponse)
+async def save_logging_settings(
+    request: Request,
+    max_log_files: int = Form(24),
+    keep_error_logs_days: int = Form(7)
+):
+    """Save logging settings"""
+    settings_service = get_settings_service()
+
+    success = settings_service.save_logging_settings({
+        "max_log_files": max_log_files,
+        "keep_error_logs_days": keep_error_logs_days
+    })
+
+    if success:
+        return templates.TemplateResponse(
+            "partials/alert.html",
+            {
+                "request": request,
+                "type": "success",
+                "message": "Logging settings saved successfully"
+            }
+        )
+    else:
+        return templates.TemplateResponse(
+            "partials/alert.html",
+            {
+                "request": request,
+                "type": "error",
+                "message": "Failed to save settings"
+            }
+        )
+
+
 @router.get("/schedule", response_class=HTMLResponse)
 async def settings_schedule(request: Request):
     """Schedule settings tab"""

@@ -290,6 +290,38 @@ class SettingsService:
         raw["webhook_level"] = settings.get("webhook_level", raw.get("webhook_level", "summary"))
         return self._save_raw(raw)
 
+    def get_logging_settings(self) -> Dict[str, Any]:
+        """Get logging settings"""
+        raw = self._load_raw()
+        return {
+            "max_log_files": raw.get("max_log_files", 24),
+            "keep_error_logs_days": raw.get("keep_error_logs_days", 7)
+        }
+
+    def save_logging_settings(self, settings: Dict[str, Any]) -> bool:
+        """Save logging settings"""
+        raw = self._load_raw()
+
+        # Validate and save max_log_files
+        if "max_log_files" in settings:
+            try:
+                max_log_files = int(settings["max_log_files"])
+                if max_log_files >= 1:
+                    raw["max_log_files"] = max_log_files
+            except (ValueError, TypeError):
+                pass
+
+        # Validate and save keep_error_logs_days
+        if "keep_error_logs_days" in settings:
+            try:
+                keep_error_logs_days = int(settings["keep_error_logs_days"])
+                if keep_error_logs_days >= 0:
+                    raw["keep_error_logs_days"] = keep_error_logs_days
+            except (ValueError, TypeError):
+                pass
+
+        return self._save_raw(raw)
+
     def check_plex_connection(self) -> bool:
         """Check if Plex server is reachable"""
         settings = self.get_plex_settings()

@@ -166,7 +166,58 @@ class SystemDetector:
     def _detect_docker(self) -> bool:
         """Detect if running inside a Docker container."""
         return os.path.exists('/.dockerenv')
-    
+
+    def validate_docker_mounts(self, paths: list) -> list:
+        """
+        Validate that paths are actual mount points in Docker.
+
+        In Docker, if a volume mount fails (e.g., source doesn't exist,
+        trailing space in path), the path will exist as an empty directory
+        inside the container rather than a mount point. This can cause
+        massive data to be written inside the container.
+
+        Args:
+            paths: List of paths to validate (e.g., ['/mnt/cache', '/mnt/user0'])
+
+        Returns:
+            List of warning messages for any issues found
+        """
+        warnings = []
+
+        if not self.is_docker:
+            return warnings
+
+        for path in paths:
+            if not path:
+                continue
+
+            # Normalize path (remove trailing slashes for consistent checking)
+            path = path.rstrip('/')
+
+            if not os.path.exists(path):
+                # Path doesn't exist - might be OK if not used
+                continue
+
+            # Check if it's a mount point
+            if not os.path.ismount(path):
+                # Not a mount point - could be a directory inside container
+                # Check if it's suspiciously small (container rootfs is typically small)
+                try:
+                    stat = os.statvfs(path)
+                    total_gb = (stat.f_blocks * stat.f_frsize) / (1024**3)
+
+                    # If the filesystem is very small (< 100GB), it's likely container rootfs
+                    if total_gb < 100:
+                        warnings.append(
+                            f"WARNING: {path} may not be properly mounted! "
+                            f"Filesystem is only {total_gb:.1f}GB. "
+                            f"Check your Docker volume configuration."
+                        )
+                except OSError:
+                    pass
+
+        return warnings
+
 class FileUtils:
     """Utility functions for file operations."""
     

@@ -472,6 +472,41 @@ class PlexCacheApp:
 
     def _check_paths(self) -> None:
         """Check that required paths exist and are accessible."""
+        # In Docker, validate that mount points are properly configured
+        # This prevents writing massive amounts of data inside the container
+        if self.system_detector.is_docker:
+            paths_to_validate = set()
+
+            # Collect paths from path_mappings
+            if self.config_manager.paths.path_mappings:
+                for mapping in self.config_manager.paths.path_mappings:
+                    if mapping.enabled:
+                        if mapping.real_path:
+                            # Extract base mount point (e.g., /mnt/user from /mnt/user/Movies/)
+                            parts = mapping.real_path.strip('/').split('/')
+                            if len(parts) >= 2:
+                                paths_to_validate.add('/' + '/'.join(parts[:2]))
+                        if mapping.cache_path:
+                            parts = mapping.cache_path.strip('/').split('/')
+                            if len(parts) >= 2:
+                                paths_to_validate.add('/' + '/'.join(parts[:2]))
+
+            # Also check common Unraid paths
+            paths_to_validate.update(['/mnt/cache', '/mnt/user', '/mnt/user0'])
+
+            # Validate mounts
+            mount_warnings = self.system_detector.validate_docker_mounts(list(paths_to_validate))
+            for warning in mount_warnings:
+                logging.warning(warning)
+
+            # If any critical mount is not properly mounted, abort
+            if mount_warnings:
+                raise RuntimeError(
+                    "Docker mount validation failed! One or more paths may not be properly mounted. "
+                    "This could cause data to be written inside the container instead of to mounted volumes. "
+                    "Check your Docker volume configuration and ensure source paths exist on the host."
+                )
+
         if self.config_manager.paths.path_mappings:
             # Multi-path mode: check paths from enabled mappings
             for mapping in self.config_manager.paths.path_mappings:
