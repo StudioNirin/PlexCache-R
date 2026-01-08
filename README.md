@@ -1,5 +1,5 @@
 # PlexCache-R V3.0: Automate Plex Media Management
-### Updated 1/7/26
+### Updated 1/8/26
 
 ## Current Bugs / Todo List
 
@@ -24,7 +24,9 @@ The original PlexCache app only worked for local users for most features, due to
 - (New v2) - Cache retention policies, with automatic removals based on age/priority settings.
 - (New v3) - **Web UI Dashboard** - Browser-based interface for monitoring and configuration.
 - (New v3) - **Scheduled Runs** - Automatic execution with interval or cron scheduling.
-- (New v3) - **Enhanced Webhooks** - Discord and Slack rich message formatting.
+- (New v3) - **Enhanced Webhooks** - Discord and Slack rich message formatting (summary-only to prevent spam).
+- (New v3) - **Stop Button** - Abort running operations gracefully from the Web UI.
+- (New v3) - **Smart Error Handling** - Migration stops early on critical errors (disk full, permissions).
 - Move watched media present on the cache drive back to the array.
 - Move respective subtitles along with the media moved to or from the cache.
 - Filter media older than a specified number of days.
@@ -82,9 +84,10 @@ python3 plexcache_web.py --port 8080     # Custom port
 - **Cached Files** - Sortable file browser with filters, eviction controls
 - **Storage** - Drive analytics, breakdowns by source, largest/oldest files
 - **Maintenance** - Cache health audit, unprotected file detection, one-click fixes
-- **Settings** - Full configuration UI with Plex OAuth, library selection, user toggles
+- **Settings** - Full configuration UI with Plex OAuth, library selection, user toggles, test connection
 - **Schedule** - Automatic runs with interval or cron expressions
 - **Logs** - Real-time log viewer with search, filters, and live streaming
+- **Stop Button** - Abort running operations gracefully (stops after current file completes)
 
 **Tech Stack:** FastAPI, HTMX, Jinja2, Plex-inspired dark theme
 
