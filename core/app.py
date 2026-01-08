@@ -105,7 +105,10 @@ class PlexCacheApp:
             self._initialize_components()
 
             # Clean up stale exclude list entries (self-healing)
-            self.file_filter.clean_stale_exclude_entries()
+            if not self.dry_run:
+                self.file_filter.clean_stale_exclude_entries()
+            else:
+                logging.debug("[DRY RUN] Would clean stale exclude list entries")
 
             # Check paths
             logging.debug("Validating paths...")
@@ -1290,8 +1293,10 @@ class PlexCacheApp:
                 self.media_to_array.extend(files_to_move_back)
 
             # Always clean up stale entries from exclude list (files that no longer exist on cache)
-            if cache_paths_to_remove:
+            if cache_paths_to_remove and not self.dry_run:
                 self.file_filter.remove_files_from_exclude_list(cache_paths_to_remove)
+            elif cache_paths_to_remove and self.dry_run:
+                logging.debug(f"[DRY RUN] Would remove {len(cache_paths_to_remove)} stale entries from exclude list")
         except Exception as e:
             logging.exception(f"Error checking files to move back to array: {type(e).__name__}: {e}")
     
@@ -1325,11 +1330,11 @@ class PlexCacheApp:
         # (per File and Folder Management Policy) - no blanket cleanup needed here
 
         # Clean up stale timestamp entries for files that no longer exist
-        if hasattr(self, 'timestamp_tracker') and self.timestamp_tracker:
+        if hasattr(self, 'timestamp_tracker') and self.timestamp_tracker and not self.dry_run:
             self.timestamp_tracker.cleanup_missing_files()
 
         # Clean up stale watchlist tracker entries
-        if hasattr(self, 'watchlist_tracker') and self.watchlist_tracker:
+        if hasattr(self, 'watchlist_tracker') and self.watchlist_tracker and not self.dry_run:
             self.watchlist_tracker.cleanup_stale_entries()
             self.watchlist_tracker.cleanup_missing_files()
 
