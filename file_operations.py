@@ -2338,11 +2338,15 @@ class FileFilter:
             filename = os.path.basename(file_path)
             name, ext = os.path.splitext(filename)
 
-            # Handle subtitle files - strip language code suffix (e.g., ".en", ".eng", ".es", ".forced")
+            # Handle subtitle files - strip language code suffixes (e.g., ".en", ".eng", ".en.hi", ".forced")
             subtitle_extensions = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx'}
             if ext.lower() in subtitle_extensions:
-                # Strip common language code patterns from the end
-                name = re.sub(r'\.(en|eng|es|spa|fr|fra|de|deu|ger|it|ita|pt|por|ja|jpn|ko|kor|zh|chi|forced|sdh|cc|hi)$', '', name, flags=re.IGNORECASE)
+                # Strip common language code patterns from the end (loop for multiple suffixes like ".en.hi")
+                pattern = r'\.(en|eng|es|spa|fr|fra|de|deu|ger|it|ita|pt|por|ja|jpn|ko|kor|zh|chi|forced|sdh|cc|hi)$'
+                prev_name = None
+                while prev_name != name:
+                    prev_name = name
+                    name = re.sub(pattern, '', name, flags=re.IGNORECASE)
 
             cleaned = re.sub(r'\s*\([^)]*\)$', '', name).strip()
             return cleaned
