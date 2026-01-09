@@ -3,7 +3,7 @@
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import requests
 from fastapi import APIRouter, Request, Form, Query
@@ -419,18 +419,21 @@ async def settings_notifications(request: Request):
 async def save_notification_settings(
     request: Request,
     notification_type: str = Form("system"),
-    unraid_level: str = Form("summary"),
     webhook_url: str = Form(""),
-    webhook_level: str = Form("summary")
+    unraid_levels: List[str] = Form([]),
+    webhook_levels: List[str] = Form([])
 ):
     """Save notification settings"""
     settings_service = get_settings_service()
 
     success = settings_service.save_notification_settings({
         "notification_type": notification_type,
-        "unraid_level": unraid_level,
         "webhook_url": webhook_url,
-        "webhook_level": webhook_level
+        "unraid_levels": unraid_levels,
+        "webhook_levels": webhook_levels,
+        # Keep legacy fields for backward compatibility
+        "unraid_level": unraid_levels[0] if unraid_levels else "summary",
+        "webhook_level": webhook_levels[0] if webhook_levels else "summary"
     })
 
     if success:

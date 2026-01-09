@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import requests
 
@@ -78,21 +78,38 @@ class VerboseMessageFilter(logging.Filter):
 
 class UnraidHandler(logging.Handler):
     """Custom logging handler for Unraid notifications."""
-    
+
     SUMMARY = SUMMARY
-    
-    def __init__(self):
+
+    def __init__(self, enabled_levels: Optional[List[str]] = None):
         super().__init__()
         self.notify_cmd_base = "/usr/local/emhttp/webGui/scripts/notify"
+        self._summary_data: Optional[dict] = None
+        # List of enabled notification types: "summary", "error", "warning"
+        self.enabled_levels = enabled_levels if enabled_levels else ["summary"]
         if not os.path.isfile(self.notify_cmd_base) or not os.access(self.notify_cmd_base, os.X_OK):
             logging.warning(f"{self.notify_cmd_base} does not exist or is not executable. Unraid notifications will not be sent.")
             self.notify_cmd_base = None
 
+    def set_summary_data(self, data: dict) -> None:
+        """Set structured summary data for checking errors-only mode."""
+        self._summary_data = data
+
     def emit(self, record):
-        if self.notify_cmd_base:
-            if record.levelno == SUMMARY:
+        if not self.notify_cmd_base:
+            return
+
+        if record.levelno == SUMMARY:
+            # Only send summary if "summary" is enabled
+            if "summary" in self.enabled_levels:
                 self.send_summary_unraid_notification(record)
-            else: 
+        elif record.levelno >= logging.ERROR:
+            # Send errors if "error" is enabled
+            if "error" in self.enabled_levels:
+                self.send_unraid_notification(record)
+        elif record.levelno >= logging.WARNING:
+            # Send warnings if "warning" is enabled
+            if "warning" in self.enabled_levels:
                 self.send_unraid_notification(record)
 
     def send_summary_unraid_notification(self, record):
@@ -140,11 +157,13 @@ class WebhookHandler(logging.Handler):
         'info': 3447003,      # Blue (#3498DB)
     }
 
-    def __init__(self, webhook_url: str):
+    def __init__(self, webhook_url: str, enabled_levels: Optional[List[str]] = None):
         super().__init__()
         self.webhook_url = webhook_url
         self.platform = self._detect_platform(webhook_url)
         self._summary_data: Optional[dict] = None
+        # List of enabled notification types: "summary", "error", "warning"
+        self.enabled_levels = enabled_levels if enabled_levels else ["summary"]
 
     def _detect_platform(self, url: str) -> str:
         """Auto-detect webhook platform from URL."""
@@ -173,10 +192,19 @@ class WebhookHandler(logging.Handler):
         self._summary_data = data
 
     def emit(self, record):
-        # Only send SUMMARY webhooks - never spam individual error messages
-        # The summary includes error counts and status information
+        # Check which notification types are enabled
         if record.levelno == SUMMARY:
-            self._send_summary(record)
+            # Only send summary if "summary" is enabled
+            if "summary" in self.enabled_levels:
+                self._send_summary(record)
+        elif record.levelno >= logging.ERROR:
+            # Send errors if "error" is enabled
+            if "error" in self.enabled_levels:
+                self._send_message(record)
+        elif record.levelno >= logging.WARNING:
+            # Send warnings if "warning" is enabled
+            if "warning" in self.enabled_levels:
+                self._send_message(record)
 
     def _send_summary(self, record):
         """Send summary notification with rich formatting if available."""
@@ -479,6 +507,7 @@ class LoggingManager:
         self.summary_messages = []
         self.files_moved = False
         self._webhook_handler: Optional[WebhookHandler] = None  # Reference for rich summaries
+        self._unraid_handler: Optional[UnraidHandler] = None  # Reference for summary data
         self._summary_data: dict = {}  # Structured data for rich webhook formatting
         
     def setup_logging(self) -> None:
@@ -618,17 +647,31 @@ class LoggingManager:
         
         # Set up Unraid handler
         if notification_type in ["both", "unraid"]:
-            unraid_handler = UnraidHandler()
-            self._set_handler_level(unraid_handler, notification_config.unraid_level)
+            # Get enabled levels (new list-based) or fall back to legacy level
+            unraid_levels = self._get_enabled_levels(
+                notification_config.unraid_levels,
+                notification_config.unraid_level
+            )
+            unraid_handler = UnraidHandler(enabled_levels=unraid_levels)
+            # Set handler level to DEBUG so all messages pass through, filtering is done in emit()
+            unraid_handler.setLevel(logging.DEBUG)
             self.logger.addHandler(unraid_handler)
-        
+            self._unraid_handler = unraid_handler  # Store reference for summary data
+            logging.debug(f"Unraid notifications enabled for: {unraid_levels}")
+
         # Set up Webhook handler
         if notification_type in ["both", "webhook"] and notification_config.webhook_url:
-            webhook_handler = WebhookHandler(notification_config.webhook_url)
-            self._set_handler_level(webhook_handler, notification_config.webhook_level)
+            # Get enabled levels (new list-based) or fall back to legacy level
+            webhook_levels = self._get_enabled_levels(
+                notification_config.webhook_levels,
+                notification_config.webhook_level
+            )
+            webhook_handler = WebhookHandler(notification_config.webhook_url, enabled_levels=webhook_levels)
+            # Set handler level to DEBUG so all messages pass through, filtering is done in emit()
+            webhook_handler.setLevel(logging.DEBUG)
             self.logger.addHandler(webhook_handler)
             self._webhook_handler = webhook_handler  # Store reference for rich summaries
-            logging.debug(f"Webhook configured: {webhook_handler.platform} platform detected")
+            logging.debug(f"Webhook configured: {webhook_handler.platform} platform, levels: {webhook_levels}")
     
     def _set_handler_level(self, handler: logging.Handler, level_str: str) -> None:
         """Set the level for a logging handler."""
@@ -650,7 +693,44 @@ class LoggingManager:
                 handler.setLevel(logging.ERROR)
         else:
             handler.setLevel(logging.ERROR)
-    
+
+    def _get_enabled_levels(self, levels_list: Optional[List[str]], legacy_level: str) -> List[str]:
+        """Get enabled notification levels, with backward compatibility for legacy config.
+
+        Args:
+            levels_list: New list-based config (e.g., ["summary", "error"])
+            legacy_level: Old string-based config (e.g., "summary", "error", "warning")
+
+        Returns:
+            List of enabled levels
+        """
+        # If new list config is provided and not empty, use it
+        if levels_list:
+            return levels_list
+
+        # Fall back to legacy level string
+        if not legacy_level:
+            return ["summary"]  # Default
+
+        legacy_level = legacy_level.lower()
+
+        # Convert legacy level to list format
+        # "summary" -> ["summary"] (only summary)
+        # "error" -> ["error"] (only errors, no summary)
+        # "warning" -> ["warning", "error"] (warnings and errors)
+        # "info" -> ["summary"] (treat as summary for webhook compatibility)
+        # "debug" -> ["summary", "error", "warning"] (everything)
+        if legacy_level == "summary":
+            return ["summary"]
+        elif legacy_level == "error":
+            return ["error"]
+        elif legacy_level == "warning":
+            return ["warning", "error"]
+        elif legacy_level == "debug":
+            return ["summary", "error", "warning"]
+        else:
+            return ["summary"]  # Default fallback
+
     def add_summary_message(self, message: str) -> None:
         """Add a message to the summary."""
         if self.files_moved:
@@ -698,9 +778,11 @@ class LoggingManager:
         Uses newlines for multi-line output when there are multiple messages.
         Passes structured data to webhook handler for rich formatting.
         """
-        # Pass structured data to webhook handler before logging
+        # Pass structured data to notification handlers before logging
         if self._webhook_handler and self._summary_data:
             self._webhook_handler.set_summary_data(self._summary_data)
+        if self._unraid_handler and self._summary_data:
+            self._unraid_handler.set_summary_data(self._summary_data)
 
         if self.summary_messages:
             if len(self.summary_messages) == 1:

@@ -25,9 +25,19 @@ else:
 class NotificationConfig:
     """Configuration for notification settings."""
     notification_type: str = "system"  # "Unraid", "Webhook", "Both", or "System"
-    unraid_level: str = "summary"
-    webhook_level: str = ""
+    unraid_level: str = "summary"  # Legacy - kept for backward compatibility
+    webhook_level: str = ""  # Legacy - kept for backward compatibility
     webhook_url: str = ""
+    # New list-based levels (can select multiple: summary, error, warning)
+    unraid_levels: Optional[List[str]] = None
+    webhook_levels: Optional[List[str]] = None
+
+    def __post_init__(self):
+        # Initialize lists if None
+        if self.unraid_levels is None:
+            self.unraid_levels = []
+        if self.webhook_levels is None:
+            self.webhook_levels = []
 
 
 @dataclass
@@ -402,6 +412,9 @@ class ConfigManager:
         self.notification.unraid_level = self.settings_data.get('unraid_level', 'summary')
         self.notification.webhook_level = self.settings_data.get('webhook_level', '')
         self.notification.webhook_url = self.settings_data.get('webhook_url', '')
+        # New list-based levels (can select multiple: summary, error, warning)
+        self.notification.unraid_levels = self.settings_data.get('unraid_levels', [])
+        self.notification.webhook_levels = self.settings_data.get('webhook_levels', [])
 
     def _load_logging_config(self) -> None:
         """Load logging-related configuration."""

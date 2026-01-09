@@ -278,15 +278,22 @@ class SettingsService:
             "notification_type": raw.get("notification_type", "system"),
             "unraid_level": raw.get("unraid_level", "summary"),
             "webhook_url": raw.get("webhook_url", ""),
-            "webhook_level": raw.get("webhook_level", "summary")
+            "webhook_level": raw.get("webhook_level", "summary"),
+            # New list-based levels
+            "unraid_levels": raw.get("unraid_levels", []),
+            "webhook_levels": raw.get("webhook_levels", [])
         }
 
     def save_notification_settings(self, settings: Dict[str, Any]) -> bool:
         """Save notification settings"""
         raw = self._load_raw()
         raw["notification_type"] = settings.get("notification_type", raw.get("notification_type", "system"))
-        raw["unraid_level"] = settings.get("unraid_level", raw.get("unraid_level", "summary"))
         raw["webhook_url"] = settings.get("webhook_url", raw.get("webhook_url", ""))
+        # New list-based levels
+        raw["unraid_levels"] = settings.get("unraid_levels", raw.get("unraid_levels", []))
+        raw["webhook_levels"] = settings.get("webhook_levels", raw.get("webhook_levels", []))
+        # Legacy fields for backward compatibility
+        raw["unraid_level"] = settings.get("unraid_level", raw.get("unraid_level", "summary"))
         raw["webhook_level"] = settings.get("webhook_level", raw.get("webhook_level", "summary"))
         return self._save_raw(raw)
 

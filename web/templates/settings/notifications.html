@@ -27,14 +27,27 @@
             </h3>
 
             <div class="form-group">
-                <label for="unraid_level">Unraid Notification Level</label>
-                <select id="unraid_level" name="unraid_level">
-                    <option value="summary" {% if settings.unraid_level == 'summary' %}selected{% endif %}>Summary only</option>
-                    <option value="error" {% if settings.unraid_level == 'error' %}selected{% endif %}>Errors only</option>
-                    <option value="warning" {% if settings.unraid_level == 'warning' %}selected{% endif %}>Warnings and above</option>
-                    <option value="info" {% if settings.unraid_level == 'info' %}selected{% endif %}>Info and above</option>
-                    <option value="debug" {% if settings.unraid_level == 'debug' %}selected{% endif %}>Debug (all)</option>
-                </select>
+                <label>Unraid Notification Levels</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="unraid_levels" value="summary"
+                               {% if 'summary' in settings.unraid_levels or (settings.unraid_level == 'summary' and not settings.unraid_levels) %}checked{% endif %}>
+                        <span>Summary</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Send summary after each run</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="unraid_levels" value="error"
+                               {% if 'error' in settings.unraid_levels or settings.unraid_level == 'error' %}checked{% endif %}>
+                        <span>Errors</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="unraid_levels" value="warning"
+                               {% if 'warning' in settings.unraid_levels or settings.unraid_level == 'warning' %}checked{% endif %}>
+                        <span>Warnings</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur</span>
+                    </label>
+                </div>
             </div>
 
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
@@ -69,14 +82,27 @@
             </div>
 
             <div class="form-group">
-                <label for="webhook_level">Webhook Notification Level</label>
-                <select id="webhook_level" name="webhook_level">
-                    <option value="summary" {% if settings.webhook_level == 'summary' %}selected{% endif %}>Summary only</option>
-                    <option value="error" {% if settings.webhook_level == 'error' %}selected{% endif %}>Errors only</option>
-                    <option value="warning" {% if settings.webhook_level == 'warning' %}selected{% endif %}>Warnings and above</option>
-                    <option value="info" {% if settings.webhook_level == 'info' %}selected{% endif %}>Info and above</option>
-                    <option value="debug" {% if settings.webhook_level == 'debug' %}selected{% endif %}>Debug (all)</option>
-                </select>
+                <label>Webhook Notification Levels</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="webhook_levels" value="summary"
+                               {% if 'summary' in settings.webhook_levels or (settings.webhook_level == 'summary' and not settings.webhook_levels) %}checked{% endif %}>
+                        <span>Summary</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Send summary after each run</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="webhook_levels" value="error"
+                               {% if 'error' in settings.webhook_levels or settings.webhook_level == 'error' %}checked{% endif %}>
+                        <span>Errors</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="webhook_levels" value="warning"
+                               {% if 'warning' in settings.webhook_levels or settings.webhook_level == 'warning' %}checked{% endif %}>
+                        <span>Warnings</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur</span>
+                    </label>
+                </div>
             </div>
 
             <div class="form-group mb-0">
