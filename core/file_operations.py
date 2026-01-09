@@ -8,6 +8,7 @@ import shutil
 import logging
 import threading
 import json
+import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Set, Optional, Tuple, Dict, TYPE_CHECKING, Callable
@@ -2755,6 +2756,22 @@ class FileMover:
 
             # Check if file exists on array to copy
             if os.path.isfile(user_file_name):
+                # Check for hard links - files with multiple hard links (e.g., from jdupes
+                # for seeding) cannot be safely cached because:
+                # 1. Renaming to .plexcached breaks the hard link relationship
+                # 2. The other hard link (e.g., in downloads/) would become a separate file
+                # 3. This could break seeding or cause data inconsistency
+                try:
+                    stat_info = os.stat(user_file_name)
+                    if stat_info.st_nlink > 1:
+                        logging.warning(
+                            f"Skipping hard-linked file (has {stat_info.st_nlink} links): "
+                            f"{os.path.basename(user_file_name)} - Remove hard links to enable caching"
+                        )
+                        return None
+                except OSError as e:
+                    logging.debug(f"Could not check hard link count for {user_file_name}: {e}")
+
                 # Only create directories if not in debug mode (true dry-run)
                 if not self.debug:
                     self.file_utils.create_directory_with_permissions(cache_path, user_file_name)
@@ -3098,7 +3115,61 @@ class FileMover:
             os.rename(array_file, plexcached_file)
             logging.debug(f"Renamed array file: {array_file} -> {plexcached_file}")
 
-            # Validate rename succeeded
+            # Validate rename succeeded with FUSE diagnostic logging
+            parent_dir = os.path.dirname(array_file)
+
+            # Diagnostic: List directory contents after rename
+            try:
+                dir_contents = os.listdir(parent_dir)
+                original_name = os.path.basename(array_file)
+                plexcached_name = os.path.basename(plexcached_file)
+                logging.debug(f"FUSE diag: directory listing after rename:")
+                logging.debug(f"  - Original '{original_name}' in listing: {original_name in dir_contents}")
+                logging.debug(f"  - Plexcached '{plexcached_name}' in listing: {plexcached_name in dir_contents}")
+            except OSError as e:
+                logging.debug(f"FUSE diag: listdir failed: {e}")
+
+            # Diagnostic: Check file existence with isfile
+            original_isfile = os.path.isfile(array_file)
+            plexcached_isfile = os.path.isfile(plexcached_file)
+            logging.debug(f"FUSE diag: os.path.isfile - original={original_isfile}, plexcached={plexcached_isfile}")
+
+            # Diagnostic: Check with os.stat (bypasses some caching)
+            original_stat_exists = False
+            plexcached_stat_exists = False
+            try:
+                os.stat(array_file)
+                original_stat_exists = True
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logging.debug(f"FUSE diag: stat(original) error: {e}")
+
+            try:
+                os.stat(plexcached_file)
+                plexcached_stat_exists = True
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logging.debug(f"FUSE diag: stat(plexcached) error: {e}")
+
+            logging.debug(f"FUSE diag: os.stat - original={original_stat_exists}, plexcached={plexcached_stat_exists}")
+
+            # Diagnostic: Check with os.access
+            original_access = os.access(array_file, os.F_OK)
+            plexcached_access = os.access(plexcached_file, os.F_OK)
+            logging.debug(f"FUSE diag: os.access(F_OK) - original={original_access}, plexcached={plexcached_access}")
+
+            # Diagnostic: Try to resolve to physical disk path (Unraid-specific)
+            if array_file.startswith('/mnt/user0/'):
+                relative_path = array_file[len('/mnt/user0/'):]
+                for disk_num in range(1, 10):  # Check first 9 disks
+                    disk_path = f'/mnt/disk{disk_num}/{relative_path}'
+                    disk_plexcached = disk_path + '.plexcached'
+                    if os.path.exists(disk_path) or os.path.exists(disk_plexcached):
+                        logging.debug(f"FUSE diag: Found on disk{disk_num}: original={os.path.exists(disk_path)}, plexcached={os.path.exists(disk_plexcached)}")
+
+            # Final verification using isfile (standard check)
             if os.path.isfile(array_file):
                 raise IOError(f"Rename verification failed: original array file still exists at {array_file}")
             if not os.path.isfile(plexcached_file):
