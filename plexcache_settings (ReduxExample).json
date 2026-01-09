@@ -58,6 +58,7 @@
     "watched_move": true,
     "watched_cache_expiry": 48,
     "create_plexcached_backups": true,
+    "hardlinked_files": "skip",
     "cache_dir": "/mnt/cachedrive/media/",
     "real_source": "/mnt/user/media/",
     "nas_library_folders": [

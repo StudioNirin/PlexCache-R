@@ -972,6 +972,32 @@ def _setup_advanced_settings():
         backup_choice = input('Create .plexcached backups? [Y/n] ') or 'yes'
         settings_data['create_plexcached_backups'] = backup_choice.lower() in ['y', 'yes']
 
+    # Hard-linked Files Handling
+    if 'hardlinked_files' not in settings_data:
+        print('\n--- Hard-Linked Files ---')
+        print('If you use hard links for torrenting (e.g., Radarr/Sonarr with seeding),')
+        print('PlexCache can handle these files specially.')
+        print('')
+        print('Hard links share data between two locations (e.g., /media and /downloads).')
+        print('When PlexCache caches a hard-linked file:')
+        print('  - The file is copied to cache for fast Plex playback')
+        print('  - The media library link is removed from the array')
+        print('  - The seed/downloads copy REMAINS on the array (same data, different link)')
+        print('  - Seeding continues uninterrupted!')
+        print('')
+        print('When the file is evicted from cache:')
+        print('  - PlexCache finds the remaining hard link (seed copy)')
+        print('  - Creates a new hard link back to the media location (instant, no copy)')
+        print('')
+        print('Options:')
+        print('  skip - Do not cache hard-linked files (they will be cached after seeding completes)')
+        print('  move - Cache hard-linked files (seed copy preserved, restored via hard link)')
+        print('')
+        hardlink_choice = input('How to handle hard-linked files? [skip/move] ').strip().lower() or 'skip'
+        if hardlink_choice not in ['skip', 'move']:
+            hardlink_choice = 'skip'
+        settings_data['hardlinked_files'] = hardlink_choice
+
     # Smart Cache Eviction
     if 'cache_eviction_mode' not in settings_data:
         _configure_eviction_settings()
@@ -1234,6 +1260,7 @@ def check_for_missing_settings(settings: dict) -> list:
         'eviction_min_priority',
         'path_mappings',
         'create_plexcached_backups',
+        'hardlinked_files',
     ]
     missing = [s for s in optional_new_settings if s not in settings]
     return missing
