@@ -22,7 +22,7 @@ async def cache_list(
     """List cached files"""
     # Get eviction mode setting
     settings_service = get_settings_service()
-    settings = settings_service.get_all_settings()
+    settings = settings_service.get_all()
     eviction_enabled = settings.get("cache_eviction_mode", "none") != "none"
 
     # Default sort: priority if eviction enabled, otherwise filename

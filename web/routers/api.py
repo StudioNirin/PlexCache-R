@@ -154,7 +154,7 @@ async def cache_files_table(
 
     # Get eviction mode setting
     settings_service = get_settings_service()
-    settings = settings_service.get_all_settings()
+    settings = settings_service.get_all()
     eviction_enabled = settings.get("cache_eviction_mode", "none") != "none"
 
     return templates.TemplateResponse(
