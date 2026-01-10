@@ -1463,7 +1463,7 @@ if os.path.exists(settings_filename):
                 write_settings(settings_filename, settings_data)
                 print("Path mappings saved!")
 
-            print("\nYou can now run the plexcache.py script.\n")
+            print("\nYou can now run the plexcache_app.py script.\n")
     except json.decoder.JSONDecodeError as e:
         print(f"Settings file appears to be corrupted (JSON error: {e}). Re-initializing...\n")
         settings_data = {}
