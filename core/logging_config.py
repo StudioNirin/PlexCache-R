@@ -793,10 +793,11 @@ class LoggingManager:
             self.logger.log(SUMMARY, summary_message)
     
     def _preserve_error_log(self) -> None:
-        """Preserve the current log file if it contains warnings or errors.
+        """Preserve the current log file if it contains errors.
 
-        Copies logs with WARNING/ERROR/CRITICAL entries to logs/errors/ subfolder
+        Copies logs with ERROR/CRITICAL entries to logs/errors/ subfolder
         for longer retention. Only runs if keep_error_logs_days > 0.
+        Warnings alone do not trigger preservation.
         """
         if self.keep_error_logs_days <= 0:
             return
@@ -804,15 +805,15 @@ class LoggingManager:
         if not self.current_log_file or not self.current_log_file.exists():
             return
 
-        # Check if log contains warning/error entries
+        # Check if log contains error entries (not warnings)
         try:
             with open(self.current_log_file, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
 
-            # Look for WARNING, ERROR, or CRITICAL level entries
+            # Look for ERROR or CRITICAL level entries only
             has_errors = any(
                 level in content
-                for level in [' - WARNING - ', ' - ERROR - ', ' - CRITICAL - ']
+                for level in [' - ERROR - ', ' - CRITICAL - ']
             )
 
             if not has_errors:
