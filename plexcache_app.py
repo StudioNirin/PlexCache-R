@@ -102,6 +102,14 @@ class PlexCacheApp:
             logging.debug("Initializing components...")
             self._initialize_components()
 
+            # Warn if .plexcached backups are disabled
+            if not self.config_manager.cache.create_plexcached_backups:
+                logging.warning("BACKUPS DISABLED - No .plexcached files will be created. Cached files cannot be recovered if cache drive fails.")
+
+            # Log hard-linked files handling mode
+            if self.config_manager.cache.hardlinked_files == "move":
+                logging.info("Hard-linked files mode: MOVE - Hard-linked files will be cached (seed copies preserved via remaining hard links)")
+
             # Clean up stale exclude list entries (self-healing)
             # Skip in dry-run mode to avoid modifying tracking files
             if not self.dry_run:
@@ -368,7 +376,9 @@ class PlexCacheApp:
             debug=self.dry_run,
             mover_cache_exclude_file=str(mover_exclude),
             timestamp_tracker=self.timestamp_tracker,
-            path_modifier=self.file_path_modifier
+            path_modifier=self.file_path_modifier,
+            create_plexcached_backups=self.config_manager.cache.create_plexcached_backups,
+            hardlinked_files=self.config_manager.cache.hardlinked_files
         )
 
     def _init_cache_management(self) -> None:

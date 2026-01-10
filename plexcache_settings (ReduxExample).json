@@ -57,6 +57,8 @@
     "remote_watchlist_rss_url": "https://rss.plex.tv/64477hyy8-54b3-4b19-a3a7-333c6babbbb40",
     "watched_move": true,
     "watched_cache_expiry": 48,
+    "create_plexcached_backups": true,
+    "hardlinked_files": "skip",
     "cache_dir": "/mnt/cachedrive/media/",
     "real_source": "/mnt/user/media/",
     "nas_library_folders": [

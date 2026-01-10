@@ -132,6 +132,16 @@ class CacheConfig:
     # Only evict items with priority score below this threshold (0-100)
     eviction_min_priority: int = 60
 
+    # .plexcached backup files: when moving files to cache, rename array file to .plexcached
+    # This provides a backup on the array in case the cache drive fails.
+    # Disable this if you use Mover Tuning with cache:prefer shares
+    # WARNING: If disabled, cached files CANNOT be recovered if the cache drive fails
+    create_plexcached_backups: bool = True
+
+    # Hard-linked files handling (e.g., files linked to seed/downloads folder for torrenting)
+    # "skip" - Don't cache hard-linked files; they'll be cached after seeding completes
+    # "move" - Cache hard-linked files; seed copy preserved via remaining hard link
+    hardlinked_files: str = "skip"
 
 
 @dataclass
@@ -321,6 +331,16 @@ class ConfigManager:
         if not 0 <= self.cache.eviction_min_priority <= 100:
             logging.warning(f"Invalid eviction_min_priority '{self.cache.eviction_min_priority}', using 60")
             self.cache.eviction_min_priority = 60
+
+        # Load .plexcached backup setting (default True for safety)
+        self.cache.create_plexcached_backups = self.settings_data.get('create_plexcached_backups', True)
+
+        # Load hard-linked files handling setting (default "skip" for safety)
+        hardlinked_files = self.settings_data.get('hardlinked_files', 'skip')
+        if hardlinked_files not in ('skip', 'move'):
+            logging.warning(f"Invalid hardlinked_files '{hardlinked_files}', using 'skip'")
+            hardlinked_files = 'skip'
+        self.cache.hardlinked_files = hardlinked_files
 
     def _load_path_config(self) -> None:
         """Load path-related configuration."""
