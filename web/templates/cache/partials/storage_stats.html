@@ -155,7 +155,7 @@
                     <tr>
                         <th>File</th>
                         <th>Size</th>
-                        <th>Priority</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
                         <th>Source</th>
                         <th>Users</th>
                     </tr>
@@ -166,11 +166,13 @@
                         <tr>
                             <td title="{{ file.path }}">{{ file.filename|truncate(35) }}</td>
                             <td class="text-muted">{{ file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
                                     {{ file.priority_score }}
                                 </span>
                             </td>
+                            {% endif %}
                             <td class="source-badges">
                                 {% if file.is_ondeck %}
                                 <span class="badge badge-info badge-sm">OnDeck</span>
@@ -215,7 +217,7 @@
                     <tr>
                         <th>File</th>
                         <th>Size</th>
-                        <th>Priority</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
                         <th>Source</th>
                         <th>Users</th>
                         <th>Age</th>
@@ -227,11 +229,13 @@
                         <tr>
                             <td title="{{ file.path }}">{{ file.filename|truncate(30) }}</td>
                             <td class="text-muted">{{ file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
                                     {{ file.priority_score }}
                                 </span>
                             </td>
+                            {% endif %}
                             <td class="source-badges">
                                 {% if file.is_ondeck %}
                                 <span class="badge badge-info badge-sm">OnDeck</span>
@@ -286,7 +290,7 @@
                     <tr>
                         <th>File</th>
                         <th>Size</th>
-                        <th>Priority</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
                         <th>Source</th>
                         <th>Users</th>
                         <th>Age</th>
@@ -298,11 +302,13 @@
                         <tr>
                             <td title="{{ file.path }}">{{ file.filename|truncate(30) }}</td>
                             <td class="text-muted">{{ file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
                                     {{ file.priority_score }}
                                 </span>
                             </td>
+                            {% endif %}
                             <td class="source-badges">
                                 {% if file.is_ondeck %}
                                 <span class="badge badge-info badge-sm">OnDeck</span>
@@ -336,12 +342,15 @@
         </div>
     </div>
 
-    <!-- Expiring Soon -->
+    <!-- Expiring Soon / Watchlist Retention -->
     <div class="card">
         <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
                 <i data-lucide="timer"></i>
-                <h2>Expiring Soon</h2>
+                <h2>{% if data.config.eviction_enabled %}Expiring Soon{% else %}Watchlist Expiring{% endif %}</h2>
+                {% if not data.config.eviction_enabled %}
+                <span class="badge badge-muted badge-sm" title="Smart eviction is disabled. These items will lose watchlist protection but won't be auto-removed.">Eviction Off</span>
+                {% endif %}
             </div>
             <select class="form-select" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.85rem;"
                     onchange="window.location.href='/cache/drive?expiring_within=' + this.value">
@@ -357,7 +366,7 @@
                     <tr>
                         <th>File</th>
                         <th>Size</th>
-                        <th>Priority</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
                         <th>Source</th>
                         <th>Users</th>
                         <th>Expires</th>
@@ -369,11 +378,13 @@
                         <tr>
                             <td title="{{ item.file.path }}">{{ item.file.filename|truncate(30) }}</td>
                             <td class="text-muted">{{ item.file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if item.file.priority_score >= 70 else 'medium' if item.file.priority_score >= 40 else 'low' }}">
                                     {{ item.file.priority_score }}
                                 </span>
                             </td>
+                            {% endif %}
                             <td class="source-badges">
                                 {% if item.file.is_ondeck %}
                                 <span class="badge badge-info badge-sm">OnDeck</span>

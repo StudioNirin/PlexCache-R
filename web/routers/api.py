@@ -152,6 +152,11 @@ async def cache_files_table(
     else:
         totals["total_size_display"] = f"{totals['total_size'] / 1024:.0f} KB"
 
+    # Get eviction mode setting
+    settings_service = get_settings_service()
+    settings = settings_service.get_all_settings()
+    eviction_enabled = settings.get("cache_eviction_mode", "none") != "none"
+
     return templates.TemplateResponse(
         "cache/partials/file_table.html",
         {
@@ -161,7 +166,8 @@ async def cache_files_table(
             "search": search,
             "sort_by": sort,
             "sort_dir": dir,
-            "totals": totals
+            "totals": totals,
+            "eviction_enabled": eviction_enabled
         }
     )
 

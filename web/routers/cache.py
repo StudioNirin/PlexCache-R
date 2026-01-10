@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from web.config import TEMPLATES_DIR
-from web.services import get_cache_service
+from web.services import get_cache_service, get_settings_service
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -16,10 +16,19 @@ async def cache_list(
     request: Request,
     source: str = Query("all", description="Filter by source"),
     search: str = Query("", description="Search filter"),
-    sort: str = Query("priority", description="Sort column"),
+    sort: str = Query(None, description="Sort column"),
     dir: str = Query("desc", description="Sort direction")
 ):
     """List cached files"""
+    # Get eviction mode setting
+    settings_service = get_settings_service()
+    settings = settings_service.get_all_settings()
+    eviction_enabled = settings.get("cache_eviction_mode", "none") != "none"
+
+    # Default sort: priority if eviction enabled, otherwise filename
+    if sort is None:
+        sort = "priority" if eviction_enabled else "filename"
+
     cache_service = get_cache_service()
     files = cache_service.get_all_cached_files(
         source_filter=source, search=search, sort_by=sort, sort_dir=dir
@@ -68,7 +77,8 @@ async def cache_list(
             "search": search,
             "sort_by": sort,
             "sort_dir": dir,
-            "totals": totals
+            "totals": totals,
+            "eviction_enabled": eviction_enabled
         }
     )
 

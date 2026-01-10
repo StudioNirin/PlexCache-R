@@ -569,12 +569,17 @@ class CacheService:
             cache_limit_available = max(0, cache_limit_bytes - effective_usage)
 
         # Configuration
+        eviction_mode = settings.get("cache_eviction_mode", "none")
         config = {
             "cache_dir": cache_dir,
             "cache_limit": settings.get("cache_limit", "N/A"),
             "cache_retention_hours": settings.get("cache_retention_hours", 72),
             "watchlist_retention_days": watchlist_retention_days,
-            "number_episodes": settings.get("number_episodes", 5)
+            "number_episodes": settings.get("number_episodes", 5),
+            "eviction_mode": eviction_mode,
+            "eviction_enabled": eviction_mode != "none",
+            "eviction_threshold_percent": settings.get("cache_eviction_threshold_percent", 90),
+            "eviction_min_priority": settings.get("eviction_min_priority", 60)
         }
 
         return {
