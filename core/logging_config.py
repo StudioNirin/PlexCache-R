@@ -529,6 +529,8 @@ class LoggingManager:
         # Suppress python-multipart form parser debug spam (various logger names)
         logging.getLogger("multipart").setLevel(logging.WARNING)
         logging.getLogger("multipart.multipart").setLevel(logging.WARNING)
+        logging.getLogger("python_multipart").setLevel(logging.WARNING)
+        logging.getLogger("python-multipart").setLevel(logging.WARNING)
 
     def _clear_existing_handlers(self) -> None:
         """Remove existing handlers from the root logger to prevent duplicates."""

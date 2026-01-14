@@ -1,0 +1,454 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="file-text"></i>
+        </div>
+        <div>
+            <h1>Logs</h1>
+            <p>View PlexCache-R log files</p>
+        </div>
+    </div>
+</header>
+
+<!-- Filters -->
+<div class="card mb-2">
+    <div class="card-body">
+        <div class="log-filters">
+            <div class="form-group mb-0">
+                <label for="log-file-select">Log File</label>
+                <select id="log-file-select" name="filename"
+                        hx-get="/logs/content"
+                        hx-target="#log-content"
+                        hx-include="#log-lines"
+                        hx-swap="innerHTML">
+                    {% for file in log_files %}
+                    <option value="{{ file }}" {% if file == current_file %}selected{% endif %}>{{ file }}</option>
+                    {% endfor %}
+                    {% if not log_files %}
+                    <option value="">No log files</option>
+                    {% endif %}
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label for="log-lines">Lines</label>
+                <select id="log-lines" name="lines"
+                        hx-get="/logs/content"
+                        hx-target="#log-content"
+                        hx-include="#log-file-select">
+                    <option value="50">Last 50</option>
+                    <option value="100" selected>Last 100</option>
+                    <option value="250">Last 250</option>
+                    <option value="500">Last 500</option>
+                    <option value="1000">Last 1000</option>
+                    <option value="0">All</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label for="log-level-filter">Filter Level</label>
+                <select id="log-level-filter">
+                    <option value="all">All Levels</option>
+                    <option value="ERROR">Errors Only</option>
+                    <option value="WARNING">Warnings+</option>
+                    <option value="INFO">Info+</option>
+                    <option value="DEBUG">Debug Only</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label>&nbsp;</label>
+                <button class="btn btn-secondary"
+                        hx-get="/logs/content"
+                        hx-target="#log-content"
+                        hx-include="#log-file-select, #log-lines">
+                    <i data-lucide="refresh-cw"></i>
+                    Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search & Options -->
+<div class="card mb-2">
+    <div class="card-body" style="padding: 0.75rem 1.25rem;">
+        <div class="log-toolbar">
+            <div class="search-container">
+                <input type="text" id="log-search" class="search-input" placeholder="Search logs... (Ctrl+F)">
+                <span class="search-results" id="search-results">0 results</span>
+                <button type="button" class="btn btn-sm btn-secondary" id="search-prev" title="Previous (Shift+Enter)">▲</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="search-next" title="Next (Enter)">▼</button>
+            </div>
+            <div class="flex items-center gap-2">
+                <label class="switch" style="margin: 0;">
+                    <input type="checkbox" id="auto-scroll" checked>
+                    <span>Auto-scroll</span>
+                </label>
+                <label class="switch" style="margin: 0;">
+                    <input type="checkbox" id="live-updates">
+                    <span>Live Updates</span>
+                </label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Log Content -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="terminal"></i>
+        <h2>Log Output</h2>
+    </div>
+    <div class="card-body">
+        <div class="log-viewer-wrapper">
+            <div id="log-content" class="log-viewer"
+                 hx-get="/logs/content"
+                 hx-trigger="load"
+                 hx-include="#log-file-select, #log-lines">Loading logs...</div>
+            <div id="scrollbar-markers" class="scrollbar-markers"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ==================== Preferences Persistence ====================
+const PREFS_KEY = 'plexcache_log_viewer_prefs';
+
+function savePreferences() {
+    const prefs = {
+        lines: document.getElementById('log-lines').value,
+        filterLevel: document.getElementById('log-level-filter').value,
+        autoScroll: document.getElementById('auto-scroll').checked,
+        liveUpdates: document.getElementById('live-updates').checked
+    };
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+}
+
+function loadPreferences() {
+    try {
+        const saved = localStorage.getItem(PREFS_KEY);
+        if (!saved) return;
+
+        const prefs = JSON.parse(saved);
+
+        if (prefs.lines) {
+            document.getElementById('log-lines').value = prefs.lines;
+        }
+        if (prefs.filterLevel) {
+            document.getElementById('log-level-filter').value = prefs.filterLevel;
+        }
+        if (typeof prefs.autoScroll === 'boolean') {
+            document.getElementById('auto-scroll').checked = prefs.autoScroll;
+        }
+        if (typeof prefs.liveUpdates === 'boolean') {
+            document.getElementById('live-updates').checked = prefs.liveUpdates;
+            if (prefs.liveUpdates) {
+                startLiveUpdates();
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load log viewer preferences:', e);
+    }
+}
+
+// Log viewer enhancements
+document.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.id === 'log-content' && document.getElementById('auto-scroll').checked) {
+        evt.detail.target.scrollTop = evt.detail.target.scrollHeight;
+    }
+    lucide.createIcons();
+    // Reapply filter after content swap
+    applyLogFilter();
+});
+
+// Log level filtering
+const filterSelect = document.getElementById('log-level-filter');
+const logContent = document.getElementById('log-content');
+
+// Level hierarchy for filtering
+const levelHierarchy = {
+    'DEBUG': 0,
+    'INFO': 1,
+    'WARNING': 2,
+    'ERROR': 3
+};
+
+function getLineLevel(element) {
+    // Check element class first (more reliable)
+    if (element.classList.contains('log-error')) return 'ERROR';
+    if (element.classList.contains('log-warning')) return 'WARNING';
+    if (element.classList.contains('log-info')) return 'INFO';
+    if (element.classList.contains('log-debug')) return 'DEBUG';
+    // Fallback to text content
+    const text = element.textContent;
+    if (text.includes(' - ERROR - ') || text.includes('ERROR')) return 'ERROR';
+    if (text.includes(' - WARNING - ') || text.includes('WARNING')) return 'WARNING';
+    if (text.includes(' - INFO - ') || text.includes('INFO')) return 'INFO';
+    if (text.includes(' - DEBUG - ') || text.includes('DEBUG')) return 'DEBUG';
+    return 'INFO'; // Default
+}
+
+function applyLogFilter() {
+    const filter = filterSelect.value;
+    // Look for pre (static logs) or code (WebSocket logs)
+    const container = logContent.querySelector('pre') || logContent.querySelector('code') || logContent;
+
+    const lines = container.querySelectorAll('span, div');
+    lines.forEach(line => {
+        if (filter === 'all') {
+            line.style.display = '';
+            return;
+        }
+
+        const lineLevel = getLineLevel(line);
+        const lineValue = levelHierarchy[lineLevel] || 1;
+        const filterValue = levelHierarchy[filter] || 0;
+
+        // "Debug Only" shows exact match, others show >= level
+        if (filter === 'DEBUG') {
+            line.style.display = (lineLevel === 'DEBUG') ? '' : 'none';
+        } else {
+            line.style.display = (lineValue >= filterValue) ? '' : 'none';
+        }
+    });
+}
+
+filterSelect.addEventListener('change', applyLogFilter);
+
+// ==================== Search Functionality ====================
+const searchInput = document.getElementById('log-search');
+const searchResults = document.getElementById('search-results');
+const searchPrev = document.getElementById('search-prev');
+const searchNext = document.getElementById('search-next');
+
+let searchState = {
+    query: '',
+    matches: [],
+    currentIndex: 0
+};
+
+function escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function performSearch() {
+    const query = searchInput.value.trim();
+    searchState.query = query;
+    searchState.matches = [];
+    searchState.currentIndex = 0;
+
+    const container = logContent.querySelector('pre') || logContent.querySelector('code') || logContent;
+    const lines = container.querySelectorAll('span, div');
+
+    // Clear previous highlights
+    lines.forEach(line => {
+        line.classList.remove('current-match');
+        // Restore original text if it was highlighted
+        if (line.dataset.original) {
+            line.innerHTML = line.dataset.original;
+            delete line.dataset.original;
+        }
+    });
+
+    if (query.length < 2) {
+        updateSearchResults();
+        return;
+    }
+
+    const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+
+    lines.forEach((line, idx) => {
+        const text = line.textContent;
+        if (regex.test(text)) {
+            searchState.matches.push({ element: line, index: idx });
+            // Store original and apply highlight
+            line.dataset.original = line.innerHTML;
+            line.innerHTML = line.innerHTML.replace(regex, '<span class="search-highlight">$1</span>');
+        }
+    });
+
+    updateSearchResults();
+
+    // Scroll to first match
+    if (searchState.matches.length > 0) {
+        highlightCurrentMatch();
+    }
+}
+
+function updateSearchResults() {
+    if (searchState.matches.length > 0) {
+        searchResults.textContent = `${searchState.currentIndex + 1} / ${searchState.matches.length}`;
+        searchResults.classList.add('has-results');
+    } else if (searchState.query.length >= 2) {
+        searchResults.textContent = '0 results';
+        searchResults.classList.remove('has-results');
+    } else {
+        searchResults.textContent = '0 results';
+        searchResults.classList.remove('has-results');
+    }
+    updateScrollbarMarkers();
+}
+
+function updateScrollbarMarkers() {
+    const markersContainer = document.getElementById('scrollbar-markers');
+    if (!markersContainer) return;
+    markersContainer.innerHTML = '';
+
+    if (!searchState.matches || searchState.matches.length === 0) return;
+
+    const container = logContent ? (logContent.querySelector('pre') || logContent.querySelector('code') || logContent) : null;
+    if (!container) return;
+
+    const containerHeight = container.scrollHeight;
+    const viewportHeight = logContent.clientHeight;
+
+    // Only show markers if content is scrollable
+    if (containerHeight <= viewportHeight) return;
+
+    searchState.matches.forEach((match, idx) => {
+        const element = match.element;
+        // Check if element still exists in DOM (may have been replaced by live update)
+        if (!element || !element.isConnected) return;
+        const elementTop = element.offsetTop;
+        const percentage = (elementTop / containerHeight) * 100;
+
+        const marker = document.createElement('div');
+        marker.className = 'scrollbar-marker' + (idx === searchState.currentIndex ? ' current' : '');
+        marker.style.top = `${percentage}%`;
+        markersContainer.appendChild(marker);
+    });
+}
+
+function highlightCurrentMatch() {
+    // Remove previous current-match
+    const prev = logContent.querySelector('.current-match');
+    if (prev) prev.classList.remove('current-match');
+
+    if (searchState.matches.length === 0) return;
+
+    const match = searchState.matches[searchState.currentIndex];
+    match.element.classList.add('current-match');
+    match.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // Update scrollbar markers to show current
+    updateScrollbarMarkers();
+}
+
+function navigateSearch(direction) {
+    if (searchState.matches.length === 0) return;
+
+    if (direction === 'next') {
+        searchState.currentIndex = (searchState.currentIndex + 1) % searchState.matches.length;
+    } else {
+        searchState.currentIndex = (searchState.currentIndex - 1 + searchState.matches.length) % searchState.matches.length;
+    }
+
+    updateSearchResults();
+    highlightCurrentMatch();
+}
+
+// Search event listeners
+searchInput.addEventListener('input', performSearch);
+searchPrev.addEventListener('click', () => navigateSearch('prev'));
+searchNext.addEventListener('click', () => navigateSearch('next'));
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    // Ctrl+F to focus search
+    if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault();
+        searchInput.focus();
+    }
+    // Enter/Shift+Enter when in search input
+    if (e.key === 'Enter' && document.activeElement === searchInput) {
+        e.preventDefault();
+        if (e.shiftKey) {
+            navigateSearch('prev');
+        } else {
+            navigateSearch('next');
+        }
+    }
+    // F3 for next/prev
+    if (e.key === 'F3') {
+        e.preventDefault();
+        if (e.shiftKey) {
+            navigateSearch('prev');
+        } else {
+            navigateSearch('next');
+        }
+    }
+});
+
+// Re-run search after HTMX content swap
+document.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.id === 'log-content' && searchState.query.length >= 2) {
+        setTimeout(performSearch, 100);
+    }
+});
+
+// ==================== Live Updates ====================
+const liveUpdatesToggle = document.getElementById('live-updates');
+let liveUpdatesInterval = null;
+
+function refreshLogs() {
+    // Clear stale DOM references from search state before refresh
+    if (searchState.matches.length > 0) {
+        searchState.matches = [];
+    }
+    // Clear scrollbar markers
+    const markersContainer = document.getElementById('scrollbar-markers');
+    if (markersContainer) markersContainer.innerHTML = '';
+
+    htmx.ajax('GET', '/logs/content', {
+        target: '#log-content',
+        swap: 'innerHTML',
+        values: {
+            filename: document.getElementById('log-file-select').value,
+            lines: document.getElementById('log-lines').value
+        }
+    });
+}
+
+function startLiveUpdates() {
+    if (liveUpdatesInterval) return;
+    liveUpdatesInterval = setInterval(refreshLogs, 5000); // Every 5 seconds
+}
+
+function stopLiveUpdates() {
+    if (liveUpdatesInterval) {
+        clearInterval(liveUpdatesInterval);
+        liveUpdatesInterval = null;
+    }
+}
+
+liveUpdatesToggle.addEventListener('change', function() {
+    if (this.checked) {
+        startLiveUpdates();
+    } else {
+        stopLiveUpdates();
+    }
+    savePreferences();
+});
+
+// Stop live updates when navigating away
+window.addEventListener('beforeunload', stopLiveUpdates);
+
+// ==================== Preference Event Listeners ====================
+document.getElementById('log-lines').addEventListener('change', savePreferences);
+document.getElementById('log-level-filter').addEventListener('change', savePreferences);
+document.getElementById('auto-scroll').addEventListener('change', savePreferences);
+
+// Load preferences on page load
+document.addEventListener('DOMContentLoaded', loadPreferences);
+</script>
+{% endblock %}

@@ -1,5 +1,6 @@
 """PlexCache-R Web UI - FastAPI Application"""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,10 +15,24 @@ from web.services import get_scheduler_service, get_settings_service
 from web.services.web_cache import init_web_cache, get_web_cache_service
 
 
+def _suppress_noisy_loggers():
+    """Suppress debug spam from third-party libraries"""
+    # Suppress python-multipart form parser debug spam
+    logging.getLogger("multipart").setLevel(logging.WARNING)
+    logging.getLogger("multipart.multipart").setLevel(logging.WARNING)
+    logging.getLogger("python_multipart").setLevel(logging.WARNING)
+    logging.getLogger("python-multipart").setLevel(logging.WARNING)
+    # Suppress HTTP client noise
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
     # Startup
+    _suppress_noisy_loggers()
     print(f"PlexCache-R Web UI starting...")
     print(f"Project root: {PROJECT_ROOT}")
 

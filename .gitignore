@@ -5,8 +5,8 @@
 *.pyc
 __pycache__/
 
-# Logs
-logs/
+# Logs (root logs directory only, not web/templates/logs/)
+/logs/
 
 # User data files
 plexcache_settings.json

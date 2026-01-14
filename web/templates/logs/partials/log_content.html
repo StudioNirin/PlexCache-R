@@ -1,0 +1,15 @@
+<!-- Log content partial with syntax highlighting -->
+{% if content %}
+<pre class="log-output">{% for line in content.split('\n') %}{% if line.strip() %}{% if 'ERROR' in line %}<span class="log-error">{{ line }}</span>
+{% elif 'WARNING' in line %}<span class="log-warning">{{ line }}</span>
+{% elif 'INFO' in line %}<span class="log-info">{{ line }}</span>
+{% elif 'DEBUG' in line %}<span class="log-debug">{{ line }}</span>
+{% else %}<span class="log-other">{{ line }}</span>
+{% endif %}{% endif %}{% endfor %}</pre>
+{% else %}
+<div class="text-muted" style="text-align: center; padding: 2rem;">
+    <i data-lucide="file-text" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
+    No log content available
+</div>
+<script>lucide.createIcons();</script>
+{% endif %}
