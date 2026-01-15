@@ -2260,6 +2260,7 @@ footer .version {
         transition: transform 0.3s ease;
         top: 0;
         padding-top: 56px; /* Account for mobile header */
+        z-index: 160; /* Above overlay (150) so links are clickable */
     }
 
     .sidebar.open {

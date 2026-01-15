@@ -182,9 +182,9 @@ class SettingsService:
         if "valid_sections" in settings:
             raw["valid_sections"] = settings["valid_sections"]
         if "days_to_monitor" in settings:
-            raw["days_to_monitor"] = int(settings["days_to_monitor"])
+            raw["days_to_monitor"] = int(float(settings["days_to_monitor"]))
         if "number_episodes" in settings:
-            raw["number_episodes"] = int(settings["number_episodes"])
+            raw["number_episodes"] = int(float(settings["number_episodes"]))
         if "users_toggle" in settings:
             raw["users_toggle"] = settings["users_toggle"]
         if "skip_ondeck" in settings:
@@ -263,22 +263,25 @@ class SettingsService:
         """Save cache settings"""
         raw = self._load_raw()
 
+        # Safe int converter that handles float strings like "365.0"
+        safe_int = lambda x: int(float(x))
+
         # Map form field names to settings keys
         field_mapping = {
             "watchlist_toggle": ("watchlist_toggle", lambda x: x == "on" or x is True),
-            "watchlist_episodes": ("watchlist_episodes", int),
+            "watchlist_episodes": ("watchlist_episodes", safe_int),
             "watchlist_retention_days": ("watchlist_retention_days", float),
             "watched_move": ("watched_move", lambda x: x == "on" or x is True),
             "create_plexcached_backups": ("create_plexcached_backups", lambda x: x == "on" or x is True),
             "hardlinked_files": ("hardlinked_files", str),
-            "cache_retention_hours": ("cache_retention_hours", int),
+            "cache_retention_hours": ("cache_retention_hours", safe_int),
             "cache_limit": ("cache_limit", str),
             "cache_eviction_mode": ("cache_eviction_mode", str),
-            "cache_eviction_threshold_percent": ("cache_eviction_threshold_percent", int),
-            "eviction_min_priority": ("eviction_min_priority", int),
+            "cache_eviction_threshold_percent": ("cache_eviction_threshold_percent", safe_int),
+            "eviction_min_priority": ("eviction_min_priority", safe_int),
             "remote_watchlist_toggle": ("remote_watchlist_toggle", lambda x: x == "on" or x is True),
             "remote_watchlist_rss_url": ("remote_watchlist_rss_url", str),
-            "activity_retention_hours": ("activity_retention_hours", int)
+            "activity_retention_hours": ("activity_retention_hours", safe_int)
         }
 
         for form_field, (setting_key, converter) in field_mapping.items():
@@ -328,10 +331,10 @@ class SettingsService:
         """Save logging settings"""
         raw = self._load_raw()
 
-        # Validate and save max_log_files
+        # Validate and save max_log_files (int(float()) handles "5.0" strings)
         if "max_log_files" in settings:
             try:
-                max_log_files = int(settings["max_log_files"])
+                max_log_files = int(float(settings["max_log_files"]))
                 if max_log_files >= 1:
                     raw["max_log_files"] = max_log_files
             except (ValueError, TypeError):
@@ -340,7 +343,7 @@ class SettingsService:
         # Validate and save keep_error_logs_days
         if "keep_error_logs_days" in settings:
             try:
-                keep_error_logs_days = int(settings["keep_error_logs_days"])
+                keep_error_logs_days = int(float(settings["keep_error_logs_days"]))
                 if keep_error_logs_days >= 0:
                     raw["keep_error_logs_days"] = keep_error_logs_days
             except (ValueError, TypeError):

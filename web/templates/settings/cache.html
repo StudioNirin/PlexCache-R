@@ -32,8 +32,8 @@
                 <div class="form-group">
                     <label for="watchlist_retention_days">Watchlist Retention (days)</label>
                     <input type="number" id="watchlist_retention_days" name="watchlist_retention_days"
-                           value="{{ settings.watchlist_retention_days | default(14) }}" min="1" max="90" step="0.5">
-                    <div class="form-hint">Auto-expire watchlist items after this period</div>
+                           value="{{ settings.watchlist_retention_days | default(14) }}" min="0" max="365" step="0.5">
+                    <div class="form-hint">Auto-expire watchlist items after this period (0 = never expire)</div>
                 </div>
             </div>
 
@@ -89,8 +89,8 @@
                 <div class="form-group">
                     <label for="cache_retention_hours">Cache Retention (hours)</label>
                     <input type="number" id="cache_retention_hours" name="cache_retention_hours"
-                           value="{{ settings.cache_retention_hours | default(12) }}" min="1" max="168">
-                    <div class="form-hint">Keep files cached at least this long</div>
+                           value="{{ settings.cache_retention_hours | default(12) }}" min="0" max="720">
+                    <div class="form-hint">Keep files cached at least this long (0 = no minimum)</div>
                 </div>
 
                 <div class="form-group">

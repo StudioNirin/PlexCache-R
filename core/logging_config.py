@@ -569,7 +569,8 @@ class LoggingManager:
     
     def _setup_log_file(self) -> None:
         """Set up the log file with rotation."""
-        current_time = datetime.now().strftime("%Y%m%d_%H%M")
+        # Use second-level precision to prevent log mixing when runs happen within same minute
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = self.logs_folder / f"plexcache_log_{current_time}.log"
         self.current_log_file = log_file  # Track for error preservation
         latest_log_file = self.logs_folder / "plexcache_log_latest.log"

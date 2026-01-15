@@ -14,14 +14,11 @@ LABEL org.opencontainers.image.vendor="Brandon Haney"
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=America/Los_Angeles \
-    PUID=99 \
-    PGID=100 \
     WEB_PORT=5757 \
     LOG_LEVEL=INFO
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gosu \
     tini \
     tzdata \
     curl \
@@ -46,8 +43,7 @@ COPY plexcache.py .
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Create directories and set permissions
-# Note: User creation happens in entrypoint based on PUID/PGID
+# Create directories for config persistence
 RUN mkdir -p /config /app/logs /app/data && \
     chmod -R 777 /config /app/logs /app/data
 

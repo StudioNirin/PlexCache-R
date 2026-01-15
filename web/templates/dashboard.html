@@ -80,4 +80,27 @@
         </div>
     </div>
 </div>
+
+<script>
+// Persist verbose toggle preference
+const VERBOSE_PREF_KEY = 'plexcache_dashboard_verbose';
+
+function loadVerbosePreference() {
+    const saved = localStorage.getItem(VERBOSE_PREF_KEY);
+    if (saved === 'true') {
+        document.getElementById('verbose-toggle').checked = true;
+    }
+}
+
+function saveVerbosePreference() {
+    const checked = document.getElementById('verbose-toggle').checked;
+    localStorage.setItem(VERBOSE_PREF_KEY, checked ? 'true' : 'false');
+}
+
+// Load preference on page load
+document.addEventListener('DOMContentLoaded', loadVerbosePreference);
+
+// Save preference when toggle changes
+document.getElementById('verbose-toggle').addEventListener('change', saveVerbosePreference);
+</script>
 {% endblock %}
