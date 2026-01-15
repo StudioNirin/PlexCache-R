@@ -324,6 +324,72 @@ async def cache_storage_stats(request: Request, expiring_within: int = 7):
     )
 
 
+@router.get("/cache/priorities-content", response_class=HTMLResponse)
+async def cache_priorities_content(
+    request: Request,
+    sort: str = "priority",
+    dir: str = "desc"
+):
+    """Priority report content partial for lazy loading"""
+    cache_service = get_cache_service()
+    settings_service = get_settings_service()
+
+    # Get structured report data
+    report_data = cache_service.get_priority_report_data()
+
+    # Get eviction mode for conditional display
+    settings = settings_service.get_all()
+    eviction_enabled = settings.get("cache_eviction_mode", "none") != "none"
+
+    # Sort files if needed
+    files = report_data["files"]
+    reverse = (dir == "desc")
+
+    sort_keys = {
+        "filename": lambda f: f["filename"].lower(),
+        "size": lambda f: f["size"],
+        "priority": lambda f: f["priority_score"],
+        "age": lambda f: f["cache_age_hours"],
+        "users": lambda f: len(f["users"]),
+        "source": lambda f: (f["is_ondeck"], f["is_watchlist"]),
+    }
+
+    sort_key = sort_keys.get(sort, sort_keys["priority"])
+    files.sort(key=sort_key, reverse=reverse)
+    report_data["files"] = files
+
+    return templates.TemplateResponse(
+        "cache/partials/priorities_content.html",
+        {
+            "request": request,
+            "data": report_data,
+            "eviction_enabled": eviction_enabled,
+            "sort_by": sort,
+            "sort_dir": dir
+        }
+    )
+
+
+@router.get("/cache/simulate-eviction", response_class=HTMLResponse)
+async def simulate_eviction(request: Request, threshold: int = 95):
+    """Simulate eviction at a given threshold percentage"""
+    cache_service = get_cache_service()
+
+    # Validate threshold (50-100)
+    threshold = max(50, min(100, threshold))
+
+    result = cache_service.simulate_eviction(threshold)
+
+    return templates.TemplateResponse(
+        "cache/partials/eviction_simulation.html",
+        {
+            "request": request,
+            "threshold": threshold,
+            "result": result
+        }
+    )
+
+
 @router.get("/settings/schedule/validate-cron")
 async def validate_cron_expression(expression: str):
     """Validate a cron expression (JSON)"""

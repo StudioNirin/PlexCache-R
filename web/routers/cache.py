@@ -107,16 +107,18 @@ async def cache_drive(request: Request, expiring_within: int = 7):
 
 
 @router.get("/priorities", response_class=HTMLResponse)
-async def cache_priorities(request: Request):
-    """Priority report page"""
-    cache_service = get_cache_service()
-    report = cache_service.get_priority_report()
-
+async def cache_priorities(
+    request: Request,
+    sort: str = Query("priority", description="Sort column"),
+    dir: str = Query("desc", description="Sort direction")
+):
+    """Priority report page with detailed analysis (lazy loaded)"""
     return templates.TemplateResponse(
         "cache/priorities.html",
         {
             "request": request,
             "page_title": "Priority Report",
-            "report": report
+            "sort_by": sort,
+            "sort_dir": dir
         }
     )

@@ -2371,3 +2371,277 @@ footer .version {
         justify-content: space-between;
     }
 }
+
+/* ==================== Priority Report Page ==================== */
+
+/* Tier distribution cards */
+.tier-card {
+    padding: 1.25rem;
+    border-radius: 8px;
+    text-align: center;
+    background: var(--plex-bg-input);
+    border: 1px solid var(--plex-border);
+}
+
+.tier-card.tier-high {
+    background: rgba(76, 175, 80, 0.08);
+    border-color: rgba(76, 175, 80, 0.3);
+}
+
+.tier-card.tier-medium {
+    background: rgba(255, 152, 0, 0.08);
+    border-color: rgba(255, 152, 0, 0.3);
+}
+
+.tier-card.tier-low {
+    background: rgba(244, 67, 54, 0.08);
+    border-color: rgba(244, 67, 54, 0.3);
+}
+
+.tier-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+.tier-card.tier-high .tier-header { color: var(--plex-success); }
+.tier-card.tier-medium .tier-header { color: var(--plex-warning); }
+.tier-card.tier-low .tier-header { color: var(--plex-error); }
+
+.tier-range {
+    font-size: 0.75rem;
+    color: var(--plex-text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.tier-value {
+    font-size: 2.25rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.tier-card.tier-high .tier-value { color: var(--plex-success); }
+.tier-card.tier-medium .tier-value { color: var(--plex-warning); }
+.tier-card.tier-low .tier-value { color: var(--plex-error); }
+
+.tier-label {
+    font-size: 0.85rem;
+    color: var(--plex-text-muted);
+    margin-top: 0.25rem;
+}
+
+.tier-size {
+    font-size: 0.8rem;
+    color: var(--plex-text-muted);
+    margin-top: 0.25rem;
+}
+
+.tier-bar {
+    height: 6px;
+    background: var(--plex-bg-hover);
+    border-radius: 3px;
+    margin-top: 0.75rem;
+    overflow: hidden;
+}
+
+.tier-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.tier-card.tier-high .tier-fill { background: var(--plex-success); }
+.tier-card.tier-medium .tier-fill { background: var(--plex-warning); }
+.tier-card.tier-low .tier-fill { background: var(--plex-error); }
+
+.tier-note {
+    font-size: 0.75rem;
+    color: var(--plex-error);
+    margin-top: 0.5rem;
+    font-style: italic;
+}
+
+/* Expandable row toggle */
+.expand-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+    color: var(--plex-text-muted);
+}
+
+.expand-toggle:hover {
+    background: var(--plex-bg-hover);
+    color: var(--plex-orange);
+}
+
+.expand-toggle.expanded {
+    color: var(--plex-orange);
+}
+
+.expandable-row:hover {
+    background: var(--plex-bg-hover);
+}
+
+/* Priority breakdown details */
+.priority-breakdown-row {
+    background: var(--plex-bg-input);
+}
+
+.priority-breakdown-row td {
+    padding: 0 !important;
+}
+
+.breakdown-details {
+    padding: 1rem 1.5rem;
+    border-left: 3px solid var(--plex-orange);
+    margin-left: 2rem;
+    margin-right: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.breakdown-title {
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: var(--plex-text);
+}
+
+.breakdown-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    max-width: 280px;
+}
+
+.breakdown-line {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    padding: 0.25rem 0;
+}
+
+.breakdown-line.breakdown-total {
+    border-top: 1px solid var(--plex-border);
+    margin-top: 0.5rem;
+    padding-top: 0.625rem;
+    font-weight: 500;
+}
+
+/* Eviction Simulator */
+.simulation-current {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: var(--plex-bg-input);
+    border-radius: 6px;
+}
+
+.simulation-current p {
+    margin: 0.25rem 0;
+}
+
+.simulation-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+}
+
+.simulation-label {
+    font-weight: 500;
+    margin-right: 0.5rem;
+}
+
+.simulation-btn.active {
+    background: var(--plex-orange);
+    color: var(--plex-bg-darker);
+    border-color: var(--plex-orange);
+}
+
+.simulation-custom {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: 0.5rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--plex-border);
+}
+
+.custom-threshold-input {
+    width: 70px;
+    text-align: center;
+    padding: 0.5rem;
+}
+
+.simulation-results {
+    margin-top: 1rem;
+}
+
+.simulation-result {
+    padding: 1rem;
+    background: var(--plex-bg-input);
+    border-radius: 6px;
+}
+
+.simulation-summary {
+    margin-bottom: 1rem;
+}
+
+.simulation-summary p {
+    margin: 0.25rem 0;
+}
+
+.simulation-files {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.simulation-files table {
+    margin-bottom: 0;
+}
+
+/* Compact table for simulation results */
+.compact-table {
+    font-size: 0.9rem;
+}
+
+.compact-table th,
+.compact-table td {
+    padding: 0.5rem 0.75rem;
+}
+
+/* Mobile responsiveness for Priority Report */
+@media (max-width: 768px) {
+    .tier-card {
+        padding: 1rem;
+    }
+
+    .tier-value {
+        font-size: 1.75rem;
+    }
+
+    .breakdown-details {
+        margin-left: 1rem;
+        margin-right: 1rem;
+        padding: 0.75rem 1rem;
+    }
+
+    .simulation-controls {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .simulation-custom {
+        margin-left: 0;
+        padding-left: 0;
+        border-left: none;
+        margin-top: 0.5rem;
+    }
+}

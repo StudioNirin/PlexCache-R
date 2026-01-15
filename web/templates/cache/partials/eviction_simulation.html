@@ -1,0 +1,78 @@
+<!-- Eviction Simulation Results -->
+<div class="simulation-result">
+    <div class="simulation-summary">
+        {% if result.bytes_to_free > 0 %}
+        <p>
+            At <strong>{{ threshold }}%</strong> drive usage threshold:
+            <strong class="text-warning">{{ result.would_evict|length }}</strong> file(s) would be evicted,
+            freeing <strong>{{ result.total_freed_display }}</strong>
+        </p>
+        <p class="text-muted" style="font-size: 0.85rem;">
+            Current usage: {{ result.current_usage_percent }}% |
+            Target: {{ result.target_usage_percent }}% |
+            Need to free: {{ result.bytes_to_free_display }}
+        </p>
+        {% else %}
+        <p class="text-success">
+            <i data-lucide="check-circle" style="width: 16px; height: 16px; vertical-align: middle;"></i>
+            At <strong>{{ threshold }}%</strong> threshold: No eviction needed (current usage: {{ result.current_usage_percent }}%)
+        </p>
+        {% endif %}
+    </div>
+
+    {% if result.would_evict %}
+    <div class="simulation-files">
+        <table class="compact-table">
+            <thead>
+                <tr>
+                    <th>File</th>
+                    <th>Size</th>
+                    <th>Priority</th>
+                    <th>Source</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for file in result.would_evict %}
+                <tr>
+                    <td title="{{ file.path }}">{{ file.filename }}</td>
+                    <td class="text-muted">{{ file.size_display }}</td>
+                    <td>
+                        <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                            {{ file.priority_score }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if file.source == 'ondeck' %}
+                        <span class="badge badge-info">OnDeck</span>
+                        {% elif file.source == 'watchlist' %}
+                        <span class="badge badge-muted">Watchlist</span>
+                        {% else %}
+                        <span class="badge badge-warning">Other</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr class="totals-row">
+                    <td colspan="4">
+                        <div class="totals-summary">
+                            <span class="totals-item">
+                                <strong>{{ result.would_evict|length }}</strong> files to evict
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <strong>{{ result.total_freed_display }}</strong> freed
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <strong>{{ result.remaining_count }}</strong> files remaining
+                            </span>
+                        </div>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% endif %}
+</div>

@@ -1,0 +1,354 @@
+<!-- Priority Report Content - loaded via HTMX -->
+
+{% if data.files %}
+<!-- Summary Stats Cards -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="files"></i>
+            Total Files
+        </div>
+        <div class="stat-value orange">{{ data.summary.total }}</div>
+        <div class="stat-label">{{ data.summary.total_size_display }} cached</div>
+    </div>
+    <a href="/cache?source=ondeck" class="stat-card stat-card-link">
+        <div class="stat-card-header">
+            <i data-lucide="play-circle"></i>
+            OnDeck
+        </div>
+        <div class="stat-value" style="color: var(--plex-info);">{{ data.summary.ondeck_count }}</div>
+        <div class="stat-label">files</div>
+    </a>
+    <a href="/cache?source=watchlist" class="stat-card stat-card-link">
+        <div class="stat-card-header">
+            <i data-lucide="bookmark"></i>
+            Watchlist
+        </div>
+        <div class="stat-value text-muted">{{ data.summary.watchlist_count }}</div>
+        <div class="stat-label">files</div>
+    </a>
+    {% if data.summary.other_count > 0 %}
+    <a href="/cache?source=other" class="stat-card stat-card-link">
+        <div class="stat-card-header">
+            <i data-lucide="help-circle"></i>
+            Other
+        </div>
+        <div class="stat-value text-warning">{{ data.summary.other_count }}</div>
+        <div class="stat-label">files</div>
+    </a>
+    {% endif %}
+</div>
+
+<!-- Priority Distribution -->
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="layers"></i>
+        <h2>Priority Distribution</h2>
+    </div>
+    <div class="card-body">
+        <div class="breakdown-grid">
+            <div class="tier-card tier-high">
+                <div class="tier-header">
+                    <i data-lucide="shield-check"></i>
+                    <span>High Priority</span>
+                </div>
+                <div class="tier-range">70 - 100</div>
+                <div class="tier-value">{{ data.tiers.high.count }}</div>
+                <div class="tier-label">files ({{ data.tiers.high.percent }}%)</div>
+                <div class="tier-size">{{ data.tiers.high.size_display }}</div>
+                <div class="tier-bar">
+                    <div class="tier-fill" style="width: {{ data.tiers.high.percent }}%"></div>
+                </div>
+            </div>
+            <div class="tier-card tier-medium">
+                <div class="tier-header">
+                    <i data-lucide="shield-alert"></i>
+                    <span>Medium Priority</span>
+                </div>
+                <div class="tier-range">40 - 69</div>
+                <div class="tier-value">{{ data.tiers.medium.count }}</div>
+                <div class="tier-label">files ({{ data.tiers.medium.percent }}%)</div>
+                <div class="tier-size">{{ data.tiers.medium.size_display }}</div>
+                <div class="tier-bar">
+                    <div class="tier-fill" style="width: {{ data.tiers.medium.percent }}%"></div>
+                </div>
+            </div>
+            <div class="tier-card tier-low">
+                <div class="tier-header">
+                    <i data-lucide="shield-x"></i>
+                    <span>Low Priority</span>
+                </div>
+                <div class="tier-range">0 - 39</div>
+                <div class="tier-value">{{ data.tiers.low.count }}</div>
+                <div class="tier-label">files ({{ data.tiers.low.percent }}%)</div>
+                <div class="tier-size">{{ data.tiers.low.size_display }}</div>
+                <div class="tier-bar">
+                    <div class="tier-fill" style="width: {{ data.tiers.low.percent }}%"></div>
+                </div>
+                {% if data.tiers.low.count > 0 %}
+                <div class="tier-note">Eviction candidates</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- File Priority Details -->
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="file-text"></i>
+        <h2>File Priority Details</h2>
+        <span class="text-muted" style="margin-left: auto; font-size: 0.85rem;">Click row to see score breakdown</span>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 40px;"></th>
+                    <th class="sortable" data-sort="priority" onclick="sortTable('priority')">
+                        Priority
+                        <span class="sort-icon">
+                            {% if sort_by == 'priority' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="filename" onclick="sortTable('filename')">
+                        File
+                        <span class="sort-icon">
+                            {% if sort_by == 'filename' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="size" onclick="sortTable('size')">
+                        Size
+                        <span class="sort-icon">
+                            {% if sort_by == 'size' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="source" onclick="sortTable('source')">
+                        Source
+                        <span class="sort-icon">
+                            {% if sort_by == 'source' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="age" onclick="sortTable('age')">
+                        Age
+                        <span class="sort-icon">
+                            {% if sort_by == 'age' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="users" onclick="sortTable('users')">
+                        Users
+                        <span class="sort-icon">
+                            {% if sort_by == 'users' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for file in data.files %}
+                <tr class="expandable-row" onclick="toggleBreakdown({{ loop.index }})" style="cursor: pointer;">
+                    <td>
+                        <span class="expand-toggle" data-row="{{ loop.index }}">
+                            <i data-lucide="chevron-right"></i>
+                        </span>
+                    </td>
+                    <td>
+                        <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                            {{ file.priority_score }}
+                        </span>
+                    </td>
+                    <td title="{{ file.path }}">{{ file.filename }}</td>
+                    <td class="text-muted">{{ file.size_display }}</td>
+                    <td class="source-badges">
+                        {% if file.is_ondeck %}
+                        <span class="badge badge-info">OnDeck</span>
+                        {% endif %}
+                        {% if file.is_watchlist %}
+                        <span class="badge badge-muted">Watchlist</span>
+                        {% endif %}
+                        {% if not file.is_ondeck and not file.is_watchlist %}
+                            {% if file.source == 'ondeck' %}
+                            <span class="badge badge-warning">Stale OnDeck</span>
+                            {% elif file.source == 'watchlist' %}
+                            <span class="badge badge-warning">Stale Watchlist</span>
+                            {% else %}
+                            <span class="badge badge-warning">Other</span>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    <td class="text-muted">{{ file.cache_age_hours|round(1) }}h</td>
+                    <td>
+                        {% if file.users %}
+                            {% for user in file.users %}
+                            <span class="badge badge-success" style="margin-right: 0.25rem;">{{ user }}</span>
+                            {% endfor %}
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <!-- Expandable breakdown row -->
+                <tr id="breakdown-{{ loop.index }}" class="priority-breakdown-row" style="display: none;">
+                    <td colspan="7">
+                        <div class="breakdown-details">
+                            <div class="breakdown-title">Score Breakdown</div>
+                            <div class="breakdown-table">
+                                <div class="breakdown-line">
+                                    <span>Base Score:</span>
+                                    <span>{{ file.priority_breakdown.base }}</span>
+                                </div>
+                                {% for factor in file.priority_breakdown.factors %}
+                                <div class="breakdown-line">
+                                    <span>{{ factor.label }}:</span>
+                                    <span class="{{ 'text-success' if factor.value > 0 else 'text-error' if factor.value < 0 else '' }}">
+                                        {{ '+' if factor.value > 0 else '' }}{{ factor.value }}
+                                    </span>
+                                </div>
+                                {% endfor %}
+                                {% if not file.priority_breakdown.factors %}
+                                <div class="breakdown-line text-muted">
+                                    <span>No bonuses applied</span>
+                                    <span></span>
+                                </div>
+                                {% endif %}
+                                <div class="breakdown-line breakdown-total">
+                                    <span>Final Score:</span>
+                                    <span><strong>{{ file.priority_score }}</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr class="totals-row">
+                    <td colspan="7">
+                        <div class="totals-summary">
+                            <span class="totals-item">
+                                <i data-lucide="files"></i>
+                                <strong>{{ data.summary.total }}</strong> files
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <i data-lucide="hard-drive"></i>
+                                <strong>{{ data.summary.total_size_display }}</strong> total
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <span class="priority-badge high" style="font-size: 0.75rem;">High</span>
+                                <strong>{{ data.tiers.high.count }}</strong>
+                            </span>
+                            <span class="totals-item">
+                                <span class="priority-badge medium" style="font-size: 0.75rem;">Med</span>
+                                <strong>{{ data.tiers.medium.count }}</strong>
+                            </span>
+                            <span class="totals-item">
+                                <span class="priority-badge low" style="font-size: 0.75rem;">Low</span>
+                                <strong>{{ data.tiers.low.count }}</strong>
+                            </span>
+                        </div>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Eviction Simulator (only if eviction enabled) -->
+{% if eviction_enabled %}
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="calculator"></i>
+        <h2>Eviction Simulator</h2>
+    </div>
+    <div class="card-body">
+        <div class="simulation-current">
+            <p>
+                <strong>Current settings:</strong>
+                Eviction mode <span class="badge badge-info">{{ data.eviction.mode }}</span>,
+                threshold <strong>{{ data.eviction.threshold_percent }}%</strong>,
+                min priority <strong>{{ data.eviction.min_priority }}</strong>
+            </p>
+            <p>
+                Drive usage: <strong>{{ data.eviction.current_usage_percent }}%</strong>
+                {% if data.eviction.would_evict_count > 0 %}
+                - <span class="text-warning"><strong>{{ data.eviction.would_evict_count }}</strong> files ({{ data.eviction.would_evict_size_display }}) below min priority</span>
+                {% else %}
+                - <span class="text-success">No files currently below min priority threshold</span>
+                {% endif %}
+            </p>
+        </div>
+
+        <div class="simulation-controls">
+            <span class="simulation-label">Simulate at drive usage threshold:</span>
+            <button class="btn btn-secondary simulation-btn" data-threshold="95"
+                    hx-get="/api/cache/simulate-eviction?threshold=95"
+                    hx-target="#simulation-results">
+                95%
+            </button>
+            <button class="btn btn-secondary simulation-btn" data-threshold="90"
+                    hx-get="/api/cache/simulate-eviction?threshold=90"
+                    hx-target="#simulation-results">
+                90%
+            </button>
+            <button class="btn btn-secondary simulation-btn" data-threshold="80"
+                    hx-get="/api/cache/simulate-eviction?threshold=80"
+                    hx-target="#simulation-results">
+                80%
+            </button>
+            <button class="btn btn-secondary simulation-btn" data-threshold="70"
+                    hx-get="/api/cache/simulate-eviction?threshold=70"
+                    hx-target="#simulation-results">
+                70%
+            </button>
+            <div class="simulation-custom">
+                <input type="number" id="custom-threshold" class="custom-threshold-input" min="50" max="100" value="85" placeholder="85">
+                <button class="btn btn-secondary" onclick="simulateCustomThreshold()">
+                    Simulate
+                </button>
+            </div>
+        </div>
+
+        <div id="simulation-results" class="simulation-results">
+            <div class="empty-state">
+                <i data-lucide="calculator"></i>
+                <p>Click a threshold button above to preview eviction behavior</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<!-- Empty State -->
+<div class="card">
+    <div class="card-body">
+        <div class="empty-state">
+            <i data-lucide="inbox" style="width: 48px; height: 48px;"></i>
+            <h3>No Cached Files</h3>
+            <p class="text-muted">There are no cached files to analyze. Run PlexCache to cache some files first.</p>
+            <a href="/" class="btn btn-primary">
+                <i data-lucide="home"></i>
+                Go to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Initialize Lucide icons -->
+<script>
+    lucide.createIcons();
+</script>
