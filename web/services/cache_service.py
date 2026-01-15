@@ -52,6 +52,31 @@ class CacheService:
         """Load settings file"""
         return self._load_json_file(self.settings_file)
 
+    def _translate_container_to_host_path(self, path: str) -> str:
+        """Translate container cache path to host path for exclude file.
+
+        When writing to the exclude file, paths must be host paths so the
+        Unraid mover can understand them.
+        """
+        settings = self._load_settings()
+        path_mappings = settings.get('path_mappings', [])
+
+        for mapping in path_mappings:
+            host_cache_path = mapping.get('host_cache_path', '')
+            cache_path = mapping.get('cache_path', '')
+
+            if not host_cache_path or not cache_path:
+                continue
+            if host_cache_path == cache_path:
+                continue  # No translation needed
+
+            container_prefix = cache_path.rstrip('/')
+            if path.startswith(container_prefix):
+                host_prefix = host_cache_path.rstrip('/')
+                return path.replace(container_prefix, host_prefix, 1)
+
+        return path
+
     def _format_size(self, size_bytes: int) -> str:
         """Format bytes into human-readable string"""
         if size_bytes == 0:
@@ -1210,8 +1235,10 @@ class CacheService:
             with open(self.exclude_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
 
-            # Filter out the path
-            new_lines = [line for line in lines if line.strip() != cache_path]
+            # Translate container path to host path for comparison
+            # (exclude file contains host paths for Unraid mover)
+            host_path = self._translate_container_to_host_path(cache_path)
+            new_lines = [line for line in lines if line.strip() != host_path]
 
             with open(self.exclude_file, 'w', encoding='utf-8') as f:
                 f.writelines(new_lines)

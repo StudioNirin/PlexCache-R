@@ -138,6 +138,57 @@ class MaintenanceService:
         except (json.JSONDecodeError, IOError):
             return {}
 
+    def _translate_host_to_container_path(self, path: str) -> str:
+        """Translate host cache path back to container path.
+
+        The exclude file contains host paths (for Unraid mover), but cache_files
+        uses container paths. This translates host paths back to container paths
+        for accurate comparison.
+        """
+        settings = self._load_settings()
+        path_mappings = settings.get('path_mappings', [])
+
+        for mapping in path_mappings:
+            host_cache_path = mapping.get('host_cache_path', '')
+            cache_path = mapping.get('cache_path', '')
+
+            if not host_cache_path or not cache_path:
+                continue
+            if host_cache_path == cache_path:
+                continue  # No translation needed
+
+            host_prefix = host_cache_path.rstrip('/')
+            if path.startswith(host_prefix):
+                container_prefix = cache_path.rstrip('/')
+                return path.replace(host_prefix, container_prefix, 1)
+
+        return path
+
+    def _translate_container_to_host_path(self, path: str) -> str:
+        """Translate container cache path to host path for exclude file.
+
+        When writing to the exclude file, paths must be host paths so the
+        Unraid mover can understand them.
+        """
+        settings = self._load_settings()
+        path_mappings = settings.get('path_mappings', [])
+
+        for mapping in path_mappings:
+            host_cache_path = mapping.get('host_cache_path', '')
+            cache_path = mapping.get('cache_path', '')
+
+            if not host_cache_path or not cache_path:
+                continue
+            if host_cache_path == cache_path:
+                continue  # No translation needed
+
+            container_prefix = cache_path.rstrip('/')
+            if path.startswith(container_prefix):
+                host_prefix = host_cache_path.rstrip('/')
+                return path.replace(container_prefix, host_prefix, 1)
+
+        return path
+
     def _get_paths(self) -> tuple:
         """Get cache and array directory paths from settings"""
         if self._cache_dirs and self._array_dirs:
@@ -212,7 +263,7 @@ class MaintenanceService:
         return cache_files
 
     def get_exclude_files(self) -> Set[str]:
-        """Get all files in exclude list"""
+        """Get all files in exclude list (translated to container paths for comparison)"""
         exclude_files = set()
         if self.exclude_file.exists():
             try:
@@ -220,7 +271,9 @@ class MaintenanceService:
                     for line in f:
                         line = line.strip()
                         if line:
-                            exclude_files.add(line)
+                            # Translate host paths back to container paths for comparison
+                            container_path = self._translate_host_to_container_path(line)
+                            exclude_files.add(container_path)
             except IOError:
                 pass
         return exclude_files
@@ -743,7 +796,9 @@ class MaintenanceService:
         try:
             with open(self.exclude_file, 'a', encoding='utf-8') as f:
                 for path in paths:
-                    f.write(path + '\n')
+                    # Translate container paths to host paths for Unraid mover
+                    host_path = self._translate_container_to_host_path(path)
+                    f.write(host_path + '\n')
 
             return ActionResult(
                 success=True,
@@ -791,9 +846,10 @@ class MaintenanceService:
                         backup_size = os.path.getsize(plexcached_path)
 
                         if cache_size == backup_size:
-                            # Add to exclude list
+                            # Add to exclude list (translate to host path for Unraid mover)
+                            host_path = self._translate_container_to_host_path(cache_path)
                             with open(self.exclude_file, 'a', encoding='utf-8') as f:
-                                f.write(cache_path + '\n')
+                                f.write(host_path + '\n')
 
                             # Add to timestamps.json
                             self._add_to_timestamps(cache_path)
@@ -856,7 +912,9 @@ class MaintenanceService:
             valid_entries = exclude_files & cache_files
             with open(self.exclude_file, 'w', encoding='utf-8') as f:
                 for path in sorted(valid_entries):
-                    f.write(path + '\n')
+                    # Translate container paths back to host paths for Unraid mover
+                    host_path = self._translate_container_to_host_path(path)
+                    f.write(host_path + '\n')
 
             return ActionResult(
                 success=True,
@@ -1016,7 +1074,10 @@ class MaintenanceService:
             with open(self.exclude_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
 
-            new_lines = [line for line in lines if line.strip() != cache_path]
+            # Translate container path to host path for comparison
+            # (exclude file contains host paths for Unraid mover)
+            host_path = self._translate_container_to_host_path(cache_path)
+            new_lines = [line for line in lines if line.strip() != host_path]
 
             with open(self.exclude_file, 'w', encoding='utf-8') as f:
                 f.writelines(new_lines)
