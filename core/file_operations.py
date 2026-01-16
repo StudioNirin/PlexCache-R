@@ -1988,6 +1988,31 @@ class FileFilter:
 
         return cache_path
 
+    def _translate_from_host_path(self, host_path: str) -> str:
+        """Translate host cache path back to container cache path for file existence checks.
+
+        In Docker, the exclude file contains host paths like /mnt/cache_downloads but
+        the container sees /mnt/cache. This reverse-translates for os.path.exists() checks.
+        """
+        if not self.is_docker or not self.path_modifier:
+            return host_path
+
+        path_mappings = getattr(self.path_modifier, 'mappings', [])
+
+        for mapping in path_mappings:
+            if not mapping.cache_path or not mapping.host_cache_path:
+                continue
+            if mapping.cache_path == mapping.host_cache_path:
+                continue  # No translation needed
+
+            host_prefix = mapping.host_cache_path.rstrip('/')
+            if host_path.startswith(host_prefix):
+                cache_prefix = mapping.cache_path.rstrip('/')
+                translated = host_path.replace(host_prefix, cache_prefix, 1)
+                return translated
+
+        return host_path
+
     def _add_to_exclude_file(self, cache_file_name: str) -> None:
         """Add a file to the exclude list."""
         if self.mover_cache_exclude_file:
@@ -2604,7 +2629,9 @@ class FileFilter:
             stale_entries = []
 
             for entry in current_entries:
-                if os.path.exists(entry):
+                # In Docker, exclude file has host paths but we need container paths to check existence
+                check_path = self._translate_from_host_path(entry)
+                if os.path.exists(check_path):
                     valid_entries.append(entry)
                 else:
                     stale_entries.append(entry)
