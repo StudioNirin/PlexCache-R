@@ -1,6 +1,7 @@
 """Maintenance service - cache audit and fix actions"""
 
 import json
+import logging
 import os
 import shutil
 import subprocess
