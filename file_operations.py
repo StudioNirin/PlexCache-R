@@ -1299,7 +1299,7 @@ class PlexcachedMigration:
         """Initialize the migration helper.
 
         Args:
-            exclude_file: Path to plexcache_mover_files_to_exclude.txt
+            exclude_file: Path to plexcache_cached_files.txt
             cache_dir: Cache directory path (e.g., /mnt/cache_downloads/)
             real_source: Array source path (e.g., /mnt/user/)
             script_folder: Folder where the script lives (for flag file)
