@@ -1339,10 +1339,18 @@ class PlexcachedMigration:
         self.exclude_file = exclude_file
         self.cache_dir = cache_dir
         self.real_source = real_source
-        self.flag_file = os.path.join(script_folder, self.MIGRATION_FLAG)
         self.is_unraid = is_unraid
         self.path_modifier = path_modifier
         self.is_docker = is_docker
+
+        # Store flag file in persistent location
+        # In Docker: /config/data/ (persistent volume)
+        # Otherwise: script_folder (project root)
+        if is_docker:
+            flag_dir = os.path.join(script_folder, 'data')
+        else:
+            flag_dir = script_folder
+        self.flag_file = os.path.join(flag_dir, self.MIGRATION_FLAG)
 
     def needs_migration(self) -> bool:
         """Check if migration has already been completed."""

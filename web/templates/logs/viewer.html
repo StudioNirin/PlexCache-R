@@ -51,10 +51,10 @@
                 <label for="log-level-filter">Filter Level</label>
                 <select id="log-level-filter">
                     <option value="all">All Levels</option>
-                    <option value="ERROR">Errors Only</option>
-                    <option value="WARNING">Warnings+</option>
-                    <option value="INFO">Info+</option>
-                    <option value="DEBUG">Debug Only</option>
+                    <option value="ERROR">Error</option>
+                    <option value="WARNING">Warning</option>
+                    <option value="INFO">Info</option>
+                    <option value="DEBUG">Debug</option>
                 </select>
             </div>
             <div class="form-group mb-0">
@@ -177,14 +177,6 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 const filterSelect = document.getElementById('log-level-filter');
 const logContent = document.getElementById('log-content');
 
-// Level hierarchy for filtering
-const levelHierarchy = {
-    'DEBUG': 0,
-    'INFO': 1,
-    'WARNING': 2,
-    'ERROR': 3
-};
-
 function getLineLevel(element) {
     // Check element class first (more reliable)
     if (element.classList.contains('log-error')) return 'ERROR';
@@ -213,15 +205,8 @@ function applyLogFilter() {
         }
 
         const lineLevel = getLineLevel(line);
-        const lineValue = levelHierarchy[lineLevel] || 1;
-        const filterValue = levelHierarchy[filter] || 0;
-
-        // "Debug Only" shows exact match, others show >= level
-        if (filter === 'DEBUG') {
-            line.style.display = (lineLevel === 'DEBUG') ? '' : 'none';
-        } else {
-            line.style.display = (lineValue >= filterValue) ? '' : 'none';
-        }
+        // Show only exact level match
+        line.style.display = (lineLevel === filter) ? '' : 'none';
     });
 }
 
