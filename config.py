@@ -618,10 +618,10 @@ class ConfigManager:
         """Remove all slashes from a list of paths."""
         return [value.strip('/\\') for value in value_list]
     
-    def get_mover_exclude_file(self) -> Path:
+    def get_cached_files_file(self) -> Path:
         """Get the path for the mover exclude file."""
         script_folder = Path(self.paths.script_folder)
-        return script_folder / "plexcache_mover_files_to_exclude.txt"
+        return script_folder / "plexcache_cached_files.txt"
     
     def get_unraid_mover_exclusions_file(self) -> Path:
         """Get the path for the final Unraid mover exclusions file."""
