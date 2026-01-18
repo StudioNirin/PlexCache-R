@@ -329,6 +329,30 @@ class PlexCacheApp:
 
     def _init_trackers(self, mover_exclude, timestamp_file) -> None:
         """Initialize timestamp, watchlist, and OnDeck trackers."""
+
+        # ---------------------------------------------------------------------
+        # One-time migration: rename old exclude file to new name
+        # ---------------------------------------------------------------------
+        old_exclude_file = os.path.join(
+            self.config_manager.paths.script_folder,
+            "plexcache_mover_files_to_exclude.txt"
+        )
+        new_cached_file = os.path.join(
+            self.config_manager.paths.script_folder,
+            "plexcache_cached_files.txt"
+        )
+    
+        if os.path.exists(old_exclude_file) and not os.path.exists(new_cached_file):
+            try:
+                os.rename(old_exclude_file, new_cached_file)
+                logging.info(
+                    f"Migrated legacy exclude file: {old_exclude_file} → {new_cached_file}"
+                )
+            except Exception as e:
+                logging.error(
+                    f"Failed to migrate legacy exclude file '{old_exclude_file}': {e}"
+                )
+        
         # Run one-time migration to create .plexcached backups
         migration = PlexcachedMigration(
             exclude_file=str(mover_exclude),
