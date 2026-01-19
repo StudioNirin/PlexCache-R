@@ -162,6 +162,22 @@ Why this is a problem:
 
 **Recommendation:** In the setup wizard or settings, set libraries on remote storage as **non-cacheable** (`enabled: false` in path_mappings). This prevents PlexCache-R from attempting to manage files it cannot properly protect.
 
+### Dynamix File Integrity False Positives
+
+If you use the **Dynamix File Integrity** plugin on Unraid, you may see "SHA256 hash key mismatch" errors for files managed by PlexCache-R. **These are false positives, not actual corruption.**
+
+Why this happens:
+- Dynamix records hashes using the original filename (e.g., `movie.mkv`)
+- PlexCache-R renames array files to `.plexcached` (e.g., `movie.mkv.plexcached`)
+- Dynamix can't find the original filename and reports it as corrupted/missing
+
+**Your files are intact.** The rename operation does not modify file contents. You can verify by comparing MD5/SHA256 hashes of the cache copy and `.plexcached` backup - they will match.
+
+**Recommendations:**
+- Exclude `*.plexcached` files from Dynamix scanning
+- Or rebuild the Dynamix hash database after PlexCache-R has been running
+- Or exclude PlexCache-R managed directories from integrity scanning
+
 ## Disclaimer
 
 This script comes without any warranties, guarantees, or magic powers. By using this script, you accept that you're responsible for any consequences that may result. The author will not be held liable for data loss, corruption, or any other problems you may encounter. So, it's on you to make sure you have backups and test this script thoroughly before you unleash its awesome power.
