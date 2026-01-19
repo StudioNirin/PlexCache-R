@@ -972,7 +972,7 @@ class PlexManager:
 
         # --- RSS feed processing ---
         if rss_url:
-            yield from self._process_rss_watchlist(rss_url, current_username, filtered_sections, watchlist_episodes, skip_watchlist)
+            yield from self._process_rss_watchlist(rss_url, current_username, filtered_sections, watchlist_episodes)
             return
 
         # --- Local Plex watchlist processing ---
@@ -1005,13 +1005,8 @@ class PlexManager:
             self.mark_watchlist_incomplete()
 
     def _process_rss_watchlist(self, rss_url: str, current_username: str,
-                                filtered_sections: List[int], watchlist_episodes: int,
-                                skip_watchlist: List[str] = None) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
-        """Process RSS feed items and yield matching media files.
-
-        Args:
-            skip_watchlist: List of usernames to skip (filters RSS items by who added them)
-        """
+                                filtered_sections: List[int], watchlist_episodes: int) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+        """Process RSS feed items and yield matching media files."""
         rss_items = self._fetch_rss_titles(rss_url)
         logging.debug(f"RSS feed contains {len(rss_items)} items")
         unknown_user_ids = set()
@@ -1030,11 +1025,6 @@ class PlexManager:
                     unknown_user_ids.add(author_id)
             else:
                 rss_username = "Friends (RSS)"
-
-            # Skip items from users in the skip list (fixes issue #51)
-            if skip_watchlist and rss_username in skip_watchlist:
-                logging.debug(f"RSS: Skipping '{title}' — added by {rss_username} (in skip list)")
-                continue
 
             cleaned_title = self.clean_rss_title(title)
             file = self.search_plex(cleaned_title, guid=guid, expected_type=category,
