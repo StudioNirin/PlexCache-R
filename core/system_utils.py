@@ -390,15 +390,16 @@ class FileUtils:
 
         try:
             if self.is_linux:
-                # Get source file ownership before copy
+                # Get source file ownership and permissions before copy
                 stat_info = os.stat(src)
                 src_uid = stat_info.st_uid
                 src_gid = stat_info.st_gid
+                src_mode = stat_info.st_mode
 
                 # Copy the file (preserves metadata like timestamps)
                 shutil.copy2(src, dest)
 
-                # Restore original ownership (shutil.copy2 doesn't preserve uid/gid)
+                # Restore original ownership and permissions (shutil.copy2 doesn't preserve uid/gid)
                 original_umask = os.umask(0)
                 try:
                     os.chown(dest, src_uid, src_gid)
@@ -406,7 +407,7 @@ class FileUtils:
                     logging.debug(f"Could not set file ownership (filesystem may not support it): {e}")
 
                 try:
-                    os.chmod(dest, self.permissions)
+                    os.chmod(dest, src_mode)
                 except (PermissionError, OSError) as e:
                     logging.debug(f"Could not set file permissions (filesystem may not support it): {e}")
                 os.umask(original_umask)
