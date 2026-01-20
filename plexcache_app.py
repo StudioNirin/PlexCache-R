@@ -98,9 +98,6 @@ class PlexCacheApp:
             if self.verbose:
                 self._log_startup_diagnostics()
 
-            if self.verbose:
-                self._log_startup_diagnostics()
-
             # Migrate old exclude file name before any initialization
             self._migrate_exclude_file()
 
