@@ -39,13 +39,13 @@
                         <input type="checkbox" name="unraid_levels" value="error"
                                {% if 'error' in settings.unraid_levels or settings.unraid_level == 'error' %}checked{% endif %}>
                         <span>Errors</span>
-                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur (includes summary)</span>
                     </label>
                     <label class="checkbox-label">
                         <input type="checkbox" name="unraid_levels" value="warning"
                                {% if 'warning' in settings.unraid_levels or settings.unraid_level == 'warning' %}checked{% endif %}>
                         <span>Warnings</span>
-                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur (includes summary)</span>
                     </label>
                 </div>
             </div>
@@ -94,13 +94,13 @@
                         <input type="checkbox" name="webhook_levels" value="error"
                                {% if 'error' in settings.webhook_levels or settings.webhook_level == 'error' %}checked{% endif %}>
                         <span>Errors</span>
-                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur (includes summary)</span>
                     </label>
                     <label class="checkbox-label">
                         <input type="checkbox" name="webhook_levels" value="warning"
                                {% if 'warning' in settings.webhook_levels or settings.webhook_level == 'warning' %}checked{% endif %}>
                         <span>Warnings</span>
-                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur (includes summary)</span>
                     </label>
                 </div>
             </div>
