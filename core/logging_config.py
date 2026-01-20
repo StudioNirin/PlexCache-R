@@ -38,10 +38,31 @@ class ThreadSafeStreamHandler(logging.StreamHandler):
             super().emit(record)
 
 
-# Define SUMMARY as the highest level so "summary" mode webhooks only get summaries
-# CRITICAL=50, so SUMMARY=100 ensures it's higher than all standard levels
-SUMMARY = 100
+# Define SUMMARY as a high level so it passes through level filtering
+# The handlers will conditionally emit based on whether warnings/errors occurred
+SUMMARY = logging.WARNING + 1  # = 31
 logging.addLevelName(SUMMARY, 'SUMMARY')
+
+# Track whether warnings or errors occurred during this run
+# Used to conditionally show summary when notification level is "warning" or "error"
+_had_warnings_or_errors = False
+
+
+def reset_warning_error_flag():
+    """Reset the warning/error tracking flag. Call at start of each run."""
+    global _had_warnings_or_errors
+    _had_warnings_or_errors = False
+
+
+def mark_warning_or_error():
+    """Mark that a warning or error occurred during this run."""
+    global _had_warnings_or_errors
+    _had_warnings_or_errors = True
+
+
+def had_warnings_or_errors():
+    """Check if any warnings or errors occurred during this run."""
+    return _had_warnings_or_errors
 
 
 class VerboseMessageFilter(logging.Filter):
@@ -99,9 +120,18 @@ class UnraidHandler(logging.Handler):
         if not self.notify_cmd_base:
             return
 
+        # Track if warnings or errors occurred (for conditional summary)
+        if record.levelno >= logging.WARNING and record.levelno != SUMMARY:
+            mark_warning_or_error()
+
         if record.levelno == SUMMARY:
-            # Only send summary if "summary" is enabled
-            if "summary" in self.enabled_levels:
+            # Send summary if:
+            # 1. "summary" is explicitly enabled, OR
+            # 2. "warning" or "error" is enabled AND warnings/errors occurred this run
+            should_send = "summary" in self.enabled_levels
+            if not should_send and ("warning" in self.enabled_levels or "error" in self.enabled_levels):
+                should_send = had_warnings_or_errors()
+            if should_send:
                 self.send_summary_unraid_notification(record)
         elif record.levelno >= logging.ERROR:
             # Send errors if "error" is enabled
@@ -192,10 +222,19 @@ class WebhookHandler(logging.Handler):
         self._summary_data = data
 
     def emit(self, record):
+        # Track if warnings or errors occurred (for conditional summary)
+        if record.levelno >= logging.WARNING and record.levelno != SUMMARY:
+            mark_warning_or_error()
+
         # Check which notification types are enabled
         if record.levelno == SUMMARY:
-            # Only send summary if "summary" is enabled
-            if "summary" in self.enabled_levels:
+            # Send summary if:
+            # 1. "summary" is explicitly enabled, OR
+            # 2. "warning" or "error" is enabled AND warnings/errors occurred this run
+            should_send = "summary" in self.enabled_levels
+            if not should_send and ("warning" in self.enabled_levels or "error" in self.enabled_levels):
+                should_send = had_warnings_or_errors()
+            if should_send:
                 self._send_summary(record)
         elif record.levelno >= logging.ERROR:
             # Send errors if "error" is enabled
