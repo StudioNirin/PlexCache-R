@@ -772,8 +772,8 @@ def _setup_users(plex):
             _configure_user_list(plex)
         else:
             settings_data['users_toggle'] = False
-            settings_data["skip_ondeck"] = []
-            settings_data["skip_watchlist"] = []
+            # No users list needed when users_toggle is False
+            # Skip lists are derived from per-user booleans at runtime
 
     # Remote Watchlist RSS
     if 'remote_watchlist_toggle' not in settings_data:
@@ -869,9 +869,8 @@ def _configure_user_list(plex):
             if answer.lower() in ['y', 'yes']:
                 u["skip_watchlist"] = True
 
-    # Build final skip lists
-    settings_data["skip_ondeck"] = [u["token"] for u in settings_data["users"] if u["skip_ondeck"]]
-    settings_data["skip_watchlist"] = [u["token"] for u in settings_data["users"] if u["is_local"] and u["skip_watchlist"]]
+    # Note: skip lists are now derived from per-user booleans at runtime
+    # No need to create top-level skip_ondeck/skip_watchlist lists
 
 
 def _configure_rss_feed():
@@ -1546,9 +1545,9 @@ def refresh_users(settings: dict) -> dict:
 
     settings["users"] = new_user_entries
 
-    # Update skip lists
-    settings["skip_ondeck"] = [u["token"] for u in new_user_entries if u["skip_ondeck"]]
-    settings["skip_watchlist"] = [u["token"] for u in new_user_entries if u["is_local"] and u["skip_watchlist"]]
+    # Remove legacy top-level skip lists (now derived from per-user booleans at runtime)
+    settings.pop("skip_ondeck", None)
+    settings.pop("skip_watchlist", None)
 
     print("-" * 60)
     home_count = sum(1 for u in new_user_entries if u["is_local"])
