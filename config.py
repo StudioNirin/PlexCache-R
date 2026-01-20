@@ -282,37 +282,23 @@ class ConfigManager:
         # Load users list first (contains tokens and per-user skip settings)
         self.plex.users = self.settings_data.get('users', [])
 
-        # Build skip lists from per-user booleans (single source of truth)
-        # This derives skip lists from user objects, eliminating dual-storage sync issues
-        users_with_skip_ondeck = [u for u in self.plex.users if u.get('skip_ondeck')]
-        users_with_skip_watchlist = [u for u in self.plex.users if u.get('skip_watchlist')]
+        # Auto-migrate legacy top-level skip lists to per-user booleans
+        self._migrate_skip_lists_to_per_user()
 
-        if users_with_skip_ondeck or users_with_skip_watchlist:
-            # Derive from per-user booleans (preferred method)
-            # Include both username and token for matching flexibility
-            self.plex.skip_ondeck = []
-            for u in users_with_skip_ondeck:
+        # Build skip lists from per-user booleans (single source of truth)
+        self.plex.skip_ondeck = []
+        self.plex.skip_watchlist = []
+        for u in self.plex.users:
+            if u.get('skip_ondeck'):
                 if u.get('title'):
                     self.plex.skip_ondeck.append(u['title'])
                 if u.get('token'):
                     self.plex.skip_ondeck.append(u['token'])
-
-            self.plex.skip_watchlist = []
-            for u in users_with_skip_watchlist:
+            if u.get('skip_watchlist'):
                 if u.get('title'):
                     self.plex.skip_watchlist.append(u['title'])
                 if u.get('token'):
                     self.plex.skip_watchlist.append(u['token'])
-        else:
-            # Backwards compatibility: fall back to top-level lists for legacy configs
-            skip_users = self.settings_data.get('skip_users')
-            if skip_users is not None:
-                self.plex.skip_ondeck = self.settings_data.get('skip_ondeck', skip_users)
-                self.plex.skip_watchlist = self.settings_data.get('skip_watchlist', skip_users)
-                del self.settings_data['skip_users']
-            else:
-                self.plex.skip_ondeck = self.settings_data.get('skip_ondeck', [])
-                self.plex.skip_watchlist = self.settings_data.get('skip_watchlist', [])
     
     def _load_cache_config(self) -> None:
         """Load cache-related configuration."""
@@ -420,7 +406,86 @@ class ConfigManager:
         # Remove deprecated settings
         if 'unraid' in self.settings_data:
             del self.settings_data['unraid']
-    
+
+    def _migrate_skip_lists_to_per_user(self) -> None:
+        """Migrate legacy top-level skip lists to per-user booleans.
+
+        Old format (legacy):
+            "skip_ondeck": ["Paige", "John"],
+            "skip_watchlist": ["Paige"]
+
+        New format (single source of truth):
+            "users": [
+                {"title": "Paige", "skip_ondeck": true, "skip_watchlist": true},
+                {"title": "John", "skip_ondeck": true}
+            ]
+
+        This migration runs once on startup, updates the config, and saves it.
+        """
+        # Check for legacy skip lists or deprecated skip_users
+        legacy_skip_ondeck = self.settings_data.get('skip_ondeck', [])
+        legacy_skip_watchlist = self.settings_data.get('skip_watchlist', [])
+        legacy_skip_users = self.settings_data.get('skip_users', [])
+
+        # Handle deprecated skip_users (applied to both ondeck and watchlist)
+        if legacy_skip_users:
+            legacy_skip_ondeck = legacy_skip_ondeck or legacy_skip_users
+            legacy_skip_watchlist = legacy_skip_watchlist or legacy_skip_users
+
+        # Nothing to migrate if no legacy lists exist
+        if not legacy_skip_ondeck and not legacy_skip_watchlist:
+            return
+
+        # Check if already migrated (users have skip booleans set)
+        users_have_skip_settings = any(
+            u.get('skip_ondeck') or u.get('skip_watchlist')
+            for u in self.plex.users
+        )
+        if users_have_skip_settings:
+            # Already migrated, just clean up legacy fields
+            self._remove_legacy_skip_fields()
+            return
+
+        # Migrate: set per-user booleans based on legacy lists
+        migrated = False
+        for user in self.plex.users:
+            username = user.get('title', '')
+            token = user.get('token', '')
+
+            # Check if user is in skip_ondeck list (by name or token)
+            if username in legacy_skip_ondeck or token in legacy_skip_ondeck:
+                user['skip_ondeck'] = True
+                migrated = True
+
+            # Check if user is in skip_watchlist list (by name or token)
+            if username in legacy_skip_watchlist or token in legacy_skip_watchlist:
+                user['skip_watchlist'] = True
+                migrated = True
+
+        if migrated:
+            # Update settings_data with migrated users
+            self.settings_data['users'] = self.plex.users
+            logging.info(f"Migrated skip settings to per-user booleans")
+
+        # Remove legacy fields and save
+        self._remove_legacy_skip_fields()
+
+    def _remove_legacy_skip_fields(self) -> None:
+        """Remove legacy skip list fields from settings and save."""
+        changed = False
+        for field in ['skip_ondeck', 'skip_watchlist', 'skip_users']:
+            if field in self.settings_data:
+                del self.settings_data[field]
+                changed = True
+
+        if changed:
+            try:
+                with open(self.config_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.settings_data, f, indent=4)
+                logging.debug("Removed legacy skip list fields from config")
+            except Exception as e:
+                logging.warning(f"Could not save migrated config: {e}")
+
     def _validate_required_fields(self) -> None:
         """Validate that all required fields exist in the configuration."""
         logging.debug("Validating required fields...")
