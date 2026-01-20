@@ -14,7 +14,7 @@ from typing import List, Set, Optional, Tuple
 import os
 
 from config import ConfigManager
-from logging_config import LoggingManager
+from logging_config import LoggingManager, reset_warning_error_flag
 from system_utils import SystemDetector, FileUtils, SingleInstanceLock
 from plex_api import PlexManager, OnDeckItem
 from file_operations import MultiPathModifier, SubtitleFinder, FileFilter, FileMover, CacheCleanup, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration
@@ -63,6 +63,8 @@ class PlexCacheApp:
         try:
             # Setup logging first before any log messages
             self._setup_logging()
+            # Reset warning/error tracking for conditional summary notifications
+            reset_warning_error_flag()
             if self.dry_run:
                 logging.warning("DRY-RUN MODE - No files will be moved")
             if self.verbose:

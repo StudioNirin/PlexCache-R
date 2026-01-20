@@ -38,9 +38,31 @@ class ThreadSafeStreamHandler(logging.StreamHandler):
             super().emit(record)
 
 
-# Define a new level called SUMMARY that is equivalent to INFO level
-SUMMARY = logging.WARNING + 1
+# Define SUMMARY level above WARNING so it passes through level filtering
+# The handlers will conditionally emit based on whether warnings/errors occurred
+SUMMARY = logging.WARNING + 1  # = 31
 logging.addLevelName(SUMMARY, 'SUMMARY')
+
+# Track whether warnings or errors occurred during this run
+# Used to conditionally show summary when notification level is "warning" or "error"
+_had_warnings_or_errors = False
+
+
+def reset_warning_error_flag():
+    """Reset the warning/error tracking flag. Call at start of each run."""
+    global _had_warnings_or_errors
+    _had_warnings_or_errors = False
+
+
+def mark_warning_or_error():
+    """Mark that a warning or error occurred during this run."""
+    global _had_warnings_or_errors
+    _had_warnings_or_errors = True
+
+
+def had_warnings_or_errors():
+    """Check if any warnings or errors occurred during this run."""
+    return _had_warnings_or_errors
 
 
 class VerboseMessageFilter(logging.Filter):
@@ -89,9 +111,18 @@ class UnraidHandler(logging.Handler):
 
     def emit(self, record):
         if self.notify_cmd_base:
+            # Track if warnings or errors occurred
+            if record.levelno >= logging.WARNING and record.levelno != SUMMARY:
+                mark_warning_or_error()
+
             if record.levelno == SUMMARY:
-                self.send_summary_unraid_notification(record)
-            else: 
+                # Only show summary if:
+                # 1. Handler level is "summary" (SUMMARY level), OR
+                # 2. Handler level is "warning"/"error" AND warnings/errors occurred
+                if self.level <= SUMMARY or had_warnings_or_errors():
+                    self.send_summary_unraid_notification(record)
+                # else: skip summary notification (no warnings/errors to report)
+            else:
                 self.send_unraid_notification(record)
 
     def send_summary_unraid_notification(self, record):
@@ -128,8 +159,17 @@ class WebhookHandler(logging.Handler):
         self.webhook_url = webhook_url
 
     def emit(self, record):
+        # Track if warnings or errors occurred
+        if record.levelno >= logging.WARNING and record.levelno != SUMMARY:
+            mark_warning_or_error()
+
         if record.levelno == SUMMARY:
-            self.send_summary_webhook_message(record)
+            # Only show summary if:
+            # 1. Handler level is "summary" (SUMMARY level), OR
+            # 2. Handler level is "warning"/"error" AND warnings/errors occurred
+            if self.level <= SUMMARY or had_warnings_or_errors():
+                self.send_summary_webhook_message(record)
+            # else: skip summary notification (no warnings/errors to report)
         else:
             self.send_webhook_message(record)
 
