@@ -1,5 +1,5 @@
 # PlexCache-R V3.0: Automate Plex Media Management
-### Updated 1/8/26
+### Updated 1/20/26
 
 ## Current Bugs / Todo List
 

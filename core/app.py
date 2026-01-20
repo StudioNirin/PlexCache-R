@@ -118,6 +118,9 @@ class PlexCacheApp:
             if self.verbose:
                 self._log_startup_diagnostics()
 
+            # Migrate old exclude file name before any initialization
+            self._migrate_exclude_file()
+
             # Initialize components that depend on config
             logging.debug("Initializing components...")
             self._initialize_components()
@@ -186,6 +189,35 @@ class PlexCacheApp:
             else:
                 print(f"Application error: {type(e).__name__}: {e}")
             raise
+
+    def _migrate_exclude_file(self) -> None:
+        """One-time migration: rename old exclude file to new name."""
+        old_exclude_file = os.path.join(
+            self.config_manager.paths.script_folder,
+            "plexcache_mover_files_to_exclude.txt"
+        )
+        new_cached_file = os.path.join(
+            self.config_manager.paths.script_folder,
+            "plexcache_cached_files.txt"
+        )
+        
+        old_exists = os.path.exists(old_exclude_file)
+        new_exists = os.path.exists(new_cached_file)
+        
+        if old_exists and not new_exists:
+            try:
+                os.rename(old_exclude_file, new_cached_file)
+                logging.info(f"Migrated {old_exclude_file} -> {new_cached_file}")
+            except OSError as e:
+                logging.error(f"Failed to migrate exclude file: {e}")
+                logging.error(f"Please manually rename '{old_exclude_file}' to '{new_cached_file}'")
+                raise
+        elif old_exists and new_exists:
+            try:
+                os.remove(old_exclude_file)
+                logging.info(f"Removed legacy exclude file: {old_exclude_file}")
+            except OSError as e:
+                logging.warning(f"Could not remove legacy exclude file: {e}")
     
 
     def _update_unraid_mover_exclusions(self, tag_line: str = "### Plexcache exclusions below this line") -> None:
@@ -196,7 +228,7 @@ class PlexCacheApp:
 
         # Get paths from config
         exclusion_path = self.config_manager.get_unraid_mover_exclusions_file()
-        plexcache_path = self.config_manager.get_mover_exclude_file()
+        plexcache_path = self.config_manager.get_cached_files_file()
 
         # Ensure the main file exists
         if not exclusion_path.exists():
@@ -386,6 +418,7 @@ class PlexCacheApp:
 
     def _init_trackers(self, mover_exclude, timestamp_file) -> None:
         """Initialize timestamp, watchlist, and OnDeck trackers."""
+     
         # Run one-time migration to create .plexcached backups
         migration = PlexcachedMigration(
             exclude_file=str(mover_exclude),
@@ -528,7 +561,7 @@ class PlexCacheApp:
         self._init_path_modifier()
 
         # Get file paths for trackers
-        mover_exclude = self.config_manager.get_mover_exclude_file()
+        mover_exclude = self.config_manager.get_cached_files_file()
         timestamp_file = self.config_manager.get_timestamp_file()
         logging.debug(f"Mover exclude file: {mover_exclude}")
         logging.debug(f"Timestamp file: {timestamp_file}")
@@ -1150,7 +1183,7 @@ class PlexCacheApp:
             Tuple of (total_bytes, cached_files_list). Returns (0, []) on error.
             In Docker, paths are translated from host to container paths.
         """
-        exclude_file = self.config_manager.get_mover_exclude_file()
+        exclude_file = self.config_manager.get_cached_files_file()
         if not exclude_file.exists():
             return (0, [])
 
@@ -1801,7 +1834,7 @@ def _run_show_priorities(config_file: str, verbose: bool = False) -> None:
     config_manager.load_config()
 
     # Get the mover exclude file to find cached files
-    mover_exclude = config_manager.get_mover_exclude_file()
+    mover_exclude = config_manager.get_cached_files_file()
     if not mover_exclude.exists():
         print("No exclude file found. No files are currently cached.")
         return

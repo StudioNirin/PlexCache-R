@@ -1328,7 +1328,7 @@ class PlexcachedMigration:
         """Initialize the migration helper.
 
         Args:
-            exclude_file: Path to plexcache_mover_files_to_exclude.txt
+            exclude_file: Path to plexcache_cached_files.txt
             cache_dir: Cache directory path (e.g., /mnt/cache_downloads/)
             real_source: Array source path (e.g., /mnt/user/)
             script_folder: Folder where the script lives (for flag file)
@@ -3307,7 +3307,61 @@ class FileMover:
                 os.rename(array_file, plexcached_file)
                 logging.debug(f"Renamed array file: {array_file} -> {plexcached_file}")
 
-                # Verify rename succeeded
+                # Validate rename succeeded with FUSE diagnostic logging
+                parent_dir = os.path.dirname(array_file)
+
+                # Diagnostic: List directory contents after rename
+                try:
+                    dir_contents = os.listdir(parent_dir)
+                    original_name = os.path.basename(array_file)
+                    plexcached_name = os.path.basename(plexcached_file)
+                    logging.debug(f"FUSE diag: directory listing after rename:")
+                    logging.debug(f"  - Original '{original_name}' in listing: {original_name in dir_contents}")
+                    logging.debug(f"  - Plexcached '{plexcached_name}' in listing: {plexcached_name in dir_contents}")
+                except OSError as e:
+                    logging.debug(f"FUSE diag: listdir failed: {e}")
+
+                # Diagnostic: Check file existence with isfile
+                original_isfile = os.path.isfile(array_file)
+                plexcached_isfile = os.path.isfile(plexcached_file)
+                logging.debug(f"FUSE diag: os.path.isfile - original={original_isfile}, plexcached={plexcached_isfile}")
+
+                # Diagnostic: Check with os.stat (bypasses some caching)
+                original_stat_exists = False
+                plexcached_stat_exists = False
+                try:
+                    os.stat(array_file)
+                    original_stat_exists = True
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    logging.debug(f"FUSE diag: stat(original) error: {e}")
+
+                try:
+                    os.stat(plexcached_file)
+                    plexcached_stat_exists = True
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    logging.debug(f"FUSE diag: stat(plexcached) error: {e}")
+
+                logging.debug(f"FUSE diag: os.stat - original={original_stat_exists}, plexcached={plexcached_stat_exists}")
+
+                # Diagnostic: Check with os.access
+                original_access = os.access(array_file, os.F_OK)
+                plexcached_access = os.access(plexcached_file, os.F_OK)
+                logging.debug(f"FUSE diag: os.access(F_OK) - original={original_access}, plexcached={plexcached_access}")
+
+                # Diagnostic: Try to resolve to physical disk path (Unraid-specific)
+                if array_file.startswith('/mnt/user0/'):
+                    relative_path = array_file[len('/mnt/user0/'):]
+                    for disk_num in range(1, 10):  # Check first 9 disks
+                        disk_path = f'/mnt/disk{disk_num}/{relative_path}'
+                        disk_plexcached = disk_path + '.plexcached'
+                        if os.path.exists(disk_path) or os.path.exists(disk_plexcached):
+                            logging.debug(f"FUSE diag: Found on disk{disk_num}: original={os.path.exists(disk_path)}, plexcached={os.path.exists(disk_plexcached)}")
+
+                # Final verification using isfile (standard check)
                 if os.path.isfile(array_file):
                     raise IOError(f"Rename verification failed: original array file still exists at {array_file}")
                 if not os.path.isfile(plexcached_file):
@@ -3319,7 +3373,6 @@ class FileMover:
                     logging.debug(f"Deleted array link (hard-linked file, seed copy preserved): {array_file}")
                 else:
                     logging.debug(f"Deleted array file (backups disabled): {array_file}")
-
                 # Verify deletion
                 if os.path.isfile(array_file):
                     raise IOError(f"Delete verification failed: array file still exists at {array_file}")

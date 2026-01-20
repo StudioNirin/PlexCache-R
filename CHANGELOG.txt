@@ -1,5 +1,12 @@
 ## Changelog
 
+### v2.1 Updates (Jan 2025)
+- Fix dry-run mode modifying tracking files #47
+- Add optional .plexcached backups + fix subtitle suffix stripping #49 
+- Fix skip_watchlist not working for remote users (RSS) #57   - Fixes Fixes https://github.com/StudioNirin/PlexCache-R/issues/51
+- Changed the naming of some files and functions to make them less confusing. 
+- Couple other bugfixes. 
+
 ### v2.0 Updates (December 2025)
 
 - **Fix double path conversion bug** ([#28](https://github.com/StudioNirin/PlexCache-R/issues/28)): Paths already in `real_source` format are no longer double-converted when `plex_source` is set to `/`. This was causing `FileNotFoundError` crashes for users with certain multi-path configurations.

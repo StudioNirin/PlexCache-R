@@ -1038,7 +1038,7 @@ class PlexManager:
             else:
                 rss_username = "Friends (RSS)"
 
-            # Skip items from users in the skip list
+            # Skip items from users in the skip list (fixes issue #51)
             if skip_watchlist and rss_username in skip_watchlist:
                 logging.debug(f"RSS: Skipping '{title}' — added by {rss_username} (in skip list)")
                 rss_skipped_users[rss_username] = rss_skipped_users.get(rss_username, 0) + 1
@@ -1142,6 +1142,3 @@ class PlexManager:
                         else:
                             _log_api_error("fetch watchlist media", e)
                             break
-
-
-
