@@ -279,18 +279,40 @@ class ConfigManager:
         self.plex.days_to_monitor = self.settings_data['days_to_monitor']
         self.plex.users_toggle = self.settings_data['users_toggle']
         
-        # Handle skip settings
-        skip_users = self.settings_data.get('skip_users')
-        if skip_users is not None:
-            self.plex.skip_ondeck = self.settings_data.get('skip_ondeck', skip_users)
-            self.plex.skip_watchlist = self.settings_data.get('skip_watchlist', skip_users)
-            del self.settings_data['skip_users']
-        else:
-            self.plex.skip_ondeck = self.settings_data.get('skip_ondeck', [])
-            self.plex.skip_watchlist = self.settings_data.get('skip_watchlist', [])
-
-        # Load users list (contains tokens for all users including remote)
+        # Load users list first (contains tokens and per-user skip settings)
         self.plex.users = self.settings_data.get('users', [])
+
+        # Build skip lists from per-user booleans (single source of truth)
+        # This derives skip lists from user objects, eliminating dual-storage sync issues
+        users_with_skip_ondeck = [u for u in self.plex.users if u.get('skip_ondeck')]
+        users_with_skip_watchlist = [u for u in self.plex.users if u.get('skip_watchlist')]
+
+        if users_with_skip_ondeck or users_with_skip_watchlist:
+            # Derive from per-user booleans (preferred method)
+            # Include both username and token for matching flexibility
+            self.plex.skip_ondeck = []
+            for u in users_with_skip_ondeck:
+                if u.get('title'):
+                    self.plex.skip_ondeck.append(u['title'])
+                if u.get('token'):
+                    self.plex.skip_ondeck.append(u['token'])
+
+            self.plex.skip_watchlist = []
+            for u in users_with_skip_watchlist:
+                if u.get('title'):
+                    self.plex.skip_watchlist.append(u['title'])
+                if u.get('token'):
+                    self.plex.skip_watchlist.append(u['token'])
+        else:
+            # Backwards compatibility: fall back to top-level lists for legacy configs
+            skip_users = self.settings_data.get('skip_users')
+            if skip_users is not None:
+                self.plex.skip_ondeck = self.settings_data.get('skip_ondeck', skip_users)
+                self.plex.skip_watchlist = self.settings_data.get('skip_watchlist', skip_users)
+                del self.settings_data['skip_users']
+            else:
+                self.plex.skip_ondeck = self.settings_data.get('skip_ondeck', [])
+                self.plex.skip_watchlist = self.settings_data.get('skip_watchlist', [])
     
     def _load_cache_config(self) -> None:
         """Load cache-related configuration."""
@@ -519,12 +541,16 @@ class ConfigManager:
         """Save updated configuration back to file."""
         try:
             # Core settings (always saved)
+            # Note: skip_ondeck/skip_watchlist are now derived from per-user booleans
+            # in the users list, so we don't save them as top-level keys anymore
             self.settings_data.update({
                 'cache_dir': self.paths.cache_dir,
-                'skip_ondeck': self.plex.skip_ondeck,
-                'skip_watchlist': self.plex.skip_watchlist,
                 'exit_if_active_session': self.exit_if_active_session,
             })
+
+            # Remove legacy top-level skip lists if they exist (migrated to per-user booleans)
+            self.settings_data.pop('skip_ondeck', None)
+            self.settings_data.pop('skip_watchlist', None)
 
             # Legacy path fields (only save if they have values - allows clean removal)
             if self.paths.plex_source:
