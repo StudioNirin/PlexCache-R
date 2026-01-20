@@ -747,7 +747,7 @@ class PlexCacheApp:
                             valid_sections=self.config_manager.plex.valid_sections,
                             watchlist_episodes=self.config_manager.cache.watchlist_episodes,
                             users_toggle=False,  # only RSS, no local Plex users
-                            skip_watchlist=[],
+                            skip_watchlist=self.config_manager.plex.skip_watchlist,
                             rss_url=self.config_manager.cache.remote_watchlist_rss_url
                         )
                     )
