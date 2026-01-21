@@ -161,13 +161,13 @@ class UnraidHandler(logging.Handler):
                 # - Level is WARNING (30): Show summary if warnings OR errors occurred
                 # - Level is ERROR (40): Show summary ONLY if errors occurred
                 should_send = False
-                if self.level <= SUMMARY:
-                    # Handler level is "summary" - always send
+                if self.level == SUMMARY:
+                    # Handler level is exactly "summary" - always send
                     should_send = True
-                elif self.level <= logging.WARNING:
+                elif self.level == logging.WARNING:
                     # Handler level is "warning" - send if any warnings or errors
                     should_send = had_warnings_or_errors()
-                elif self.level <= logging.ERROR:
+                elif self.level == logging.ERROR:
                     # Handler level is "error" - only send if actual errors occurred
                     should_send = had_errors()
 
@@ -222,13 +222,13 @@ class WebhookHandler(logging.Handler):
             # - Level is WARNING (30): Show summary if warnings OR errors occurred
             # - Level is ERROR (40): Show summary ONLY if errors occurred
             should_send = False
-            if self.level <= SUMMARY:
-                # Handler level is "summary" - always send
+            if self.level == SUMMARY:
+                # Handler level is exactly "summary" - always send
                 should_send = True
-            elif self.level <= logging.WARNING:
+            elif self.level == logging.WARNING:
                 # Handler level is "warning" - send if any warnings or errors
                 should_send = had_warnings_or_errors()
-            elif self.level <= logging.ERROR:
+            elif self.level == logging.ERROR:
                 # Handler level is "error" - only send if actual errors occurred
                 should_send = had_errors()
 
