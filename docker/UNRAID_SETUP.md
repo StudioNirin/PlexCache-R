@@ -49,6 +49,17 @@ PlexCache-R automatically caches your frequently-accessed Plex media (OnDeck and
 - All media paths (`/mnt/cache`, `/mnt/user0`, `/mnt/user`) must be **read-write** for PlexCache-R to move files between cache and array
 - These paths **must match exactly** between container and host for Plex path resolution to work correctly
 
+### Optional Volume Mappings (Unraid Notifications)
+
+To enable native Unraid notifications from the Docker container, add these optional mounts:
+
+| Container Path | Host Path | Mode | Description |
+|---------------|-----------|------|-------------|
+| `/usr/local/emhttp` | `/usr/local/emhttp` | ro | Unraid's notify script and PHP includes |
+| `/tmp/notifications` | `/tmp/notifications` | rw | Unraid's notification queue |
+
+**Both mounts are required** for Unraid notifications to work. Without them, use Discord/Slack webhooks instead (which work without any extra mounts).
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -136,6 +147,49 @@ PlexCache-R includes a built-in scheduler. Configure it via the Web UI:
 4. Recommended: Every 4 hours (`0 */4 * * *`)
 
 The scheduler runs automatically - no need for User Scripts or external cron jobs.
+
+## Notifications
+
+PlexCache-R supports multiple notification methods. Configure via **Settings** → **Notifications**.
+
+### Notification Types
+
+| Type | Description |
+|------|-------------|
+| **Webhook** | Discord, Slack, or generic webhooks (recommended for Docker) |
+| **Unraid** | Native Unraid notifications (requires optional volume mounts) |
+| **Both** | Send to both Unraid and webhook |
+
+### Notification Levels
+
+You can select multiple levels for fine-grained control:
+
+| Level | Description |
+|-------|-------------|
+| **Summary** | Send summary after every run |
+| **Activity** | Send summary only when files are actually moved |
+| **Errors** | Notify when errors occur |
+| **Warnings** | Notify when warnings occur |
+
+**Recommended:** Use **Activity** to only get notified when PlexCache-R actually does something.
+
+### Webhook Setup (Discord/Slack)
+
+1. Create a webhook in your Discord/Slack channel
+2. Paste the URL in **Settings** → **Notifications** → **Webhook URL**
+3. Select your notification levels
+4. Click **Test** to verify
+
+### Unraid Notifications in Docker
+
+By default, Docker containers cannot access Unraid's notification system. To enable native Unraid notifications:
+
+1. Add the optional volume mounts (see [Optional Volume Mappings](#optional-volume-mappings-unraid-notifications) above)
+2. Restart the container
+3. In **Settings** → **Notifications**, select **Both** or **Unraid**
+4. Select your notification levels
+
+If the mounts are not configured, PlexCache-R will gracefully fall back to webhook-only notifications.
 
 ## Manual Operations
 
