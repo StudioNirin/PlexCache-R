@@ -544,25 +544,12 @@ class PlexManager:
                 except Exception as e:
                     logging.debug(f"GUID lookup error for {guid}: {e}")
 
-        # Fallback to title search
-        results = self.plex.search(title)
-        if not results:
-            return None
-
-        # If expected_type specified, find first result matching that type
-        if expected_type:
-            for r in results:
-                if r.TYPE == expected_type:
-                    # Also verify section if valid_sections specified
-                    if valid_sections and r.librarySectionID not in valid_sections:
-                        continue
-                    logging.debug(f"Title search matched '{r.title}' ({r.TYPE}) for '{title}'")
-                    return r
-            # No match with expected type - don't return wrong type
-            logging.debug(f"Title search found results for '{title}' but none matched expected type '{expected_type}'")
-            return None
-
-        return results[0]
+        # No GUID match found - item is not in library
+        # Note: We intentionally do NOT fall back to title search as it can return
+        # incorrect matches (e.g., "Weapons" matching to "Mary Poppins")
+        # See: https://github.com/StudioNirin/PlexCache-R/issues/52
+        logging.debug(f"No GUID match found for '{title}' (guid={guid}) — item not in library")
+        return None
     
     def get_active_sessions(self) -> List:
         """Get active sessions from Plex."""
