@@ -1,70 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <defs>
-    <!-- Background gradient -->
-    <radialGradient id="bgGrad" cx="50%" cy="30%" r="70%">
-      <stop offset="0%" stop-color="#282828"/>
-      <stop offset="100%" stop-color="#1a1a1a"/>
-    </radialGradient>
-
-    <!-- Plex gold gradient -->
-    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#F5B800"/>
-      <stop offset="50%" stop-color="#E5A00D"/>
-      <stop offset="100%" stop-color="#CC8B00"/>
-    </linearGradient>
-
-    <!-- Shadow -->
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.5"/>
-    </filter>
-
-    <!-- Glow effect -->
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>
-
   <!-- Background circle -->
-  <circle cx="256" cy="256" r="248" fill="url(#bgGrad)"/>
-  <circle cx="256" cy="256" r="240" fill="none" stroke="url(#goldGrad)" stroke-width="8"/>
+  <circle cx="256" cy="256" r="240" fill="#1f1f1f" stroke="#E5A00D" stroke-width="24"/>
 
-  <!-- Cache drive icon (main element) -->
-  <g filter="url(#shadow)">
-    <!-- Drive body -->
-    <rect x="96" y="152" width="320" height="180" rx="20" fill="#222" stroke="url(#goldGrad)" stroke-width="6"/>
+  <!-- Cache/storage drive icon -->
+  <rect x="128" y="176" width="256" height="160" rx="32" fill="none" stroke="#E5A00D" stroke-width="24"/>
 
-    <!-- Drive front panel -->
-    <rect x="112" y="168" width="288" height="148" rx="12" fill="#1a1a1a"/>
+  <!-- Drive indicator light -->
+  <circle cx="192" cy="256" r="24" fill="#E5A00D"/>
 
-    <!-- Left panel with LEDs -->
-    <rect x="128" y="184" width="72" height="116" rx="8" fill="#151515"/>
-
-    <!-- Activity LED (animated appearance) -->
-    <circle cx="164" cy="220" r="12" fill="#E5A00D" filter="url(#glow)"/>
-
-    <!-- Power LED -->
-    <circle cx="164" cy="264" r="12" fill="#00cc44" filter="url(#glow)"/>
-
-    <!-- Data visualization bars (right side) -->
-    <g transform="translate(216, 192)">
-      <rect x="0" y="0" width="168" height="20" rx="4" fill="#E5A00D" opacity="1"/>
-      <rect x="24" y="32" width="144" height="20" rx="4" fill="#E5A00D" opacity="0.85"/>
-      <rect x="0" y="64" width="168" height="20" rx="4" fill="#E5A00D" opacity="0.7"/>
-    </g>
-  </g>
-
-  <!-- Cache arrow (bottom) -->
-  <g transform="translate(256, 370)" filter="url(#glow)">
-    <path d="M-50,0 L-50,-15 L-80,-15 L0,-45 L80,-15 L50,-15 L50,0 Z" fill="url(#goldGrad)"/>
-  </g>
-
-  <!-- "R" badge for PlexCache-R -->
-  <g transform="translate(380, 120)">
-    <circle cx="0" cy="0" r="48" fill="url(#goldGrad)"/>
-    <text x="0" y="16" font-family="Arial Black, sans-serif" font-weight="900" font-size="56" fill="#1a1a1a" text-anchor="middle">R</text>
-  </g>
+  <!-- Speed lines (caching indicator) -->
+  <line x1="256" y1="224" x2="352" y2="224" stroke="#E5A00D" stroke-width="24" stroke-linecap="round"/>
+  <line x1="256" y1="288" x2="320" y2="288" stroke="#E5A00D" stroke-width="24" stroke-linecap="round"/>
 </svg>
