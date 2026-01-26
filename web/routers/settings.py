@@ -13,6 +13,12 @@ from fastapi.templating import Jinja2Templates
 from web.config import TEMPLATES_DIR, CONFIG_DIR
 from web.services import get_settings_service, get_scheduler_service
 from core.system_utils import get_disk_usage, detect_zfs
+from core.file_operations import (
+    PRIORITY_RANGE_ONDECK_MIN,
+    PRIORITY_RANGE_ONDECK_MAX,
+    PRIORITY_RANGE_WATCHLIST_MIN,
+    PRIORITY_RANGE_WATCHLIST_MAX,
+)
 
 
 def _parse_size_bytes(size_str: str) -> int:
@@ -541,7 +547,13 @@ async def settings_cache(request: Request):
             "page_title": "Cache Settings",
             "active_tab": "cache",
             "settings": settings,
-            "drive_info": drive_info
+            "drive_info": drive_info,
+            "priority_range": {
+                "ondeck_min": PRIORITY_RANGE_ONDECK_MIN,
+                "ondeck_max": PRIORITY_RANGE_ONDECK_MAX,
+                "watchlist_min": PRIORITY_RANGE_WATCHLIST_MIN,
+                "watchlist_max": PRIORITY_RANGE_WATCHLIST_MAX,
+            }
         }
     )
 

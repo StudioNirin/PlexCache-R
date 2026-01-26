@@ -163,7 +163,7 @@
                     <label for="eviction_min_priority">Minimum Priority to Keep</label>
                     <input type="number" id="eviction_min_priority" name="eviction_min_priority"
                            value="{{ settings.eviction_min_priority | default(60) }}" min="0" max="100">
-                    <div class="form-hint">Only evict files below this priority (OnDeck ~60-100, Watchlist ~45-95)</div>
+                    <div class="form-hint">Only evict files below this priority (OnDeck ~{{ priority_range.ondeck_min }}-{{ priority_range.ondeck_max }}, Watchlist ~{{ priority_range.watchlist_min }}-{{ priority_range.watchlist_max }})</div>
                 </div>
             </div>
 

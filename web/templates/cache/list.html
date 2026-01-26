@@ -140,7 +140,15 @@
                         <td>
                             <input type="checkbox" class="file-checkbox" value="{{ file.path }}" onchange="updateBulkActions()">
                         </td>
-                        <td title="{{ file.path }}">{{ file.filename }}</td>
+                        <td title="{{ file.path }}">
+                            {{ file.filename }}
+                            {% if file.subtitle_count > 0 %}
+                            <span class="subtitle-indicator" title="{{ file.subtitle_count }} subtitle{{ 's' if file.subtitle_count > 1 else '' }}">
+                                <i data-lucide="subtitles" style="width: 14px; height: 14px; vertical-align: middle; margin-left: 0.25rem; opacity: 0.6;"></i>
+                                <span style="font-size: 0.75rem; opacity: 0.6;">{{ file.subtitle_count }}</span>
+                            </span>
+                            {% endif %}
+                        </td>
                         <td class="text-muted">{{ file.size_display }}</td>
                         {% if eviction_enabled %}
                         <td>

@@ -869,6 +869,21 @@ class OnDeckTracker(JSONTracker):
             return len(stale)
 
 
+# Priority score ranges for UI display and documentation
+# These are calculated from the scoring factors in CachePriorityManager:
+# - Base: 50
+# - OnDeck source: +15, Watchlist: +0
+# - Users: +5 to +15 (1-3+ users)
+# - Cache recency: +5 (fresh), +3 (recent), +0 (old)
+# - Watchlist age: +10 (fresh <7d), +0 (7-60d), -10 (>60d)
+# - OnDeck staleness: +5 (fresh <7d), +0 (7-14d), -5 (14-30d), -10 (>30d)
+# - Episode position: +15 (current), +10 (next few), +0 (far ahead)
+PRIORITY_RANGE_ONDECK_MIN = 60   # Stale OnDeck (30+ days), 1 user, old cache
+PRIORITY_RANGE_ONDECK_MAX = 100  # Fresh OnDeck, 3+ users, current episode, fresh cache
+PRIORITY_RANGE_WATCHLIST_MIN = 45   # Old watchlist (60+ days), 1 user, old cache
+PRIORITY_RANGE_WATCHLIST_MAX = 80   # Fresh watchlist, 3+ users, fresh cache
+
+
 class CachePriorityManager:
     """Manages priority scoring and smart eviction for cached files.
 
@@ -2237,15 +2252,28 @@ class FileFilter:
             # Track count of files already on cache
             self.last_already_cached_count += 1
 
-            # If array version also exists, remove it (cache is authoritative)
+            # If array version also exists, rename it to .plexcached (preserve as backup)
+            # This ensures we have a recovery option if the cache drive fails
             if os.path.isfile(array_file):
-                try:
-                    os.remove(array_file)
-                    logging.info(f"Removed array version of file: {array_file}")
-                except FileNotFoundError:
-                    pass  # File already removed
-                except OSError as e:
-                    logging.error(f"Failed to remove array file {array_file}: {type(e).__name__}: {e}")
+                plexcached_file = array_file + PLEXCACHED_EXTENSION
+                # Only rename if .plexcached doesn't already exist
+                if not os.path.isfile(plexcached_file):
+                    try:
+                        os.rename(array_file, plexcached_file)
+                        logging.info(f"Created backup of array file: {os.path.basename(plexcached_file)}")
+                    except FileNotFoundError:
+                        pass  # File already removed
+                    except OSError as e:
+                        logging.error(f"Failed to create backup of array file {array_file}: {type(e).__name__}: {e}")
+                else:
+                    # .plexcached backup already exists, safe to remove duplicate array file
+                    try:
+                        os.remove(array_file)
+                        logging.debug(f"Removed redundant array file (backup exists): {os.path.basename(array_file)}")
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        logging.error(f"Failed to remove array file {array_file}: {type(e).__name__}: {e}")
 
             return False
 

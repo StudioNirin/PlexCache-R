@@ -39,7 +39,11 @@ class OrphanedBackup:
     size: int
     size_display: str
     restore_path: str
-    backup_type: str = "orphaned"  # "orphaned" (no cache, no original) or "redundant" (original exists)
+    backup_type: str = "orphaned"  # "orphaned", "redundant", or "superseded"
+    # "orphaned" = no cache file AND no original on array (needs restore or delete)
+    # "redundant" = no cache file BUT original exists on array (safe to delete)
+    # "superseded" = old backup replaced by upgraded version on cache (safe to delete after review)
+    replacement_file: Optional[str] = None  # Path to the replacement file (for superseded backups)
 
 
 @dataclass
@@ -81,11 +85,13 @@ class AuditResults:
 
     def calculate_health_status(self):
         """Calculate overall health status based on issues"""
-        # Critical: unprotected files (older) and orphaned backups need immediate attention
-        if self.critical_unprotected or self.orphaned_plexcached:
+        # Only truly orphaned backups are critical (not superseded or redundant)
+        truly_orphaned = [b for b in self.orphaned_plexcached if b.backup_type == "orphaned"]
+        # Critical: unprotected files (older) and truly orphaned backups need immediate attention
+        if self.critical_unprotected or truly_orphaned:
             self.health_status = "critical"
-        # Warnings: stale entries need cleanup (new_downloads are informational, not warnings)
-        elif self.stale_exclude_entries or self.stale_timestamp_entries:
+        # Warnings: stale entries need cleanup, superseded/redundant backups can be cleaned
+        elif self.stale_exclude_entries or self.stale_timestamp_entries or self.orphaned_plexcached:
             self.health_status = "warnings"
         else:
             self.health_status = "healthy"
@@ -448,21 +454,17 @@ class MaintenanceService:
 
         return results
 
-    def _get_orphaned_plexcached(self, auto_cleanup_superseded: bool = True) -> List[OrphanedBackup]:
+    def _get_orphaned_plexcached(self) -> List[OrphanedBackup]:
         """Find .plexcached files on array that need cleanup.
 
-        Returns two types of backups:
+        Returns three types of backups:
         - "orphaned": No cache file AND no original on array (needs restore or delete)
         - "redundant": No cache file BUT original exists on array (safe to delete)
-
-        Args:
-            auto_cleanup_superseded: If True, automatically delete .plexcached backups
-                that have been superseded by a newer version (e.g., Sonarr/Radarr upgrades)
+        - "superseded": Old backup replaced by an upgraded version on cache (safe to delete after review)
         """
         cache_dirs, array_dirs = self._get_paths()
         cache_files = self.get_cache_files()
         backups_to_cleanup = []
-        superseded_deleted = 0
 
         for i, array_dir in enumerate(array_dirs):
             if not os.path.exists(array_dir):
@@ -509,37 +511,37 @@ class MaintenanceService:
                             # Orphaned backup: no cache file AND no original
                             # Check if this backup has been superseded by a newer version
                             # (e.g., Sonarr/Radarr upgraded from HDTV to WEB-DL)
-                            if auto_cleanup_superseded:
-                                replacement = self._find_replacement_file(
-                                    original_name, cache_directory, cache_files
-                                )
-                                if replacement:
-                                    # Superseded - auto-delete the old backup
-                                    try:
-                                        os.remove(plexcached_path)
-                                        superseded_deleted += 1
-                                        continue  # Don't add to list
-                                    except OSError:
-                                        pass  # If delete fails, treat as orphaned
+                            replacement = self._find_replacement_file(
+                                original_name, cache_directory, cache_files
+                            )
 
                             try:
                                 size = os.path.getsize(plexcached_path)
                             except OSError:
                                 size = 0
 
-                            backups_to_cleanup.append(OrphanedBackup(
-                                plexcached_path=plexcached_path,
-                                original_filename=original_name,
-                                size=size,
-                                size_display=self._format_size(size),
-                                restore_path=original_array_path,
-                                backup_type="orphaned"
-                            ))
-
-        if superseded_deleted > 0:
-            import logging
-            logging.info(f"Auto-cleaned {superseded_deleted} superseded .plexcached backup(s) "
-                        "(replaced by Sonarr/Radarr upgrades)")
+                            if replacement:
+                                # Superseded backup - flag for user review instead of auto-deleting
+                                # The upgraded file exists on cache, so this old backup is no longer needed
+                                backups_to_cleanup.append(OrphanedBackup(
+                                    plexcached_path=plexcached_path,
+                                    original_filename=original_name,
+                                    size=size,
+                                    size_display=self._format_size(size),
+                                    restore_path=original_array_path,
+                                    backup_type="superseded",
+                                    replacement_file=replacement
+                                ))
+                            else:
+                                # Truly orphaned - no replacement exists
+                                backups_to_cleanup.append(OrphanedBackup(
+                                    plexcached_path=plexcached_path,
+                                    original_filename=original_name,
+                                    size=size,
+                                    size_display=self._format_size(size),
+                                    restore_path=original_array_path,
+                                    backup_type="orphaned"
+                                ))
 
         backups_to_cleanup.sort(key=lambda f: f.size, reverse=True)
         return backups_to_cleanup
@@ -657,7 +659,7 @@ class MaintenanceService:
             dry_run: If True, only simulate the restore
             orphaned_only: If True, only restore truly orphaned backups (not redundant ones)
         """
-        backups = self._get_orphaned_plexcached(auto_cleanup_superseded=False)
+        backups = self._get_orphaned_plexcached()
 
         if orphaned_only:
             # Filter to only include truly orphaned backups (not redundant)
@@ -701,7 +703,7 @@ class MaintenanceService:
 
     def delete_all_plexcached(self, dry_run: bool = True) -> ActionResult:
         """Delete all orphaned .plexcached files"""
-        orphaned = self._get_orphaned_plexcached(auto_cleanup_superseded=False)
+        orphaned = self._get_orphaned_plexcached()
         paths = [o.plexcached_path for o in orphaned]
         return self.delete_plexcached(paths, dry_run)
 

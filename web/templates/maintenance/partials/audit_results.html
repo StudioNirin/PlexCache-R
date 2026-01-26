@@ -256,24 +256,25 @@
 {% if results.orphaned_plexcached %}
 {% set orphaned_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'orphaned')|list|length %}
 {% set redundant_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'redundant')|list|length %}
+{% set superseded_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'superseded')|list|length %}
 <div class="card mb-2">
     <div class="card-header" style="background: var(--danger-bg);">
         <i data-lucide="file-question"></i>
         <h2>Backup Cleanup ({{ results.orphaned_plexcached|length }})</h2>
         <div class="flex gap-1" style="margin-left: auto;">
             {% if orphaned_count > 0 %}<span class="badge badge-warning">{{ orphaned_count }} orphaned</span>{% endif %}
+            {% if superseded_count > 0 %}<span class="badge badge-success">{{ superseded_count }} superseded</span>{% endif %}
             {% if redundant_count > 0 %}<span class="badge badge-info">{{ redundant_count }} redundant</span>{% endif %}
         </div>
     </div>
     <div class="card-body" style="padding: 0.75rem; background: var(--danger-bg);">
         <p class="text-muted" style="margin: 0 0 0.75rem 0;">
-            {% if orphaned_count > 0 and redundant_count > 0 %}
-            <strong>Orphaned:</strong> Backup exists but no original or cache file - restore to recover, or delete if unneeded.<br>
-            <strong>Redundant:</strong> Original already restored to array - backup can be safely deleted.
-            {% elif orphaned_count > 0 %}
-            These backup files exist on the array but have no corresponding cache file. Restore them to recover the files, or delete if no longer needed.
+            {% if orphaned_count > 0 or superseded_count > 0 or redundant_count > 0 %}
+            {% if orphaned_count > 0 %}<strong>Orphaned:</strong> Backup exists but no original or cache file - restore to recover, or delete if unneeded.<br>{% endif %}
+            {% if superseded_count > 0 %}<strong>Superseded:</strong> Old backup replaced by an upgraded version (Radarr/Sonarr upgrade) - safe to delete.<br>{% endif %}
+            {% if redundant_count > 0 %}<strong>Redundant:</strong> Original already restored to array - backup can be safely deleted.{% endif %}
             {% else %}
-            These backup files are redundant - the original has already been restored to the array. They can be safely deleted to free up space.
+            These backup files need attention.
             {% endif %}
         </p>
         <!-- Bulk Actions -->
@@ -330,6 +331,8 @@
                         <td>
                             {% if backup.backup_type == 'orphaned' %}
                             <span class="badge badge-warning">Orphaned</span>
+                            {% elif backup.backup_type == 'superseded' %}
+                            <span class="badge badge-success">Superseded</span>
                             {% else %}
                             <span class="badge badge-info">Redundant</span>
                             {% endif %}
@@ -337,6 +340,8 @@
                         <td class="text-muted" style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                             {% if backup.backup_type == 'orphaned' %}
                             <span title="No original on array - restore needed">No original</span>
+                            {% elif backup.backup_type == 'superseded' %}
+                            <span title="Upgraded to: {{ backup.replacement_file }}">Upgraded on cache</span>
                             {% else %}
                             <span title="Original exists at {{ backup.restore_path }}">Original exists</span>
                             {% endif %}

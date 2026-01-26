@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -36,6 +37,10 @@ def _parse_size_bytes(size_str: str) -> int:
         return 0
 
 
+# Subtitle file extensions (case-insensitive)
+SUBTITLE_EXTENSIONS = {'.srt', '.ass', '.sub', '.idx', '.vtt', '.ssa', '.sup', '.smi'}
+
+
 @dataclass
 class CachedFile:
     """Represents a cached file with all its metadata"""
@@ -51,6 +56,8 @@ class CachedFile:
     is_ondeck: bool
     is_watchlist: bool
     episode_info: Optional[Dict[str, Any]] = None
+    subtitle_count: int = 0  # Number of associated subtitle files
+    subtitle_paths: Optional[List[str]] = None  # Paths to associated subtitles
 
 
 class CacheService:
@@ -146,6 +153,79 @@ class CacheService:
                 return path.replace(host_prefix, container_prefix, 1)
 
         return path
+
+    def _get_cache_dir_for_display(self, settings: Dict = None) -> str:
+        """Get the cache directory for UI display, preferring host paths.
+
+        For Docker users, this returns host_cache_path so the UI shows the
+        actual Unraid path rather than the container-internal path.
+        Also attempts to find a common parent if multiple mappings exist.
+        """
+        if settings is None:
+            settings = self._load_settings()
+
+        path_mappings = settings.get("path_mappings", [])
+        display_paths = []
+
+        for mapping in path_mappings:
+            if mapping.get("enabled", True) and mapping.get("cacheable"):
+                # Prefer host_cache_path for display, fall back to cache_path
+                host_path = mapping.get("host_cache_path", "")
+                cache_path = mapping.get("cache_path", "")
+                display_path = host_path if host_path else cache_path
+                if display_path:
+                    display_paths.append(display_path.rstrip('/'))
+
+        if not display_paths:
+            # Fall back to cache_dir setting
+            return settings.get("cache_dir", "")
+
+        if len(display_paths) == 1:
+            return display_paths[0]
+
+        # Find common parent path across all mappings
+        common = os.path.commonpath(display_paths)
+        if common and common != '/':
+            return common
+
+        # If no common parent (shouldn't happen), return first path
+        return display_paths[0]
+
+    def _is_subtitle_file(self, filename: str) -> bool:
+        """Check if a filename is a subtitle file based on extension."""
+        # Handle language suffixes like .en.srt, .es.srt
+        lower_name = filename.lower()
+        for ext in SUBTITLE_EXTENSIONS:
+            if lower_name.endswith(ext):
+                return True
+        return False
+
+    def _get_video_base_name(self, subtitle_path: str) -> str:
+        """Get the base video filename from a subtitle path.
+
+        Handles language codes in subtitle names, e.g.:
+        - Movie.en.srt -> Movie
+        - Movie.srt -> Movie
+        - Show.S01E01.es.ass -> Show.S01E01
+        """
+        filename = os.path.basename(subtitle_path)
+        lower_name = filename.lower()
+
+        # Find and remove subtitle extension
+        for ext in SUBTITLE_EXTENSIONS:
+            if lower_name.endswith(ext):
+                filename = filename[:-len(ext)]
+                lower_name = lower_name[:-len(ext)]
+                break
+
+        # Remove language code suffix if present (e.g., .en, .es, .hi, .pt-br)
+        # Match .lang or .lang-region at the end (e.g., .en, .es, .pt-br, .zh-hans)
+        lang_pattern = r'\.[a-z]{2,3}(-[a-z]{2,4})?$'
+        match = re.search(lang_pattern, lower_name, re.IGNORECASE)
+        if match:
+            filename = filename[:match.start()]
+
+        return filename
 
     def _format_size(self, size_bytes: int) -> str:
         """Format bytes into human-readable string"""
@@ -486,6 +566,9 @@ class CacheService:
         """
         Get all cached files with their metadata and priority scores.
 
+        Subtitle files are grouped with their parent video file rather than
+        shown as separate entries. The video file inherits subtitle count.
+
         Args:
             source_filter: "all", "ondeck", "watchlist", or "other"
             search: Search string to filter filenames
@@ -502,9 +585,51 @@ class CacheService:
         settings = self._load_settings()
 
         now = datetime.now()
-        files = []
+
+        # First pass: separate subtitles from videos and build lookup structures
+        subtitle_paths = []
+        video_paths = []
 
         for cache_path in cached_paths:
+            filename = os.path.basename(cache_path)
+            if self._is_subtitle_file(filename):
+                subtitle_paths.append(cache_path)
+            else:
+                video_paths.append(cache_path)
+
+        # Build a map of directory + video base name -> video path for subtitle matching
+        # Key: (directory, video_base_without_extension)
+        video_by_base = {}
+        for video_path in video_paths:
+            directory = os.path.dirname(video_path)
+            filename = os.path.basename(video_path)
+            # Get base name without extension
+            base_name = os.path.splitext(filename)[0]
+            video_by_base[(directory, base_name.lower())] = video_path
+
+        # Group subtitles with their parent videos
+        # Map video_path -> list of subtitle paths
+        video_subtitles = {}
+        orphan_subtitles = []
+
+        for sub_path in subtitle_paths:
+            directory = os.path.dirname(sub_path)
+            sub_base = self._get_video_base_name(sub_path).lower()
+
+            # Find matching video in same directory
+            video_path = video_by_base.get((directory, sub_base))
+            if video_path:
+                if video_path not in video_subtitles:
+                    video_subtitles[video_path] = []
+                video_subtitles[video_path].append(sub_path)
+            else:
+                # Orphan subtitle - no matching video found
+                orphan_subtitles.append(sub_path)
+
+        # Build the file list with grouped subtitles
+        files = []
+
+        for cache_path in video_paths:
             filename = os.path.basename(cache_path)
 
             # Apply search filter
@@ -572,6 +697,9 @@ class CacheService:
                 cache_path, timestamps, ondeck, watchlist, settings
             )
 
+            # Get associated subtitles
+            subs = video_subtitles.get(cache_path, [])
+
             files.append(CachedFile(
                 path=cache_path,
                 filename=filename,
@@ -584,7 +712,9 @@ class CacheService:
                 users=list(users),
                 is_ondeck=is_ondeck,
                 is_watchlist=is_watchlist,
-                episode_info=episode_info
+                episode_info=episode_info,
+                subtitle_count=len(subs),
+                subtitle_paths=subs if subs else None
             ))
 
         # Sort by specified column
@@ -873,8 +1003,10 @@ class CacheService:
 
         # Configuration
         eviction_mode = settings.get("cache_eviction_mode", "none")
+        # Use display path (host path) for UI, not container path
+        display_cache_dir = self._get_cache_dir_for_display(settings)
         config = {
-            "cache_dir": cache_dir,
+            "cache_dir": display_cache_dir,
             "cache_limit": settings.get("cache_limit", "N/A"),
             "cache_retention_hours": settings.get("cache_retention_hours", 72),
             "watchlist_retention_days": watchlist_retention_days,
@@ -1300,12 +1432,46 @@ class CacheService:
         plexcached_path = f"{array_path}.plexcached" if array_path else None
 
         try:
+            # Track whether array copy is confirmed
+            array_confirmed = False
+
             # Step 1: Restore .plexcached backup if it exists
             if plexcached_path and os.path.exists(plexcached_path):
                 # Rename .plexcached back to original
                 os.rename(plexcached_path, array_path)
+                array_confirmed = True
+            elif array_path and os.path.exists(array_path):
+                # Array file already exists (shouldn't happen, but be safe)
+                array_confirmed = True
+            elif os.path.exists(cache_path):
+                # No backup and no array copy - must copy from cache first to prevent data loss
+                if array_path:
+                    import shutil
+                    array_dir = os.path.dirname(array_path)
+                    os.makedirs(array_dir, exist_ok=True)
+                    shutil.copy2(cache_path, array_path)
+                    # Verify copy succeeded
+                    if os.path.exists(array_path):
+                        cache_size = os.path.getsize(cache_path)
+                        array_size = os.path.getsize(array_path)
+                        if cache_size == array_size:
+                            array_confirmed = True
+                        else:
+                            os.remove(array_path)  # Remove failed copy
+                            result["message"] = "Size mismatch during copy - eviction aborted to prevent data loss"
+                            return result
+                    else:
+                        result["message"] = "Failed to create array copy - eviction aborted to prevent data loss"
+                        return result
+                else:
+                    result["message"] = "Cannot determine array path - eviction aborted to prevent data loss"
+                    return result
 
-            # Step 2: Delete cache copy if it exists
+            # Step 2: Delete cache copy ONLY if array copy is confirmed
+            if not array_confirmed:
+                result["message"] = "Array copy not confirmed - eviction aborted to prevent data loss"
+                return result
+
             if os.path.exists(cache_path):
                 os.remove(cache_path)
 

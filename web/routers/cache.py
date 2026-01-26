@@ -46,7 +46,8 @@ async def cache_list(
             "priority_score": f.priority_score,
             "users": f.users,
             "is_ondeck": f.is_ondeck,
-            "is_watchlist": f.is_watchlist
+            "is_watchlist": f.is_watchlist,
+            "subtitle_count": f.subtitle_count
         }
         for f in files
     ]

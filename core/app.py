@@ -9,6 +9,7 @@ import logging
 import re
 import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 import os
@@ -17,7 +18,7 @@ from core.config import ConfigManager
 from core.logging_config import LoggingManager, reset_warning_error_flag
 from core.system_utils import SystemDetector, FileUtils, SingleInstanceLock, get_disk_usage
 from core.plex_api import PlexManager, OnDeckItem
-from core.file_operations import MultiPathModifier, SubtitleFinder, FileFilter, FileMover, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration
+from core.file_operations import MultiPathModifier, SubtitleFinder, FileFilter, FileMover, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration, get_media_identity, find_matching_plexcached
 
 
 class PlexCacheApp:
@@ -1247,6 +1248,7 @@ class PlexCacheApp:
         files_to_cache = []
         skipped_count = 0
         skipped_size = 0
+        inaccessible_files = []
 
         for file in media_files:
             try:
@@ -1257,9 +1259,15 @@ class PlexCacheApp:
                 else:
                     skipped_count += 1
                     skipped_size += file_size
-            except (OSError, FileNotFoundError):
-                # File doesn't exist or can't be accessed, skip it
-                pass
+            except (OSError, FileNotFoundError) as e:
+                # File doesn't exist or can't be accessed - track for logging
+                inaccessible_files.append((file, str(e)))
+
+        if inaccessible_files:
+            logging.warning(f"Could not access {len(inaccessible_files)} files for caching (path not found or permission denied):")
+            for file, error in inaccessible_files:
+                logging.warning(f"  {os.path.basename(file)}: {error}")
+                logging.debug(f"  Full path: {file}")
 
         if skipped_count > 0:
             skipped_gb = skipped_size / (1024**3)
@@ -1267,18 +1275,102 @@ class PlexCacheApp:
 
         return files_to_cache
 
-    def _filter_low_priority_files(self, media_files: List[str], source_map: dict) -> List[str]:
-        """Filter out files that would be immediately evicted after caching.
+    def _estimate_priority(self, file_path: str, source: str) -> int:
+        """Estimate priority score for a file before it's cached.
 
-        Prevents the cache/evict loop where low-priority files (e.g., watchlist items)
-        are cached only to be evicted on the same run because the drive is over threshold.
+        Uses tracker data to calculate an accurate priority estimate, matching
+        the logic in CachePriorityManager.calculate_priority() as closely as possible.
+
+        Args:
+            file_path: Path to the media file.
+            source: Source type ('ondeck', 'watchlist', or 'unknown').
+
+        Returns:
+            Estimated priority score (0-100).
+        """
+        score = 50  # Base score
+
+        # Factor 1: Source Type (+15 for ondeck)
+        is_ondeck = source == "ondeck"
+        if is_ondeck:
+            score += 15
+
+        # Get tracker entries for user count and age info
+        ondeck_entry = self.ondeck_tracker.get_entry(file_path)
+        watchlist_entry = self.watchlist_tracker.get_entry(file_path)
+
+        # Factor 2: User Count (+5 per user, max +15)
+        user_count = 0
+        if ondeck_entry:
+            user_count = len(ondeck_entry.get('users', []))
+        if watchlist_entry:
+            watchlist_users = len(watchlist_entry.get('users', []))
+            user_count = max(user_count, watchlist_users)
+
+        # Default to 1 user if not in trackers yet (conservative estimate)
+        if user_count == 0:
+            user_count = 1
+
+        score += min(user_count * 5, 15)
+
+        # Factor 3: Cache Recency - skip this, file isn't cached yet
+        # When cached, it will get +5 (fresh), so we could add it optimistically
+        # But being conservative, we don't add it here
+
+        # Factor 4: Watchlist Age (+10 fresh, 0 if >30 days, -10 if >60 days)
+        if watchlist_entry and watchlist_entry.get('watchlisted_at'):
+            try:
+                watchlisted_at = datetime.fromisoformat(watchlist_entry['watchlisted_at'])
+                days_on_watchlist = (datetime.now() - watchlisted_at).days
+                if days_on_watchlist < 7:
+                    score += 10  # Fresh watchlist item
+                elif days_on_watchlist > 60:
+                    score -= 10  # Very old, likely forgotten
+            except (ValueError, TypeError):
+                pass
+
+        # Factor 5: OnDeck Staleness (+5 if fresh, decay over time)
+        if is_ondeck and ondeck_entry:
+            first_seen_str = ondeck_entry.get('first_seen')
+            if first_seen_str:
+                try:
+                    first_seen = datetime.fromisoformat(first_seen_str)
+                    days_on_ondeck = (datetime.now() - first_seen).days
+                    if days_on_ondeck < 7:
+                        score += 5   # Fresh - just added to OnDeck
+                    elif days_on_ondeck < 14:
+                        pass         # Normal - no adjustment
+                    elif days_on_ondeck < 30:
+                        score -= 5   # Getting stale
+                    else:
+                        score -= 10  # Stale - on OnDeck for 30+ days
+                except (ValueError, TypeError):
+                    pass
+
+        # Factor 6: Episode Position - skip for estimation (complex to determine)
+        # This could add up to +15 for current episode, but we skip it for simplicity
+
+        # Clamp to 0-100 range
+        return max(0, min(100, score))
+
+    def _filter_low_priority_files(self, media_files: List[str], source_map: dict) -> List[str]:
+        """Filter out files that would score below eviction_min_priority.
+
+        ALWAYS filters regardless of current drive usage to prevent cache thrashing.
+        A file that scores below the eviction threshold will eventually be evicted,
+        so there's no point caching it (wastes I/O copying files that will be deleted).
+
+        This prevents the oscillation pattern where:
+        1. Drive dips below threshold → files cached without filtering
+        2. Drive goes over threshold → files evicted
+        3. Repeat forever
 
         Args:
             media_files: List of file paths to potentially cache.
             source_map: Dict mapping file paths to source ('ondeck' or 'watchlist').
 
         Returns:
-            Filtered list of files that won't be immediately evicted.
+            Filtered list of files with estimated priority >= eviction_min_priority.
         """
         eviction_mode = self.config_manager.cache.cache_eviction_mode
         if eviction_mode == "none":
@@ -1308,35 +1400,23 @@ class PlexCacheApp:
             disk_usage = get_disk_usage(cache_dir, drive_size_override)
             total_drive_usage = disk_usage.used
         except Exception:
-            return media_files  # Can't check, allow caching
+            total_drive_usage = 0  # Can't check drive usage, but still filter by priority
 
-        # If drive is under threshold, no eviction would trigger
-        if total_drive_usage < threshold_bytes:
-            return media_files
+        is_over_threshold = total_drive_usage >= threshold_bytes
 
-        # Drive is over threshold - filter out files that would be evicted
+        # ALWAYS filter out files that would score below eviction_min_priority.
+        # This prevents cache thrashing: caching a file only to evict it later wastes I/O.
+        # Even when under threshold, don't cache files that would be evicted once threshold is hit.
         eviction_min_priority = self.config_manager.cache.eviction_min_priority
         filtered_files = []
         skipped_count = 0
         skipped_by_source = {"ondeck": 0, "watchlist": 0, "unknown": 0}
 
         for file_path in media_files:
-            # Estimate priority for this file based on source
-            # This is a simplified estimate before the file is actually tracked
             source = source_map.get(file_path, "unknown")
 
-            # Base priority calculation (simplified from CachePriorityManager):
-            # - Base score: 50
-            # - OnDeck bonus: +20
-            # - Fresh cache bonus: +15 (will apply after caching)
-            # - Single user: +5
-            # = OnDeck: ~90, Watchlist: ~70
-            if source == "ondeck":
-                estimated_priority = 90  # OnDeck items are high priority
-            elif source == "watchlist":
-                estimated_priority = 70  # Watchlist items are lower priority
-            else:
-                estimated_priority = 65  # Unknown/other
+            # Use accurate priority estimation based on tracker data
+            estimated_priority = self._estimate_priority(file_path, source)
 
             if estimated_priority >= eviction_min_priority:
                 filtered_files.append(file_path)
@@ -1353,11 +1433,17 @@ class PlexCacheApp:
                     breakdown_parts.append(f"{count} {src}")
             breakdown = ", ".join(breakdown_parts)
 
-            logging.warning(
-                f"Cache over eviction threshold ({threshold_percent}%): skipped {skipped_count} files "
-                f"that would be immediately evicted ({breakdown}). "
-                f"Increase 'Eviction Threshold' or lower 'Minimum Priority to Keep' in Settings."
-            )
+            if is_over_threshold:
+                logging.warning(
+                    f"Cache over eviction threshold ({threshold_percent}%): skipped {skipped_count} files "
+                    f"that would be immediately evicted ({breakdown}). "
+                    f"Increase 'Eviction Threshold' or lower 'Minimum Priority to Keep' in Settings."
+                )
+            else:
+                logging.info(
+                    f"Skipped {skipped_count} files below minimum priority ({eviction_min_priority}): {breakdown}. "
+                    f"These would be evicted when threshold is reached."
+                )
 
         return filtered_files
 
@@ -1478,12 +1564,86 @@ class PlexCacheApp:
                 plexcached_path = array_path + ".plexcached"
                 logging.debug(f"Looking for backup at: {plexcached_path}")
 
+                # Track whether we successfully restored/created array copy
+                array_restored = False
+
                 if os.path.exists(plexcached_path):
-                    # Restore: rename .plexcached back to original
+                    # Exact match: rename .plexcached back to original
                     os.rename(plexcached_path, array_path)
                     logging.debug(f"Restored .plexcached: {array_path}")
+                    array_restored = True
+                else:
+                    # Check for upgrade scenario: old .plexcached with different filename but same media identity
+                    # This handles cases where Radarr/Sonarr upgraded the file while it was cached
+                    array_dir = os.path.dirname(array_path)
+                    cache_identity = get_media_identity(cache_path)
+                    old_plexcached = find_matching_plexcached(array_dir, cache_identity, cache_path)
 
-                # Delete cache copy
+                    if old_plexcached:
+                        # Found an old backup with same media identity - this is an upgrade scenario
+                        # IMPORTANT: Copy upgraded file FIRST, then delete old backup
+                        old_name = os.path.basename(old_plexcached).replace(".plexcached", "")
+                        new_name = os.path.basename(cache_path)
+                        logging.info(f"Eviction upgrade detected: {old_name} -> {new_name}")
+
+                        # Copy the upgraded cache file to array BEFORE deleting old backup
+                        if os.path.exists(cache_path):
+                            import shutil
+                            try:
+                                shutil.copy2(cache_path, array_path)
+                                logging.debug(f"Copied upgraded file to array: {array_path}")
+                                # Verify copy succeeded
+                                if os.path.exists(array_path):
+                                    cache_size = os.path.getsize(cache_path)
+                                    array_size = os.path.getsize(array_path)
+                                    if cache_size == array_size:
+                                        array_restored = True
+                                        # NOW safe to delete old backup
+                                        os.remove(old_plexcached)
+                                        logging.debug(f"Deleted old .plexcached: {old_plexcached}")
+                                    else:
+                                        logging.error(f"Size mismatch after copy! Cache: {cache_size}, Array: {array_size}. Skipping eviction.")
+                                        os.remove(array_path)  # Remove failed copy
+                                        continue
+                            except OSError as e:
+                                logging.error(f"Failed to copy to array during eviction: {e}. Skipping eviction.")
+                                continue
+                    elif not os.path.exists(array_path):
+                        # No backup exists and no array copy - must copy from cache first
+                        logging.warning(f"No .plexcached backup found for: {os.path.basename(cache_path)}")
+                        if os.path.exists(cache_path):
+                            import shutil
+                            try:
+                                # Ensure array directory exists
+                                os.makedirs(array_dir, exist_ok=True)
+                                shutil.copy2(cache_path, array_path)
+                                logging.info(f"Created array copy before eviction: {os.path.basename(array_path)}")
+                                # Verify copy succeeded
+                                if os.path.exists(array_path):
+                                    cache_size = os.path.getsize(cache_path)
+                                    array_size = os.path.getsize(array_path)
+                                    if cache_size == array_size:
+                                        array_restored = True
+                                    else:
+                                        logging.error(f"Size mismatch! Skipping eviction to prevent data loss.")
+                                        os.remove(array_path)
+                                        continue
+                            except OSError as e:
+                                logging.error(f"Failed to copy to array: {e}. Skipping eviction to prevent data loss.")
+                                continue
+                        else:
+                            logging.error(f"Cannot evict - no backup and cache file missing: {cache_path}")
+                            continue
+                    else:
+                        # Array file already exists (shouldn't happen, but be safe)
+                        logging.debug(f"Array file already exists: {array_path}")
+                        array_restored = True
+
+                # CRITICAL: Only delete cache copy if array copy is confirmed
+                if not array_restored:
+                    logging.error(f"Skipping cache deletion - array copy not confirmed: {os.path.basename(cache_path)}")
+                    continue
+
                 if os.path.exists(cache_path):
                     # Check for hardlinks before deleting
                     try:
