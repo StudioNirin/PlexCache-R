@@ -738,19 +738,15 @@ class CacheService:
         """Get cache statistics for dashboard"""
         import shutil
 
-        cached_paths = self.get_cached_files_list()
+        # Use get_all_cached_files() for consistency with Storage page
+        # This groups subtitles with their parent videos instead of counting separately
+        all_files = self.get_all_cached_files()
         ondeck = self.get_ondeck_tracker()
         watchlist = self.get_watchlist_tracker()
         settings = self._load_settings()
 
-        # Calculate total size of cached files (PlexCache-managed files)
-        cached_files_size = 0
-        for cache_path in cached_paths:
-            try:
-                if os.path.exists(cache_path):
-                    cached_files_size += os.path.getsize(cache_path)
-            except OSError:
-                pass
+        # Calculate total size from grouped files (includes subtitle sizes)
+        cached_files_size = sum(f.size for f in all_files)
 
         # Get actual cache drive usage (use path_mappings cache_path for consistency)
         cache_dir = self._get_cache_dir(settings)
@@ -814,7 +810,7 @@ class CacheService:
                     eviction_over_by_display = self._format_size(eviction_over_by)
 
         return {
-            "cache_files": len(cached_paths),
+            "cache_files": len(all_files),  # Grouped count (subtitles with videos)
             "cache_size": self._format_size(disk_used),  # Actual disk used
             "cache_size_bytes": disk_used,
             "cache_limit": self._format_size(disk_total),  # Actual disk total

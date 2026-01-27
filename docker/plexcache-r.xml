@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
 <Container version="2">
-    <Name>PlexCache-R</Name>
-    <Repository>brandonhaney/plexcache-r</Repository>
+    <Name>plexcache-r</Name>
+    <Repository>brandonhaney/plexcache-r:latest</Repository>
     <Registry>https://hub.docker.com/r/brandonhaney/plexcache-r</Registry>
     <Network>bridge</Network>
     <MyIP/>
-    <Shell>bash</Shell>
+    <Shell>sh</Shell>
     <Privileged>false</Privileged>
     <Support>https://github.com/StudioNirin/PlexCache-R/issues</Support>
     <Project>https://github.com/StudioNirin/PlexCache-R</Project>
@@ -17,20 +17,21 @@ Features:
 - Web UI for monitoring and management
 - Configurable retention periods
 - Multi-user support
+- Native Unraid notifications
 - Seamless Unraid mover integration
 
 MOVER INTEGRATION (Optional):
 If using CA Mover Tuning plugin, set the exclude file path to:
-/mnt/user/appdata/plexcache/plexcache_mover_files_to_exclude.txt
+[Your Config Path]/unraid_mover_exclusions.txt
     </Overview>
     <Category>MediaServer:Other Tools:</Category>
     <WebUI>http://[IP]:[PORT:5757]</WebUI>
-    <TemplateURL>https://raw.githubusercontent.com/StudioNirin/PlexCache-R/main/docker/plexcache-r.xml</TemplateURL>
-    <Icon>https://raw.githubusercontent.com/StudioNirin/PlexCache-R/main/docker/icon.png</Icon>
+    <TemplateURL>https://raw.githubusercontent.com/Brandon-Haney/PlexCache-R/refs/heads/v3.0-docker/docker/plexcache-r.xml</TemplateURL>
+    <Icon>https://raw.githubusercontent.com/Brandon-Haney/PlexCache-R/refs/heads/v3.0-docker/docker/icon.png</Icon>
     <ExtraParams/>
     <PostArgs/>
     <CPUset/>
-    <DateInstalled></DateInstalled>
+    <DateInstalled/>
     <DonateText>Support Development</DonateText>
     <DonateLink>https://github.com/sponsors/StudioNirin</DonateLink>
     <Requires>
@@ -38,19 +39,21 @@ Plex Media Server must be accessible from this container.
 CA Mover Tuning plugin recommended (optional) for mover exclude list integration.
     </Requires>
 
-    <!-- Ports -->
-    <Config Name="Web UI Port" Target="5757" Default="5757" Mode="tcp" Description="Port for the web interface" Type="Port" Display="always" Required="true" Mask="false">5757</Config>
-
     <!-- Paths -->
-    <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/plexcache" Mode="rw" Description="Persistent storage for config, data files, and mover exclude list" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/plexcache</Config>
-    <Config Name="Cache Drive" Target="/mnt/cache" Default="/mnt/cache" Mode="rw" Description="Path to your Unraid cache drive (must match host path exactly)" Type="Path" Display="always" Required="true" Mask="false">/mnt/cache</Config>
-    <Config Name="Array Path" Target="/mnt/user0" Default="/mnt/user0" Mode="rw" Description="Path to array-only view (must match host path exactly)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user0</Config>
-    <Config Name="User Share" Target="/mnt/user" Default="/mnt/user" Mode="ro" Description="Path to merged user share (read-only, for Plex path compatibility)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user</Config>
+    <Config Name="Config" Target="/config" Default="/mnt/user/appdata/plexcache" Mode="rw" Description="Persistent storage for settings, logs, and tracking data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/plexcache</Config>
+    <Config Name="Cache" Target="/mnt/cache" Default="/mnt/cache" Mode="rw" Description="Your Unraid cache drive where media files are cached for fast access" Type="Path" Display="always" Required="true" Mask="false">/mnt/cache</Config>
+    <Config Name="Array" Target="/mnt/user0" Default="/mnt/user0" Mode="rw" Description="Direct array access (user0) for creating .plexcached backups" Type="Path" Display="always" Required="true" Mask="false">/mnt/user0</Config>
+    <Config Name="User" Target="/mnt/user" Default="/mnt/user" Mode="rw" Description="User share for Plex library path resolution" Type="Path" Display="always" Required="true" Mask="false">/mnt/user</Config>
 
     <!-- Environment Variables -->
-    <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions (99 = nobody)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
-    <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions (100 = users)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
-    <Config Name="Timezone" Target="TZ" Default="America/Los_Angeles" Mode="" Description="Your timezone (e.g., America/New_York, Europe/London)" Type="Variable" Display="advanced" Required="false" Mask="false">America/Los_Angeles</Config>
-    <Config Name="Log Level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="Logging verbosity (DEBUG, INFO, WARNING, ERROR)" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
-    <!-- Note: Plex URL/Token and Schedule settings are configured via the Web UI -->
+    <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions (99 = nobody on Unraid)" Type="Variable" Display="always" Required="false" Mask="false">99</Config>
+    <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions (100 = users on Unraid)" Type="Variable" Display="always" Required="false" Mask="false">100</Config>
+    <Config Name="TZ" Target="TZ" Default="America/Chicago" Mode="" Description="Timezone for accurate log timestamps and scheduling" Type="Variable" Display="always" Required="false" Mask="false">America/Chicago</Config>
+
+    <!-- Ports -->
+    <Config Name="Port" Target="5757" Default="5757" Mode="tcp" Description="Web UI port for browser access" Type="Port" Display="always" Required="true" Mask="false">5757</Config>
+
+    <!-- Unraid Notifications (Optional) -->
+    <Config Name="Unraid Notify Script" Target="/usr/local/emhttp" Default="/usr/local/emhttp" Mode="ro" Description="Unraid's notify script and PHP includes (for native notifications)" Type="Path" Display="always" Required="false" Mask="false">/usr/local/emhttp</Config>
+    <Config Name="Notifications" Target="/tmp/notifications" Default="/tmp/notifications" Mode="rw" Description="Unraid's notification queue (for native notifications)" Type="Path" Display="always" Required="false" Mask="false">/tmp/notifications</Config>
 </Container>

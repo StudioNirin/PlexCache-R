@@ -123,7 +123,10 @@ class ImportService:
             )
 
         # Check for exclude file (at root level of import folder)
-        exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
+        # Support both old and new filenames
+        exclude_file = self.import_dir / "unraid_mover_exclusions.txt"
+        if not exclude_file.exists():
+            exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
         if exclude_file.exists() and exclude_file.stat().st_size > 0:
             try:
                 with open(exclude_file, 'r') as f:
@@ -301,7 +304,10 @@ class ImportService:
                     results["errors"].append(f"RSS cache import failed: {e}")
 
         # Import exclude file (with path conversion) - at root level, not in data folder
-        exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
+        # Support both old and new filenames
+        exclude_file = self.import_dir / "unraid_mover_exclusions.txt"
+        if not exclude_file.exists():
+            exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
         if exclude_file.exists():
             try:
                 with open(exclude_file, 'r') as f:
@@ -334,10 +340,12 @@ class ImportService:
                 if settings_file.exists():
                     shutil.move(str(settings_file), str(self.completed_dir / "plexcache_settings.json"))
 
-                # Move exclude file
-                exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
+                # Move exclude file (check both old and new filenames)
+                exclude_file = self.import_dir / "unraid_mover_exclusions.txt"
+                if not exclude_file.exists():
+                    exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
                 if exclude_file.exists():
-                    shutil.move(str(exclude_file), str(self.completed_dir / "plexcache_mover_files_to_exclude.txt"))
+                    shutil.move(str(exclude_file), str(self.completed_dir / exclude_file.name))
 
                 # Move data folder
                 if self.import_data_dir.exists():

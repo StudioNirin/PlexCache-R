@@ -1405,7 +1405,8 @@ class PlexcachedMigration:
                 continue  # No translation needed
 
             host_prefix = mapping.host_cache_path.rstrip('/')
-            if host_path.startswith(host_prefix):
+            # Ensure prefix match is at a path boundary (not partial directory name)
+            if host_path == host_prefix or host_path.startswith(host_prefix + '/'):
                 cache_prefix = mapping.cache_path.rstrip('/')
                 translated = host_path.replace(host_prefix, cache_prefix, 1)
                 return translated
@@ -2058,7 +2059,9 @@ class FileFilter:
                 continue  # No translation needed
 
             cache_prefix = mapping.cache_path.rstrip('/')
-            if cache_path.startswith(cache_prefix):
+            # Ensure prefix match is at a path boundary (not partial directory name)
+            # e.g., /mnt/cache should NOT match /mnt/cache_downloads
+            if cache_path == cache_prefix or cache_path.startswith(cache_prefix + '/'):
                 host_prefix = mapping.host_cache_path.rstrip('/')
                 translated = cache_path.replace(cache_prefix, host_prefix, 1)
                 return translated
@@ -2083,7 +2086,8 @@ class FileFilter:
                 continue  # No translation needed
 
             host_prefix = mapping.host_cache_path.rstrip('/')
-            if host_path.startswith(host_prefix):
+            # Ensure prefix match is at a path boundary (not partial directory name)
+            if host_path == host_prefix or host_path.startswith(host_prefix + '/'):
                 cache_prefix = mapping.cache_path.rstrip('/')
                 translated = host_path.replace(host_prefix, cache_prefix, 1)
                 return translated
@@ -3007,7 +3011,9 @@ class FileMover:
                 continue  # No translation needed
 
             cache_prefix = mapping.cache_path.rstrip('/')
-            if cache_path.startswith(cache_prefix):
+            # Ensure prefix match is at a path boundary (not partial directory name)
+            # e.g., /mnt/cache should NOT match /mnt/cache_downloads
+            if cache_path == cache_prefix or cache_path.startswith(cache_prefix + '/'):
                 host_prefix = mapping.host_cache_path.rstrip('/')
                 translated = cache_path.replace(cache_prefix, host_prefix, 1)
                 if log_translation:
@@ -3041,7 +3047,8 @@ class FileMover:
                 continue  # No translation needed
 
             host_prefix = mapping.host_cache_path.rstrip('/')
-            if host_path.startswith(host_prefix):
+            # Ensure prefix match is at a path boundary (not partial directory name)
+            if host_path == host_prefix or host_path.startswith(host_prefix + '/'):
                 cache_prefix = mapping.cache_path.rstrip('/')
                 translated = host_path.replace(host_prefix, cache_prefix, 1)
                 return translated

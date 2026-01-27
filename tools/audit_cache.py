@@ -734,6 +734,14 @@ Fix Options (use with --execute to apply):
 
   --execute            Actually apply changes (without this, shows dry run)
 
+Diagnostic Options:
+  --find-malformed     Find .plexcached files missing their media extension
+                       (e.g., 'movie.plexcached' instead of 'movie.mkv.plexcached')
+
+  --fix-malformed      Fix malformed .plexcached files by adding correct extension
+                       Detects extension from cache file, or use --default-ext
+                       Example: --fix-malformed --default-ext .mkv --execute
+
 Legacy Options:
   --dry-run            Show which duplicates would be deleted
   --cleanup            Delete cache files that already exist on array
@@ -750,7 +758,227 @@ Examples:
   python3 audit_cache.py --clean-timestamps --execute  # Remove stale timestamp entries
   python3 audit_cache.py --restore-plexcached     # Dry run - show orphaned .plexcached files
   python3 audit_cache.py --restore-plexcached --execute  # Restore orphaned .plexcached files
+  python3 audit_cache.py --find-malformed         # Find .plexcached files missing media extension
+  python3 audit_cache.py --fix-malformed          # Dry run - show what would be fixed
+  python3 audit_cache.py --fix-malformed --execute  # Fix files (auto-detect extension)
+  python3 audit_cache.py --fix-malformed --default-ext .mkv --execute  # Fix with default ext
 """)
+
+
+def find_malformed_plexcached():
+    """Find .plexcached files that are missing their original media extension.
+
+    Properly named: movie.mkv.plexcached, episode.mp4.plexcached
+    Malformed: movie.plexcached (missing .mkv), episode.plexcached (missing .mp4)
+
+    This helps diagnose a bug where .plexcached files were created without
+    preserving the original file extension.
+    """
+    # Settings already loaded on module import
+
+    # Valid media extensions (video + subtitle)
+    MEDIA_EXTENSIONS = {
+        '.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.m2ts',
+        '.webm', '.flv', '.mpg', '.mpeg', '.divx', '.xvid', '.3gp', '.ogv',
+        '.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx'
+    }
+
+    print("\n" + "=" * 80)
+    print("SCANNING FOR MALFORMED .plexcached FILES")
+    print("=" * 80)
+    print("\nLooking for .plexcached files missing their original media extension...")
+    print("(e.g., 'movie.plexcached' instead of 'movie.mkv.plexcached')\n")
+
+    malformed = []
+    total_scanned = 0
+
+    for array_dir in ARRAY_DIRS:
+        if not os.path.exists(array_dir):
+            print(f"  Skipping (not found): {array_dir}")
+            continue
+
+        print(f"  Scanning: {array_dir}")
+
+        for root, dirs, files in os.walk(array_dir):
+            for f in files:
+                if f.endswith('.plexcached'):
+                    total_scanned += 1
+                    # Get the name without .plexcached suffix
+                    base_name = f[:-11]  # Remove '.plexcached'
+
+                    # Check if it has a valid media extension
+                    has_extension = False
+                    for ext in MEDIA_EXTENSIONS:
+                        if base_name.lower().endswith(ext):
+                            has_extension = True
+                            break
+
+                    if not has_extension:
+                        full_path = os.path.join(root, f)
+                        try:
+                            stat = os.stat(full_path)
+                            size = stat.st_size
+                            size_str = f"{size / (1024**3):.2f} GB" if size >= 1024**3 else f"{size / (1024**2):.2f} MB"
+                            from datetime import datetime
+                            mtime = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                        except OSError:
+                            size_str = "Unknown"
+                            mtime = "Unknown"
+
+                        # Try to find the correct extension from the cache file
+                        detected_ext = None
+                        cache_file_path = None
+
+                        # Convert array path to cache path and look for matching file
+                        for i, array_dir in enumerate(ARRAY_DIRS):
+                            if full_path.startswith(array_dir):
+                                relative = os.path.relpath(root, array_dir)
+                                cache_dir_to_check = os.path.join(CACHE_DIRS[i], relative)
+                                if os.path.exists(cache_dir_to_check):
+                                    # Look for files that start with base_name
+                                    try:
+                                        for cache_file in os.listdir(cache_dir_to_check):
+                                            # Check if cache file matches base_name + extension
+                                            cache_base, cache_ext = os.path.splitext(cache_file)
+                                            if cache_base == base_name and cache_ext.lower() in MEDIA_EXTENSIONS:
+                                                detected_ext = cache_ext
+                                                cache_file_path = os.path.join(cache_dir_to_check, cache_file)
+                                                break
+                                    except OSError:
+                                        pass
+                                break
+
+                        malformed.append({
+                            'path': full_path,
+                            'filename': f,
+                            'base_name': base_name,
+                            'size': size_str,
+                            'modified': mtime,
+                            'detected_ext': detected_ext,
+                            'cache_file': cache_file_path
+                        })
+
+    print(f"\nScanned {total_scanned} .plexcached files")
+    print("=" * 80)
+
+    if malformed:
+        # Count how many have detected extensions
+        fixable = [m for m in malformed if m['detected_ext']]
+        unfixable = [m for m in malformed if not m['detected_ext']]
+
+        print(f"\n⚠️  FOUND {len(malformed)} MALFORMED .plexcached FILES:\n")
+
+        if fixable:
+            print(f"  ✅ {len(fixable)} can be auto-fixed (extension detected from cache file)")
+        if unfixable:
+            print(f"  ❌ {len(unfixable)} need manual fix (no cache file found to detect extension)")
+
+        print()
+
+        for item in malformed:
+            print(f"  File: {item['filename']}")
+            print(f"  Base: {item['base_name']} (missing extension!)")
+            if item['detected_ext']:
+                print(f"  Detected: {item['detected_ext']} (from cache file)")
+                print(f"  Fix to: {item['base_name']}{item['detected_ext']}.plexcached")
+            else:
+                print(f"  Detected: UNKNOWN (no cache file found)")
+            print(f"  Size: {item['size']}")
+            print(f"  Modified: {item['modified']}")
+            print(f"  Path: {item['path']}")
+            print()
+
+        print("=" * 80)
+        print("FIX OPTIONS")
+        print("=" * 80)
+
+        if fixable:
+            print(f"""
+To fix the {len(fixable)} file(s) with detected extensions:
+  python3 audit_cache.py --fix-malformed           # Dry run (preview)
+  python3 audit_cache.py --fix-malformed --execute # Apply fixes
+""")
+
+        if unfixable:
+            print(f"""
+For the {len(unfixable)} file(s) without detected extensions, manually rename:
+  mv 'episode.plexcached' 'episode.mkv.plexcached'
+
+Or specify a default extension:
+  python3 audit_cache.py --fix-malformed --default-ext .mkv --execute
+""")
+    else:
+        print("\n✅ No malformed .plexcached files found - all files have proper extensions!")
+
+    return malformed
+
+
+def fix_malformed_plexcached(dry_run=True, default_ext=None):
+    """Fix malformed .plexcached files by renaming them with the correct extension.
+
+    Args:
+        dry_run: If True, only show what would be done without making changes.
+        default_ext: Default extension to use if cache file not found (e.g., '.mkv')
+    """
+    malformed = find_malformed_plexcached()
+
+    if not malformed:
+        return
+
+    fixable = [m for m in malformed if m['detected_ext'] or default_ext]
+
+    if not fixable:
+        print("\n❌ No files can be fixed - no extensions detected and no default provided.")
+        print("   Use --default-ext .mkv to specify a default extension.")
+        return
+
+    print("\n" + "=" * 80)
+    print("FIXING MALFORMED .plexcached FILES" + (" (DRY RUN)" if dry_run else ""))
+    print("=" * 80)
+
+    fixed = 0
+    errors = []
+
+    for item in malformed:
+        ext = item['detected_ext'] or default_ext
+        if not ext:
+            print(f"\n  SKIP: {item['filename']} (no extension detected, no default)")
+            continue
+
+        old_path = item['path']
+        # Insert extension before .plexcached
+        new_filename = f"{item['base_name']}{ext}.plexcached"
+        new_path = os.path.join(os.path.dirname(old_path), new_filename)
+
+        source = "detected" if item['detected_ext'] else "default"
+        print(f"\n  {'Would rename' if dry_run else 'Renaming'}: {item['filename']}")
+        print(f"         To: {new_filename} ({source}: {ext})")
+
+        if not dry_run:
+            try:
+                # Check if target already exists
+                if os.path.exists(new_path):
+                    errors.append(f"{item['filename']}: Target already exists")
+                    print(f"    ❌ ERROR: Target file already exists!")
+                    continue
+
+                os.rename(old_path, new_path)
+                fixed += 1
+                print(f"    ✅ Done")
+            except OSError as e:
+                errors.append(f"{item['filename']}: {e}")
+                print(f"    ❌ ERROR: {e}")
+
+    print("\n" + "=" * 80)
+    if dry_run:
+        print(f"DRY RUN: Would fix {len(fixable)} file(s)")
+        print("Run with --execute to apply changes.")
+    else:
+        print(f"Fixed {fixed} file(s), {len(errors)} error(s)")
+        if errors:
+            print("\nErrors:")
+            for err in errors:
+                print(f"  - {err}")
 
 
 if __name__ == "__main__":
@@ -771,6 +999,18 @@ if __name__ == "__main__":
         clean_timestamps(dry_run=not execute)
     elif "--restore-plexcached" in args:
         restore_plexcached(dry_run=not execute)
+    elif "--find-malformed" in args:
+        find_malformed_plexcached()
+    elif "--fix-malformed" in args:
+        # Parse --default-ext argument if provided
+        default_ext = None
+        for i, arg in enumerate(args):
+            if arg == "--default-ext" and i + 1 < len(args):
+                default_ext = args[i + 1]
+                if not default_ext.startswith('.'):
+                    default_ext = '.' + default_ext
+                break
+        fix_malformed_plexcached(dry_run=not execute, default_ext=default_ext)
     elif "--cleanup" in args:
         cleanup_duplicates(dry_run=False)
     elif "--dry-run" in args:

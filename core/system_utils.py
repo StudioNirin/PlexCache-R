@@ -343,9 +343,10 @@ class FileUtils:
                 skipped_files.append(file)
 
         if skipped_files:
-            logging.warning(f"Could not get size for {len(skipped_files)} files (will skip during move)")
+            file_word = "file" if len(skipped_files) == 1 else "files"
+            logging.warning(f"Skipping {len(skipped_files)} {file_word} not found on disk (may have been renamed - try refreshing Plex library)")
             for f in skipped_files:
-                logging.debug(f"  Skipping inaccessible file: {f}")
+                logging.debug(f"  Not found: {f}")
 
         return self._convert_bytes_to_readable_size(total_size_bytes)
     
