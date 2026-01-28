@@ -667,7 +667,51 @@ class PlexCacheApp:
                 settings_users=self.config_manager.plex.users,
                 main_username="main"  # Fallback if plex.tv unreachable
             )
-    
+
+            # Auto-add newly discovered users to settings (with tracking disabled)
+            new_users = self.plex_manager.get_newly_discovered_users()
+            if new_users:
+                self._add_new_users_to_settings(new_users)
+
+    def _add_new_users_to_settings(self, new_users: List[dict]) -> None:
+        """Add newly discovered users to settings with tracking disabled.
+
+        Args:
+            new_users: List of user info dicts from plex.tv (with title, token, id, uuid, etc.)
+        """
+        added_count = 0
+        for user_info in new_users:
+            username = user_info.get('title')
+            if not username:
+                continue
+
+            # Check if user already exists (shouldn't happen, but be safe)
+            existing = any(u.get('title') == username for u in self.config_manager.plex.users)
+            if existing:
+                continue
+
+            # Ensure settings_data['users'] exists and is linked to plex.users
+            if 'users' not in self.config_manager.settings_data:
+                self.config_manager.settings_data['users'] = []
+                self.config_manager.plex.users = self.config_manager.settings_data['users']
+
+            # Add user (plex.users and settings_data['users'] are the same list reference)
+            self.config_manager.plex.users.append(user_info)
+
+            logging.warning(
+                f"[PLEX API] Auto-added new user '{username}' with tracking disabled. "
+                f"Enable via Settings > Plex or re-run Setup wizard."
+            )
+            added_count += 1
+
+        # Save updated settings
+        if added_count > 0:
+            try:
+                self.config_manager._save_updated_config()
+                logging.debug(f"Saved {added_count} new user(s) to settings")
+            except Exception as e:
+                logging.error(f"Failed to save new users to settings: {e}")
+
     def _check_active_sessions(self) -> None:
         """Check for active Plex sessions."""
         sessions = self.plex_manager.get_active_sessions()

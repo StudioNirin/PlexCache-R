@@ -19,7 +19,7 @@
                     <label for="max_log_files">Maximum Log Files</label>
                     <input type="number" id="max_log_files" name="max_log_files"
                            value="{{ settings.max_log_files | default(24) }}" min="1" max="100">
-                    <div class="form-hint">Number of log files to keep (default: 24 for hourly runs = 1 day)</div>
+                    <div class="form-hint">Number of log files to keep (1 file created per run)</div>
                 </div>
 
                 <div class="form-group">

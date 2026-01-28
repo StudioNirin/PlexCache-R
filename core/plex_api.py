@@ -181,6 +181,7 @@ class PlexManager:
         self._user_tokens: Dict[str, str] = {}  # username -> token (populated at startup)
         self._user_id_to_name: Dict[str, str] = {}  # user_id (str) -> username (for RSS author lookup)
         self._resolved_uuids: Set[str] = set()  # UUIDs we've tried to resolve (avoid repeated API calls)
+        self._newly_discovered_users: List[dict] = []  # Users found on plex.tv but not in settings
         self._users_loaded = False
         self._api_lock = threading.Lock()  # For rate limiting plex.tv calls
         self._plex_tv_reachable = True  # Track if plex.tv is accessible
@@ -223,10 +224,15 @@ class PlexManager:
             is_local = user_entry.get("is_local", False)
             user_id = user_entry.get("id")
 
-            if not username or not token:
+            if not username:
                 continue
 
+            # Track username even if no token (user may have been auto-added with tracking prefs only)
             settings_usernames.add(username)
+
+            # Skip token loading if no token present
+            if not token:
+                continue
 
             # Build user ID -> username map for RSS author lookup
             if user_id:
@@ -293,22 +299,26 @@ class PlexManager:
         try:
             self._rate_limited_api_call()
             users = account.users()
-            new_users = 0
+            self._newly_discovered_users = []  # Reset for this run
 
             for user in users:
                 username = user.title
 
-                # Build user ID -> username map (even if skipped)
-                if hasattr(user, 'id') and user.id:
-                    self._user_id_to_name[str(user.id)] = username
-                # Extract uuid from thumb URL
+                # Extract user metadata
+                user_id = getattr(user, 'id', None)
+                user_uuid = None
                 thumb = getattr(user, 'thumb', '')
                 if thumb and '/users/' in thumb:
                     try:
                         user_uuid = thumb.split('/users/')[1].split('/')[0]
-                        self._user_id_to_name[user_uuid] = username
                     except (IndexError, AttributeError):
                         pass
+
+                # Build user ID -> username map (even if skipped)
+                if user_id:
+                    self._user_id_to_name[str(user_id)] = username
+                if user_uuid:
+                    self._user_id_to_name[user_uuid] = username
 
                 # Skip if already loaded from settings
                 if username in settings_usernames:
@@ -319,6 +329,21 @@ class PlexManager:
                     logging.debug(f"[USER:{username}] Skipping (in skip list)")
                     continue
 
+                # Helper to build user info dict
+                def build_user_info(token: str) -> dict:
+                    info = {
+                        'title': username,
+                        'token': token,
+                        'is_local': False,  # account.users() returns shared/friend users
+                        'skip_ondeck': True,
+                        'skip_watchlist': True
+                    }
+                    if user_id:
+                        info['id'] = user_id
+                    if user_uuid:
+                        info['uuid'] = user_uuid
+                    return info
+
                 # Try to get token from disk cache first
                 cached_token = self._token_cache.get_token(username, machine_id)
                 if cached_token:
@@ -327,7 +352,7 @@ class PlexManager:
                         continue
                     self._user_tokens[username] = cached_token
                     logging.debug(f"[USER:{username}] Using cached token")
-                    new_users += 1
+                    self._newly_discovered_users.append(build_user_info(cached_token))
                     continue
 
                 # Fetch fresh token from plex.tv
@@ -341,16 +366,24 @@ class PlexManager:
                         self._user_tokens[username] = token
                         self._token_cache.set_token(username, token, machine_id)
                         logging.debug(f"[USER:{username}] Fetched fresh token")
-                        new_users += 1
+                        self._newly_discovered_users.append(build_user_info(token))
                     else:
                         logging.debug(f"[USER:{username}] No token available")
                 except Exception as e:
                     _log_api_error(f"get token for {username}", e)
-
-            if new_users > 0:
-                logging.info(f"[PLEX API] Found {new_users} new users not in settings (consider re-running setup)")
         except Exception as e:
             _log_api_error("check for new users", e)
+
+    def get_newly_discovered_users(self) -> List[dict]:
+        """Return list of user info dicts for users found on plex.tv but not in settings.
+
+        These users were discovered during load_user_tokens() and their tokens
+        were loaded, but they need to be added to settings.
+
+        Returns:
+            List of dicts with keys: title, token, is_local, id, uuid, skip_ondeck, skip_watchlist
+        """
+        return self._newly_discovered_users
 
     def load_user_tokens(self, skip_users: Optional[List[str]] = None,
                          settings_users: Optional[List[dict]] = None,
