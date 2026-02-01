@@ -2379,7 +2379,8 @@ class FileFilter:
                 return False
 
     def get_files_to_move_back_to_array(self, current_ondeck_items: Set[str],
-                                       current_watchlist_items: Set[str]) -> Tuple[List[str], List[str]]:
+                                       current_watchlist_items: Set[str],
+                                       files_to_skip: Optional[Set[str]] = None) -> Tuple[List[str], List[str]]:
         """Get files in cache that should be moved back to array because they're no longer needed.
 
         For TV shows: Episodes before the OnDeck episode are considered watched and will be moved back.
@@ -2388,6 +2389,12 @@ class FileFilter:
 
         Retention period applies uniformly to all cached files to protect against
         accidental unwatching or watchlist removal.
+
+        Args:
+            current_ondeck_items: Set of file paths currently on deck.
+            current_watchlist_items: Set of file paths currently on watchlist.
+            files_to_skip: Optional set of file paths to skip (e.g., active sessions).
+                          These files will NOT be marked for removal from exclude list.
         """
         files_to_move_back = []
         cache_paths_to_remove = []
@@ -2442,6 +2449,13 @@ class FileFilter:
                         remaining_str = f"{remaining:.0f}h" if remaining >= 1 else f"{remaining * 60:.0f}m"
                         logging.debug(f"Retention hold ({remaining_str} left): {display_name}")
                         continue
+
+                # Skip files with active sessions - don't remove from exclude list (fixes #50)
+                # The file may not be in ondeck/watchlist API response but is actively being played
+                if files_to_skip and check_path in files_to_skip:
+                    display_name = self._extract_display_name(cache_file)
+                    logging.debug(f"Active session, keeping protected: {display_name}")
+                    continue
 
                 # Move file back to array (use container path for path conversion)
                 if self.path_modifier:

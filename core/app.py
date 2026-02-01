@@ -1841,8 +1841,9 @@ class PlexCacheApp:
             current_watchlist_items = getattr(self, 'watchlist_items', set())
             
             # Get files that should be moved back to array (tracked by exclude file)
+            # Pass files_to_skip to prevent removing active session files from exclude list
             files_to_move_back, cache_paths_to_remove = self.file_filter.get_files_to_move_back_to_array(
-                current_ondeck_items, current_watchlist_items
+                current_ondeck_items, current_watchlist_items, set(self.files_to_skip)
             )
 
             if files_to_move_back:
