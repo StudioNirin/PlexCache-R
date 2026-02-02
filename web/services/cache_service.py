@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 
 from web.config import PROJECT_ROOT, DATA_DIR, CONFIG_DIR, SETTINGS_FILE
-from core.system_utils import get_disk_usage, detect_zfs
+from core.system_utils import get_disk_usage, detect_zfs, get_array_direct_path
 
 
 def _parse_size_bytes(size_str: str) -> int:
@@ -1436,8 +1436,10 @@ class CacheService:
                 # Rename .plexcached back to original
                 os.rename(plexcached_path, array_path)
                 array_confirmed = True
-            elif array_path and os.path.exists(array_path):
-                # Array file already exists (shouldn't happen, but be safe)
+            elif array_path and os.path.exists(get_array_direct_path(array_path)):
+                # Array file truly exists on array (verified via /mnt/user0/, not FUSE)
+                # CRITICAL: Using /mnt/user0/ avoids false positive where /mnt/user/
+                # shows the cache file as if it exists on array
                 array_confirmed = True
             elif os.path.exists(cache_path):
                 # No backup and no array copy - must copy from cache first to prevent data loss

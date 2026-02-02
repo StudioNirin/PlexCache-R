@@ -54,6 +54,28 @@ def resolve_user0_to_disk(user0_path: str) -> Optional[str]:
     return None
 
 
+def get_array_direct_path(user_share_path: str) -> str:
+    """Convert a user share path to array-direct path for existence checks.
+
+    On Unraid, /mnt/user/ is a FUSE virtual filesystem that merges cache + array.
+    When checking if a file exists ONLY on the array (not on cache), we need to
+    use /mnt/user0/ which provides direct access to the array only.
+
+    This is critical for eviction: we must verify a backup truly exists on the
+    array before deleting the cache copy. Using /mnt/user/ would incorrectly
+    return True if the file only exists on cache.
+
+    Args:
+        user_share_path: A path potentially starting with /mnt/user/
+
+    Returns:
+        The /mnt/user0/ equivalent path if input is /mnt/user/, otherwise unchanged.
+    """
+    if user_share_path.startswith('/mnt/user/'):
+        return '/mnt/user0/' + user_share_path[len('/mnt/user/'):]
+    return user_share_path
+
+
 def get_disk_free_space_bytes(path: str) -> int:
     """Get free space in bytes for the filesystem containing the given path.
 

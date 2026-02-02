@@ -17,7 +17,7 @@ import os
 from core import __version__
 from core.config import ConfigManager
 from core.logging_config import LoggingManager, reset_warning_error_flag
-from core.system_utils import SystemDetector, FileUtils, SingleInstanceLock, get_disk_usage
+from core.system_utils import SystemDetector, FileUtils, SingleInstanceLock, get_disk_usage, get_array_direct_path
 from core.plex_api import PlexManager, OnDeckItem
 from core.file_operations import MultiPathModifier, SubtitleFinder, FileFilter, FileMover, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration, get_media_identity, find_matching_plexcached
 
@@ -1655,36 +1655,46 @@ class PlexCacheApp:
                             except OSError as e:
                                 logging.error(f"Failed to copy to array during eviction: {e}. Skipping eviction.")
                                 continue
-                    elif not os.path.exists(array_path):
-                        # No backup exists and no array copy - must copy from cache first
-                        logging.warning(f"No .plexcached backup found for: {os.path.basename(cache_path)}")
-                        if os.path.exists(cache_path):
-                            import shutil
-                            try:
-                                # Ensure array directory exists
-                                os.makedirs(array_dir, exist_ok=True)
-                                shutil.copy2(cache_path, array_path)
-                                logging.info(f"Created array copy before eviction: {os.path.basename(array_path)}")
-                                # Verify copy succeeded
-                                if os.path.exists(array_path):
-                                    cache_size = os.path.getsize(cache_path)
-                                    array_size = os.path.getsize(array_path)
-                                    if cache_size == array_size:
-                                        array_restored = True
+                    else:
+                        # No .plexcached backup found - check if array file truly exists
+                        # CRITICAL: Use /mnt/user0/ (array direct) NOT /mnt/user/ (user share)
+                        # On Unraid's FUSE, /mnt/user/ shows files from cache too, which causes
+                        # false positives - we'd think array has the file when it's only on cache!
+                        array_direct_path = get_array_direct_path(array_path)
+
+                        if not os.path.exists(array_direct_path):
+                            # No backup exists and no array copy - must copy from cache first
+                            logging.warning(f"No .plexcached backup found for: {os.path.basename(cache_path)}")
+                            if os.path.exists(cache_path):
+                                import shutil
+                                try:
+                                    # Ensure array directory exists
+                                    os.makedirs(array_dir, exist_ok=True)
+                                    shutil.copy2(cache_path, array_path)
+                                    logging.info(f"Created array copy before eviction: {os.path.basename(array_path)}")
+                                    # Verify copy succeeded using array-direct path
+                                    if os.path.exists(array_direct_path):
+                                        cache_size = os.path.getsize(cache_path)
+                                        array_size = os.path.getsize(array_direct_path)
+                                        if cache_size == array_size:
+                                            array_restored = True
+                                        else:
+                                            logging.error(f"Size mismatch! Skipping eviction to prevent data loss.")
+                                            os.remove(array_path)
+                                            continue
                                     else:
-                                        logging.error(f"Size mismatch! Skipping eviction to prevent data loss.")
-                                        os.remove(array_path)
+                                        logging.error(f"Copy appeared to succeed but file not found on array. Skipping eviction.")
                                         continue
-                            except OSError as e:
-                                logging.error(f"Failed to copy to array: {e}. Skipping eviction to prevent data loss.")
+                                except OSError as e:
+                                    logging.error(f"Failed to copy to array: {e}. Skipping eviction to prevent data loss.")
+                                    continue
+                            else:
+                                logging.error(f"Cannot evict - no backup and cache file missing: {cache_path}")
                                 continue
                         else:
-                            logging.error(f"Cannot evict - no backup and cache file missing: {cache_path}")
-                            continue
-                    else:
-                        # Array file already exists (shouldn't happen, but be safe)
-                        logging.debug(f"Array file already exists: {array_path}")
-                        array_restored = True
+                            # Array file truly exists on array (verified via /mnt/user0/)
+                            logging.debug(f"Array file exists (verified via array-direct path): {array_path}")
+                            array_restored = True
 
                 # CRITICAL: Only delete cache copy if array copy is confirmed
                 if not array_restored:

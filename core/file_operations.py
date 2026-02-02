@@ -15,7 +15,7 @@ from typing import List, Set, Optional, Tuple, Dict, TYPE_CHECKING, Callable
 import re
 
 from core.logging_config import get_console_lock
-from core.system_utils import resolve_user0_to_disk, get_disk_free_space_bytes, get_disk_number_from_path
+from core.system_utils import resolve_user0_to_disk, get_disk_free_space_bytes, get_disk_number_from_path, get_array_direct_path
 
 if TYPE_CHECKING:
     from core.config import PathMapping
@@ -3727,8 +3727,10 @@ class FileMover:
                 else:
                     # Same size (or cache missing), just rename back (fast)
                     # But first check if array file already exists (redundant backup scenario)
-                    if os.path.isfile(array_file):
-                        # Array file already exists (restored by another process or manual copy)
+                    # CRITICAL: Use /mnt/user0/ (array direct) to avoid FUSE showing cache file
+                    array_direct = get_array_direct_path(array_file)
+                    if os.path.isfile(array_direct):
+                        # Array file truly exists (verified via array-direct path)
                         # Just delete the redundant .plexcached backup
                         operation_type = "Restored"  # Array already has it
                         os.remove(plexcached_file)
@@ -3772,7 +3774,8 @@ class FileMover:
                             return 1
 
                 # Scenario 3: No .plexcached at all - copy to array (preserving ownership)
-                elif not os.path.isfile(array_file):
+                # CRITICAL: Use /mnt/user0/ (array direct) to check if file truly exists on array
+                elif not os.path.isfile(get_array_direct_path(array_file)):
                     operation_type = "Moved"  # Copy operation (no backup)
                     logging.debug(f"No .plexcached found, copying from cache to array: {cache_file}")
                     cache_size = os.path.getsize(cache_file)
@@ -3784,15 +3787,17 @@ class FileMover:
                     logging.debug(f"Copied to array: {array_file}")
 
                     # Verify copy succeeded by comparing file sizes
-                    if os.path.isfile(array_file):
-                        array_size = os.path.getsize(array_file)
+                    # Use array-direct path to confirm file actually landed on array
+                    if os.path.isfile(get_array_direct_path(array_file)):
+                        array_size = os.path.getsize(get_array_direct_path(array_file))
                         if cache_size != array_size:
                             logging.error(f"Size mismatch after copy! Cache: {cache_size}, Array: {array_size}. Keeping cache file.")
                             os.remove(array_file)
                             return 1
 
-            # Delete cache copy only if array file now exists
-            if os.path.isfile(array_file):
+            # Delete cache copy only if array file truly exists on array
+            # CRITICAL: Use /mnt/user0/ to avoid FUSE false positive where cache file appears as array file
+            if os.path.isfile(get_array_direct_path(array_file)):
                 if os.path.isfile(cache_file):
                     os.remove(cache_file)
                     logging.debug(f"Deleted cache file: {cache_file}")
