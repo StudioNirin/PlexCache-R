@@ -3284,13 +3284,17 @@ class FileMover:
 
                     # Collect any remaining results if we stopped early
                     if stopped_early and pending:
-                        # Wait briefly for in-progress tasks to finish
-                        done, still_pending = wait(pending, timeout=0.1)
+                        # Wait for in-progress tasks to finish (they'll stop at next chunk boundary)
+                        # No timeout needed - copies check stop flag every 10MB (~1 sec max)
+                        done, still_pending = wait(pending, timeout=30.0)  # 30s safety timeout
                         for future in done:
                             try:
                                 results.append(future.result())
                             except Exception as e:
                                 results.append(1)
+                        # Any truly stuck tasks get counted as errors
+                        for future in still_pending:
+                            results.append(1)
 
                 errors = [result for result in results if result == 1]
                 partial_successes = [result for result in results if result == 2]
