@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/", response_class=HTMLResponse)
-async def cache_list(
+def cache_list(
     request: Request,
     source: str = Query("all", description="Filter by source"),
     search: str = Query("", description="Search filter"),
@@ -83,7 +83,7 @@ async def cache_list(
 
 
 @router.get("/drive", response_class=HTMLResponse)
-async def cache_drive(request: Request, expiring_within: int = 7):
+def cache_drive(request: Request, expiring_within: int = 7):
     """Cache drive details page
 
     Args:

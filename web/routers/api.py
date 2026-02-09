@@ -77,7 +77,7 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
 
 
 @router.get("/dashboard/stats-content", response_class=HTMLResponse)
-async def dashboard_stats_content(request: Request):
+def dashboard_stats_content(request: Request):
     """Full dashboard stats container for lazy loading"""
     stats, cache_age = _get_dashboard_stats_data(use_cache=True)
 
@@ -92,7 +92,7 @@ async def dashboard_stats_content(request: Request):
 
 
 @router.get("/dashboard/stats", response_class=HTMLResponse)
-async def dashboard_stats(request: Request):
+def dashboard_stats(request: Request):
     """Dashboard stats partial for HTMX polling"""
     stats, _ = _get_dashboard_stats_data(use_cache=True)
 
@@ -106,7 +106,7 @@ async def dashboard_stats(request: Request):
 
 
 @router.get("/cache/files", response_class=HTMLResponse)
-async def cache_files_table(
+def cache_files_table(
     request: Request,
     source: str = "all",
     search: str = "",
@@ -174,7 +174,7 @@ async def cache_files_table(
 
 
 @router.post("/cache/evict/{file_path:path}", response_class=HTMLResponse)
-async def evict_file(request: Request, file_path: str):
+def evict_file(request: Request, file_path: str):
     """Evict a single file from cache"""
     cache_service = get_cache_service()
 
@@ -316,7 +316,7 @@ async def get_schedule_status():
 
 
 @router.get("/cache/storage", response_class=HTMLResponse)
-async def cache_storage_stats(request: Request, expiring_within: int = 7):
+def cache_storage_stats(request: Request, expiring_within: int = 7):
     """Storage stats partial for HTMX polling"""
     # Validate expiring_within to allowed values
     if expiring_within not in [3, 7, 14, 30]:
@@ -334,7 +334,7 @@ async def cache_storage_stats(request: Request, expiring_within: int = 7):
 
 
 @router.get("/cache/priorities-content", response_class=HTMLResponse)
-async def cache_priorities_content(
+def cache_priorities_content(
     request: Request,
     sort: str = "priority",
     dir: str = "desc"
@@ -380,7 +380,7 @@ async def cache_priorities_content(
 
 
 @router.get("/cache/simulate-eviction", response_class=HTMLResponse)
-async def simulate_eviction(request: Request, threshold: int = 95):
+def simulate_eviction(request: Request, threshold: int = 95):
     """Simulate eviction at a given threshold percentage"""
     cache_service = get_cache_service()
 
@@ -438,7 +438,7 @@ async def health_check():
 
 
 @router.get("/status")
-async def detailed_status():
+def detailed_status():
     """
     Detailed status endpoint for monitoring and debugging.
 

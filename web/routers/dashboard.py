@@ -31,7 +31,7 @@ async def dashboard(request: Request):
 
 
 @router.post("/refresh-stats", response_class=HTMLResponse)
-async def refresh_stats(request: Request):
+def refresh_stats(request: Request):
     """Force refresh dashboard stats and return updated container"""
     # Import here to avoid circular dependency
     from web.routers.api import _get_dashboard_stats_data

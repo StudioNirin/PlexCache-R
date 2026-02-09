@@ -166,7 +166,7 @@ async def maintenance_page(request: Request):
 
 
 @router.get("/audit", response_class=HTMLResponse)
-async def run_audit(request: Request, refresh: bool = Query(default=False, description="Force refresh")):
+def run_audit(request: Request, refresh: bool = Query(default=False, description="Force refresh")):
     """Run audit and return HTMX partial with results"""
     results, updated_at = _get_cached_audit_results(force_refresh=refresh)
 
@@ -196,7 +196,7 @@ async def run_audit(request: Request, refresh: bool = Query(default=False, descr
 
 
 @router.get("/health", response_class=HTMLResponse)
-async def health_summary(request: Request):
+def health_summary(request: Request):
     """Get health summary for dashboard widget"""
     service = get_maintenance_service()
     health = service.get_health_summary()
@@ -241,7 +241,7 @@ async def dismiss_maintenance_action():
 # === Action Routes ===
 
 @router.post("/restore-plexcached", response_class=HTMLResponse)
-async def restore_plexcached(
+def restore_plexcached(
     request: Request,
     paths: List[str] = Form(default=[]),
     restore_all: bool = Form(default=False),
@@ -285,7 +285,7 @@ async def restore_plexcached(
 
 
 @router.post("/delete-plexcached", response_class=HTMLResponse)
-async def delete_plexcached(
+def delete_plexcached(
     request: Request,
     paths: List[str] = Form(default=[]),
     delete_all: bool = Form(default=False),
@@ -325,7 +325,7 @@ async def delete_plexcached(
 
 
 @router.post("/fix-with-backup", response_class=HTMLResponse)
-async def fix_with_backup(
+def fix_with_backup(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
@@ -352,7 +352,7 @@ async def fix_with_backup(
 
 
 @router.post("/sync-to-array", response_class=HTMLResponse)
-async def sync_to_array(
+def sync_to_array(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
@@ -379,7 +379,7 @@ async def sync_to_array(
 
 
 @router.post("/protect-with-backup", response_class=HTMLResponse)
-async def protect_with_backup(
+def protect_with_backup(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
@@ -408,7 +408,7 @@ async def protect_with_backup(
 # === Synchronous Action Routes (instant operations) ===
 
 @router.post("/add-to-exclude", response_class=HTMLResponse)
-async def add_to_exclude(
+def add_to_exclude(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
@@ -434,7 +434,7 @@ async def add_to_exclude(
 
 
 @router.post("/clean-exclude", response_class=HTMLResponse)
-async def clean_exclude(
+def clean_exclude(
     request: Request,
     dry_run: bool = Form(default=True)
 ):
@@ -459,7 +459,7 @@ async def clean_exclude(
 
 
 @router.post("/clean-timestamps", response_class=HTMLResponse)
-async def clean_timestamps(
+def clean_timestamps(
     request: Request,
     dry_run: bool = Form(default=True)
 ):
@@ -484,7 +484,7 @@ async def clean_timestamps(
 
 
 @router.post("/fix-timestamps", response_class=HTMLResponse)
-async def fix_timestamps(
+def fix_timestamps(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
@@ -510,7 +510,7 @@ async def fix_timestamps(
 
 
 @router.post("/resolve-duplicate", response_class=HTMLResponse)
-async def resolve_duplicate(
+def resolve_duplicate(
     request: Request,
     cache_path: str = Form(...),
     keep: str = Form(...),  # "cache" or "array"
@@ -539,7 +539,7 @@ async def resolve_duplicate(
 # === Preview Routes (always dry_run) ===
 
 @router.get("/preview/restore-plexcached", response_class=HTMLResponse)
-async def preview_restore_plexcached(request: Request):
+def preview_restore_plexcached(request: Request):
     """Preview what restore-plexcached would do"""
     service = get_maintenance_service()
     result = service.restore_all_plexcached(dry_run=True)
@@ -555,7 +555,7 @@ async def preview_restore_plexcached(request: Request):
 
 
 @router.get("/preview/clean-exclude", response_class=HTMLResponse)
-async def preview_clean_exclude(request: Request):
+def preview_clean_exclude(request: Request):
     """Preview what clean-exclude would do"""
     service = get_maintenance_service()
     result = service.clean_exclude(dry_run=True)
@@ -573,7 +573,7 @@ async def preview_clean_exclude(request: Request):
 
 
 @router.get("/preview/clean-timestamps", response_class=HTMLResponse)
-async def preview_clean_timestamps(request: Request):
+def preview_clean_timestamps(request: Request):
     """Preview what clean-timestamps would do"""
     service = get_maintenance_service()
     result = service.clean_timestamps(dry_run=True)
