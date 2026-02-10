@@ -852,11 +852,6 @@ class ConfigManager:
         """Get the path for the data folder (tracking files)."""
         return Path(self.paths.data_folder)
 
-    def get_mover_exclude_file(self) -> Path:
-        """Get the path for the mover exclude file (stays in root for Unraid)."""
-        script_folder = Path(self.paths.script_folder)
-        return script_folder / "plexcache_mover_files_to_exclude.txt"
-
     def get_cached_files_file(self) -> Path:
         """Get the path for the cached files log."""
         script_folder = Path(self.paths.script_folder)

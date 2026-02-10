@@ -25,7 +25,7 @@ SETTINGS_FILE = os.path.join(PROJECT_ROOT, "plexcache_settings.json")
 # Default paths (will be overwritten if settings file exists)
 CACHE_DIRS = []
 ARRAY_DIRS = []
-EXCLUDE_FILE = os.path.join(PROJECT_ROOT, "plexcache_mover_files_to_exclude.txt")
+EXCLUDE_FILE = os.path.join(PROJECT_ROOT, "plexcache_cached_files.txt")
 TIMESTAMPS_FILE = os.path.join(DATA_DIR, "timestamps.json")
 
 # Legacy file locations (for migration)

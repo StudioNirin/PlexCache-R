@@ -346,7 +346,8 @@ class SettingsService:
         raw = self._load_raw()
         return {
             "max_log_files": raw.get("max_log_files", 24),
-            "keep_error_logs_days": raw.get("keep_error_logs_days", 7)
+            "keep_error_logs_days": raw.get("keep_error_logs_days", 7),
+            "time_format": raw.get("time_format", "24h")
         }
 
     def save_logging_settings(self, settings: Dict[str, Any]) -> bool:
@@ -370,6 +371,12 @@ class SettingsService:
                     raw["keep_error_logs_days"] = keep_error_logs_days
             except (ValueError, TypeError):
                 pass
+
+        # Validate and save time_format
+        if "time_format" in settings:
+            time_format = settings["time_format"]
+            if time_format in ("12h", "24h"):
+                raw["time_format"] = time_format
 
         return self._save_raw(raw)
 

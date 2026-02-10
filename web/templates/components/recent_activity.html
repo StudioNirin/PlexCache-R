@@ -4,10 +4,12 @@
 <tr>
     <td>{{ item.time_display }}</td>
     <td>
-        {% if item.action == 'Cached' %}
+        {% if item.action in ('Cached', 'Protected', 'Fixed') %}
         <span class="badge badge-success">{{ item.action }}</span>
-        {% elif item.action == 'Restored' %}
+        {% elif item.action in ('Restored', 'Moved to Array', 'Restored Backup') %}
         <span class="badge badge-info">{{ item.action }}</span>
+        {% elif item.action == 'Deleted Backup' %}
+        <span class="badge badge-warning">{{ item.action }}</span>
         {% else %}
         <span class="badge badge-muted">{{ item.action }}</span>
         {% endif %}

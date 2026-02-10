@@ -1,6 +1,8 @@
 """Web UI configuration"""
 
+import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
@@ -32,3 +34,30 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Docker image tag - shows badge in sidebar when not "latest"
 IMAGE_TAG = os.environ.get("IMAGE_TAG", "latest")
 templates.env.globals["image_tag"] = IMAGE_TAG
+
+
+def get_time_format() -> str:
+    """Read time_format from settings JSON. Returns '12h' or '24h' (default)."""
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+            fmt = settings.get("time_format", "24h")
+            if fmt in ("12h", "24h"):
+                return fmt
+    except (json.JSONDecodeError, IOError):
+        pass
+    return "24h"
+
+
+def format_time(value, include_seconds=True):
+    """Jinja2 filter: format a datetime based on user's time_format preference."""
+    if not isinstance(value, datetime):
+        return value
+    fmt = get_time_format()
+    if fmt == "12h":
+        return value.strftime("%-I:%M:%S %p") if include_seconds else value.strftime("%-I:%M %p")
+    return value.strftime("%H:%M:%S") if include_seconds else value.strftime("%H:%M")
+
+
+templates.env.filters["format_time"] = format_time

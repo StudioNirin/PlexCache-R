@@ -44,7 +44,7 @@ class CacheService:
 
     def __init__(self):
         # Use CONFIG_DIR for Docker compatibility (/config in Docker, project root otherwise)
-        self.exclude_file = CONFIG_DIR / "plexcache_mover_files_to_exclude.txt"
+        self.exclude_file = CONFIG_DIR / "plexcache_cached_files.txt"
         self.timestamps_file = DATA_DIR / "timestamps.json"
         self.ondeck_file = DATA_DIR / "ondeck_tracker.json"
         self.watchlist_file = DATA_DIR / "watchlist_tracker.json"

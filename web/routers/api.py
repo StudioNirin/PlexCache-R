@@ -66,7 +66,7 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         "next_run": schedule_status.get("next_run_display", "Not scheduled"),
         "next_run_relative": schedule_status.get("next_run_relative"),
         "health_status": health["status"],
-        "health_issues": health["unprotected_count"] + health["orphaned_count"],
+        "health_issues": health["orphaned_count"],
         "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"]
     }
 

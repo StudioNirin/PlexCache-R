@@ -83,37 +83,36 @@
 {% block scripts %}
 <script>
 // Selected items tracking
-let selectedUnprotectedFiles = new Set();
+let selectedUntrackedFiles = new Set();
 let selectedOrphanedBackups = new Set();
-let selectedDownloads = new Set();
 
 // Checkbox selection functions
-function toggleSelectAllUnprotected(checkbox) {
-    const checkboxes = document.querySelectorAll('.unprotected-checkbox');
+function toggleSelectAllUntracked(checkbox) {
+    const checkboxes = document.querySelectorAll('.untracked-checkbox');
     checkboxes.forEach(cb => {
         cb.checked = checkbox.checked;
         if (checkbox.checked) {
-            selectedUnprotectedFiles.add(cb.value);
+            selectedUntrackedFiles.add(cb.value);
         } else {
-            selectedUnprotectedFiles.delete(cb.value);
+            selectedUntrackedFiles.delete(cb.value);
         }
     });
-    updateUnprotectedActions();
+    updateUntrackedActions();
 }
 
-function toggleUnprotectedFile(checkbox) {
+function toggleUntrackedFile(checkbox) {
     if (checkbox.checked) {
-        selectedUnprotectedFiles.add(checkbox.value);
+        selectedUntrackedFiles.add(checkbox.value);
     } else {
-        selectedUnprotectedFiles.delete(checkbox.value);
+        selectedUntrackedFiles.delete(checkbox.value);
     }
-    updateUnprotectedActions();
+    updateUntrackedActions();
 }
 
-function updateUnprotectedActions() {
-    const count = selectedUnprotectedFiles.size;
-    const bulkActions = document.getElementById('unprotected-bulk-actions');
-    const countSpan = document.getElementById('unprotected-selected-count');
+function updateUntrackedActions() {
+    const count = selectedUntrackedFiles.size;
+    const bulkActions = document.getElementById('untracked-bulk-actions');
+    const countSpan = document.getElementById('untracked-selected-count');
 
     if (bulkActions) {
         if (count > 0) {
@@ -291,9 +290,8 @@ function executeAction(action, formData, isDryRun) {
         }
 
         // Reset selections
-        selectedUnprotectedFiles.clear();
+        selectedUntrackedFiles.clear();
         selectedOrphanedBackups.clear();
-        selectedDownloads.clear();
 
         // Scroll to top to see the result alert
         document.getElementById('audit-content').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -436,9 +434,9 @@ function showAlert(type, message) {
 // Reset selection state after HTMX swaps
 document.addEventListener('htmx:afterSwap', function(e) {
     if (e.detail.target.id === 'audit-content') {
-        selectedUnprotectedFiles.clear();
+        selectedUntrackedFiles.clear();
         selectedOrphanedBackups.clear();
-        updateUnprotectedActions();
+        updateUntrackedActions();
         updateOrphanedActions();
     }
 });

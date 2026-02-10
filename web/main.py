@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from web.config import templates, STATIC_DIR, PROJECT_ROOT
+from web.config import templates, STATIC_DIR, PROJECT_ROOT, CONFIG_DIR
 from web.routers import dashboard, cache, settings, operations, logs, api, maintenance, setup
 from web.services import get_scheduler_service, get_settings_service
 from web.services.web_cache import init_web_cache, get_web_cache_service
@@ -27,6 +27,25 @@ def _suppress_noisy_loggers():
     logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
 
+def _migrate_exclude_file():
+    """One-time migration: rename old exclude file to new name."""
+    old_file = CONFIG_DIR / "plexcache_mover_files_to_exclude.txt"
+    new_file = CONFIG_DIR / "plexcache_cached_files.txt"
+
+    if old_file.exists() and not new_file.exists():
+        try:
+            old_file.rename(new_file)
+            logging.info(f"Migrated {old_file} -> {new_file}")
+        except OSError as e:
+            logging.error(f"Failed to migrate exclude file: {e}")
+    elif old_file.exists() and new_file.exists():
+        try:
+            old_file.unlink()
+            logging.info(f"Removed legacy exclude file: {old_file}")
+        except OSError as e:
+            logging.warning(f"Could not remove legacy exclude file: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
@@ -34,6 +53,9 @@ async def lifespan(app: FastAPI):
     _suppress_noisy_loggers()
     print(f"PlexCache-R Web UI starting...")
     print(f"Project root: {PROJECT_ROOT}")
+
+    # Migrate old exclude file name before services start reading it
+    _migrate_exclude_file()
 
     # Ensure static directories exist
     STATIC_DIR.mkdir(parents=True, exist_ok=True)

@@ -802,6 +802,24 @@ class LoggingManager:
             except PermissionError:
                 raise PermissionError(f"{self.logs_folder} not writable, please fix the variable accordingly.")
     
+    def _get_log_datefmt(self) -> str:
+        """Get the log timestamp format based on user's time_format setting."""
+        try:
+            settings_file = self.logs_folder.parent / "plexcache_settings.json"
+            if not settings_file.exists():
+                # Docker: config is at /config/plexcache_settings.json
+                docker_settings = Path("/config/plexcache_settings.json")
+                if docker_settings.exists():
+                    settings_file = docker_settings
+            if settings_file.exists():
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                if settings.get("time_format") == "12h":
+                    return "%-I:%M:%S %p"
+        except (json.JSONDecodeError, IOError):
+            pass
+        return "%H:%M:%S"
+
     def _setup_log_file(self) -> None:
         """Set up the log file with rotation."""
         # Use second-level precision to prevent log mixing when runs happen within same minute
@@ -810,19 +828,22 @@ class LoggingManager:
         self.current_log_file = log_file  # Track for error preservation
         latest_log_file = self.logs_folder / "plexcache_log_latest.log"
 
+        datefmt = self._get_log_datefmt()
+        log_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt=datefmt)
+
         # Configure the rotating file handler
         file_handler = RotatingFileHandler(
             log_file,
             maxBytes=20*1024*1024,
             backupCount=self.max_log_files
         )
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        file_handler.setFormatter(log_format)
         file_handler.addFilter(VerboseMessageFilter())  # Apply filter to handler
         self.logger.addHandler(file_handler)
 
         # Add console handler for stdout output (thread-safe to prevent tqdm interleaving)
         console_handler = ThreadSafeStreamHandler()
-        console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        console_handler.setFormatter(log_format)
         console_handler.addFilter(VerboseMessageFilter())  # Apply filter to handler
         self.logger.addHandler(console_handler)
 

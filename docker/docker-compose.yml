@@ -47,7 +47,7 @@ services:
       #   - plexcache_settings.json (configuration)
       #   - data/ (tracking files)
       #   - logs/ (log files)
-      #   - plexcache_mover_files_to_exclude.txt (mover exclude list)
+      #   - plexcache_cached_files.txt (cached files list)
       - /mnt/user/appdata/plexcache:/config
 
       # Media paths (MUST match host paths exactly)

@@ -56,6 +56,26 @@ function showBannerWarning(message) {
             </button>
         </div>
     </div>
+    {% if maint_status.file_count and maint_status.file_count > 0 %}
+    <div style="width: 100%; margin-top: 0.5rem;">
+        <!-- Progress bar -->
+        <div style="height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
+            <div style="height: 100%; width: {{ maint_status.progress_percent }}%;
+                 background: linear-gradient(90deg, #e5a00d, #cc8a00);
+                 border-radius: 2px; transition: width 0.5s ease;"></div>
+        </div>
+        <!-- Progress text -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.35rem;
+             font-size: 0.8rem; color: rgba(255,255,255,0.5);">
+            <span>{{ maint_status.files_processed }}/{{ maint_status.file_count }} files
+                {%- if maint_status.current_file %} &mdash; {{ maint_status.current_file|truncate(40, True, '...') }}{% endif %}</span>
+            <span style="color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums;">
+                {%- if maint_status.bytes_display %}{{ maint_status.bytes_display }} <span style="color: rgba(255,255,255,0.3);">&middot;</span> {% endif %}
+                {{- maint_status.elapsed_display }}
+                {%- if maint_status.eta_display %} <span style="color: rgba(255,255,255,0.45);">|</span> ~{{ maint_status.eta_display }} left{% endif %}</span>
+        </div>
+    </div>
+    {% endif %}
     <!-- Warning row - collapsed by default, expanded by showBannerWarning() -->
     <div id="banner-warning" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; max-height: 0; max-width: 0; opacity: 0; overflow: hidden; padding-top: 0; margin-top: 0; border-top: 1px solid transparent; transition: max-height 0.35s ease-out, max-width 0.4s ease-out, opacity 0.3s ease-out, padding-top 0.35s ease-out, margin-top 0.35s ease-out, border-color 0.3s ease-out;">
         <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>

@@ -63,14 +63,6 @@
     </div>
 
     <div class="app-container">
-        <!-- Top right controls (theme toggle) - fixed position -->
-        <div class="top-controls">
-            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
-                <i data-lucide="sun" class="icon-sun"></i>
-                <i data-lucide="moon" class="icon-moon"></i>
-            </button>
-        </div>
-
         <!-- Sidebar -->
         <nav class="sidebar">
             <div class="sidebar-brand">
@@ -128,6 +120,14 @@
         <!-- Main Content -->
         <main class="main-content">
             <div class="content-wrapper">
+                <!-- Theme toggle - positioned top-right of content area -->
+                <div class="top-controls">
+                    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                        <i data-lucide="sun" class="icon-sun"></i>
+                        <i data-lucide="moon" class="icon-moon"></i>
+                    </button>
+                </div>
+
                 <!-- Alert container for toast notifications -->
                 <div id="alert-container"></div>
 

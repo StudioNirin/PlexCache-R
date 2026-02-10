@@ -28,7 +28,7 @@
             Tracking Health
         </div>
         {% if results.health_status == 'critical' %}
-        <div class="stat-value" style="color: var(--danger);">{{ results.critical_unprotected|length + results.orphaned_plexcached|length }}</div>
+        <div class="stat-value" style="color: var(--danger);">{{ results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'orphaned')|list|length }}</div>
         <div class="stat-label">critical issues</div>
         {% elif results.health_status == 'warnings' %}
         <div class="stat-value" style="color: var(--warning);">{{ results.stale_exclude_entries|length + results.stale_timestamp_entries|length }}</div>
@@ -39,26 +39,17 @@
         {% endif %}
     </div>
 
-    <div class="stat-card {% if results.critical_unprotected|length > 20 %}stat-card-danger{% elif results.critical_unprotected|length > 0 %}stat-card-warning{% else %}stat-card-success{% endif %}">
+    <div class="stat-card {% if results.unprotected_files|length == 0 %}stat-card-success{% endif %}">
         <div class="stat-card-header">
-            {% if results.critical_unprotected|length == 0 %}
+            {% if results.unprotected_files|length == 0 %}
             <i data-lucide="shield-check"></i>
             {% else %}
-            <i data-lucide="shield-off"></i>
+            <i data-lucide="eye"></i>
             {% endif %}
-            Unprotected
+            Untracked
         </div>
-        <div class="stat-value">{{ results.critical_unprotected|length }}</div>
-        <div class="stat-label">{% if results.critical_unprotected|length == 0 %}all protected{% else %}need attention{% endif %}</div>
-    </div>
-
-    <div class="stat-card">
-        <div class="stat-card-header">
-            <i data-lucide="download"></i>
-            New Downloads
-        </div>
-        <div class="stat-value">{{ results.new_downloads|length }}</div>
-        <div class="stat-label">recent files</div>
+        <div class="stat-value">{{ results.unprotected_files|length }}</div>
+        <div class="stat-label">{% if results.unprotected_files|length == 0 %}all tracked{% else %}not managed{% endif %}</div>
     </div>
 
     <div class="stat-card {% if results.orphaned_plexcached|length > 20 %}stat-card-danger{% elif results.orphaned_plexcached|length > 0 %}stat-card-warning{% else %}stat-card-success{% endif %}">
@@ -76,11 +67,11 @@
 
     <div class="stat-card">
         <div class="stat-card-header">
-            <i data-lucide="database"></i>
-            Cache Files
+            <i data-lucide="shield-check"></i>
+            Protected
         </div>
-        <div class="stat-value">{{ results.cache_file_count }}</div>
-        <div class="stat-label">{{ results.exclude_entry_count }} protected</div>
+        <div class="stat-value">{{ results.exclude_entry_count }}</div>
+        <div class="stat-label">of {{ results.cache_file_count }} on cache</div>
     </div>
 </div>
 
@@ -104,128 +95,53 @@
 </div>
 {% endif %}
 
-<!-- New Downloads Section (Informational - not critical) -->
-{% if results.new_downloads %}
+<!-- Untracked Files Section -->
+{% if results.unprotected_files %}
 <div class="card mb-2">
     <div class="card-header">
-        <i data-lucide="download"></i>
-        <h2>New Downloads ({{ results.new_downloads|length }})</h2>
+        <i data-lucide="eye"></i>
+        <h2>Untracked Files ({{ results.unprotected_files|length }})</h2>
     </div>
     <div class="card-body" style="padding: 0.75rem;">
         <p class="text-muted" style="margin: 0 0 0.75rem 0;">
-            These files were recently added to cache (likely by Radarr/Sonarr). Choose what to do with them:
-            {% if is_unraid %}
-            <span style="display: block; margin-top: 0.25rem; font-size: 0.85em; opacity: 0.8;">
-                <i data-lucide="info" style="width: 12px; height: 12px; vertical-align: middle;"></i>
-                Without action, the Unraid mover will eventually move these to the array.
-            </span>
-            {% endif %}
+            These files are on cache but not managed by PlexCache. The Unraid mover will handle them normally. Use the actions below if you want PlexCache to manage them:
         </p>
         <!-- Bulk Actions -->
-        <div id="downloads-bulk-actions" class="flex gap-1 mb-1" style="display: none;">
-            <span class="text-muted">Selected: <strong id="downloads-selected-count">0</strong></span>
-            <button class="btn btn-sm btn-success" onclick="keepOnCacheSelected('downloads')">
+        <div id="untracked-bulk-actions" class="flex gap-1 mb-1" style="display: none;">
+            <span class="text-muted">Selected: <strong id="untracked-selected-count">0</strong></span>
+            <button class="btn btn-sm btn-success" onclick="keepOnCacheSelected()">
                 <i data-lucide="hard-drive"></i> Keep on Cache
             </button>
-            <button class="btn btn-sm btn-secondary" onclick="moveToArraySelected('downloads')">
+            <button class="btn btn-sm btn-secondary" onclick="moveToArraySelected()">
                 <i data-lucide="database"></i> Move to Array
             </button>
         </div>
     </div>
     <div class="card-body" style="padding: 0;">
         <div class="table-container" style="max-height: 400px; overflow-y: auto;">
-            <table id="downloads-table">
+            <table id="untracked-table">
                 <thead>
                     <tr>
                         <th style="width: 40px;">
-                            <input type="checkbox" onclick="toggleSelectAllDownloads(this)" title="Select all">
+                            <input type="checkbox" onclick="toggleSelectAllUntracked(this)" title="Select all">
                         </th>
-                        <th class="sortable" data-sort="filename" data-table="downloads" onclick="sortTable('downloads', 'filename')">
+                        <th class="sortable" data-sort="filename" data-table="untracked" onclick="sortTable('untracked', 'filename')">
                             File <span class="sort-icon"><i data-lucide="chevron-up"></i></span>
                         </th>
-                        <th class="sortable" data-sort="size" data-table="downloads" onclick="sortTable('downloads', 'size')">
+                        <th class="sortable" data-sort="size" data-table="untracked" onclick="sortTable('untracked', 'size')">
                             Size <span class="sort-icon"></span>
                         </th>
-                        <th class="sortable" data-sort="age" data-table="downloads" onclick="sortTable('downloads', 'age')">
-                            Age <span class="sort-icon"></span>
-                        </th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for file in results.new_downloads %}
-                    <tr data-filename="{{ file.filename|lower }}" data-size="{{ file.size }}" data-age="{{ file.age_days }}" data-invalid-ts="{{ file.has_invalid_timestamp|lower }}">
-                        <td>
-                            <input type="checkbox" class="downloads-checkbox" value="{{ file.cache_path }}" onchange="toggleDownloadFile(this)" data-invalid-ts="{{ file.has_invalid_timestamp|lower }}">
-                        </td>
-                        <td title="{{ file.cache_path }}" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                            {{ file.filename }}
-                        </td>
-                        <td class="text-muted">{{ file.size_display }}</td>
-                        <td class="text-muted">
-                            {% if file.has_invalid_timestamp %}
-                            <span class="badge badge-warning">Bad date</span>
-                            {% elif file.age_days >= 999 %}
-                            Unknown
-                            {% else %}
-                            {{ "%.1f"|format(file.age_days) }}d
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- Unprotected Files Section (Critical - need attention) -->
-{% if results.critical_unprotected %}
-<div class="card mb-2">
-    <div class="card-header" style="background: var(--danger-bg);">
-        <i data-lucide="shield-off"></i>
-        <h2>Unprotected Files ({{ results.critical_unprotected|length }})</h2>
-    </div>
-    <div class="card-body" style="padding: 0.75rem; background: var(--danger-bg);">
-        <p class="text-muted" style="margin: 0 0 0.75rem 0;">
-            These files have been on cache for a while but are NOT in the exclude list. The Unraid mover will move them off cache. Choose what to do with them:
-        </p>
-        <!-- Bulk Actions -->
-        <div id="unprotected-bulk-actions" class="flex gap-1 mb-1" style="display: none;">
-            <span class="text-muted">Selected: <strong id="unprotected-selected-count">0</strong></span>
-            <button class="btn btn-sm btn-success" onclick="keepOnCacheSelected('unprotected')">
-                <i data-lucide="hard-drive"></i> Keep on Cache
-            </button>
-            <button class="btn btn-sm btn-secondary" onclick="moveToArraySelected('unprotected')">
-                <i data-lucide="database"></i> Move to Array
-            </button>
-        </div>
-    </div>
-    <div class="card-body" style="padding: 0;">
-        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
-            <table id="unprotected-table">
-                <thead>
-                    <tr>
-                        <th style="width: 40px;">
-                            <input type="checkbox" onclick="toggleSelectAllUnprotected(this)" title="Select all">
-                        </th>
-                        <th class="sortable" data-sort="filename" data-table="unprotected" onclick="sortTable('unprotected', 'filename')">
-                            File <span class="sort-icon"><i data-lucide="chevron-up"></i></span>
-                        </th>
-                        <th class="sortable" data-sort="size" data-table="unprotected" onclick="sortTable('unprotected', 'size')">
-                            Size <span class="sort-icon"></span>
-                        </th>
-                        <th class="sortable" data-sort="age" data-table="unprotected" onclick="sortTable('unprotected', 'age')">
+                        <th class="sortable" data-sort="age" data-table="untracked" onclick="sortTable('untracked', 'age')">
                             Age <span class="sort-icon"></span>
                         </th>
                         <th>Array Status</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for file in results.critical_unprotected %}
+                    {% for file in results.unprotected_files %}
                     <tr data-filename="{{ file.filename|lower }}" data-size="{{ file.size }}" data-age="{{ file.age_days }}" data-has-backup="{{ file.has_plexcached_backup|lower }}" data-has-dup="{{ file.has_array_duplicate|lower }}">
                         <td>
-                            <input type="checkbox" class="unprotected-checkbox" value="{{ file.cache_path }}" onchange="toggleUnprotectedFile(this)" data-has-backup="{{ file.has_plexcached_backup|lower }}" data-has-dup="{{ file.has_array_duplicate|lower }}">
+                            <input type="checkbox" class="untracked-checkbox" value="{{ file.cache_path }}" onchange="toggleUntrackedFile(this)" data-has-backup="{{ file.has_plexcached_backup|lower }}" data-has-dup="{{ file.has_array_duplicate|lower }}">
                         </td>
                         <td title="{{ file.cache_path }}" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                             {{ file.filename }}
@@ -557,8 +473,7 @@ th.sortable .sort-icon i {
 <script>
 // Table sorting state
 const sortState = {
-    downloads: { column: 'filename', direction: 'asc' },
-    unprotected: { column: 'filename', direction: 'asc' },
+    untracked: { column: 'filename', direction: 'asc' },
     orphaned: { column: 'filename', direction: 'asc' }
 };
 
@@ -625,58 +540,19 @@ function updateSortIcons(tableId, column, direction) {
     }
 }
 
-// Downloads selection (selectedDownloads declared in parent template)
-function toggleSelectAllDownloads(checkbox) {
-    const checkboxes = document.querySelectorAll('.downloads-checkbox');
-    checkboxes.forEach(cb => {
-        cb.checked = checkbox.checked;
-        if (checkbox.checked) {
-            selectedDownloads.add(cb.value);
-        } else {
-            selectedDownloads.delete(cb.value);
-        }
-    });
-    updateDownloadsActions();
-}
-
-function toggleDownloadFile(checkbox) {
-    if (checkbox.checked) {
-        selectedDownloads.add(checkbox.value);
-    } else {
-        selectedDownloads.delete(checkbox.value);
-    }
-    updateDownloadsActions();
-}
-
-function updateDownloadsActions() {
-    const count = selectedDownloads.size;
-    const bulkActions = document.getElementById('downloads-bulk-actions');
-    const countSpan = document.getElementById('downloads-selected-count');
-
-    if (bulkActions) {
-        if (count > 0) {
-            bulkActions.style.display = 'flex';
-            countSpan.textContent = count;
-        } else {
-            bulkActions.style.display = 'none';
-        }
-    }
-}
-
 // Outcome-based actions - Keep on Cache
-function keepOnCacheSelected(tableType) {
-    const selectedSet = tableType === 'downloads' ? selectedDownloads : selectedUnprotectedFiles;
-    if (selectedSet.size === 0) return;
+function keepOnCacheSelected() {
+    if (selectedUntrackedFiles.size === 0) return;
 
-    const count = selectedSet.size;
+    const count = selectedUntrackedFiles.size;
     const formData = new FormData();
-    selectedSet.forEach(path => formData.append('paths', path));
+    selectedUntrackedFiles.forEach(path => formData.append('paths', path));
 
     // Build file list for display
-    const fileList = Array.from(selectedSet).slice(0, 5).map(path =>
+    const fileList = Array.from(selectedUntrackedFiles).slice(0, 5).map(path =>
         `<li style="font-size: 0.9em; color: var(--text-muted);">${path.split('/').pop()}</li>`
     ).join('');
-    const moreFiles = selectedSet.size > 5 ? `<li style="font-size: 0.9em; color: var(--text-muted);">...and ${selectedSet.size - 5} more</li>` : '';
+    const moreFiles = selectedUntrackedFiles.size > 5 ? `<li style="font-size: 0.9em; color: var(--text-muted);">...and ${selectedUntrackedFiles.size - 5} more</li>` : '';
 
     const message = `
         <div class="confirm-section">
@@ -709,37 +585,31 @@ function keepOnCacheSelected(tableType) {
 }
 
 // Outcome-based actions - Move to Array
-function moveToArraySelected(tableType) {
-    const selectedSet = tableType === 'downloads' ? selectedDownloads : selectedUnprotectedFiles;
-    if (selectedSet.size === 0) return;
+function moveToArraySelected() {
+    if (selectedUntrackedFiles.size === 0) return;
 
-    const count = selectedSet.size;
+    const count = selectedUntrackedFiles.size;
 
-    // For unprotected files, check if any have backups (which changes the operation)
+    // Check if any have backups (which changes the operation)
     let hasBackupCount = 0;
     let noCopyCount = 0;
 
-    if (tableType === 'unprotected') {
-        document.querySelectorAll('.unprotected-checkbox:checked').forEach(cb => {
-            if (cb.dataset.hasBackup === 'true' || cb.dataset.hasDup === 'true') {
-                hasBackupCount++;
-            } else {
-                noCopyCount++;
-            }
-        });
-    } else {
-        // New downloads never have backups
-        noCopyCount = count;
-    }
+    document.querySelectorAll('.untracked-checkbox:checked').forEach(cb => {
+        if (cb.dataset.hasBackup === 'true' || cb.dataset.hasDup === 'true') {
+            hasBackupCount++;
+        } else {
+            noCopyCount++;
+        }
+    });
 
     const formData = new FormData();
-    selectedSet.forEach(path => formData.append('paths', path));
+    selectedUntrackedFiles.forEach(path => formData.append('paths', path));
 
     // Build file list for display
-    const fileList = Array.from(selectedSet).slice(0, 5).map(path =>
+    const fileList = Array.from(selectedUntrackedFiles).slice(0, 5).map(path =>
         `<li style="font-size: 0.9em; color: var(--text-muted);">${path.split('/').pop()}</li>`
     ).join('');
-    const moreFiles = selectedSet.size > 5 ? `<li style="font-size: 0.9em; color: var(--text-muted);">...and ${selectedSet.size - 5} more</li>` : '';
+    const moreFiles = selectedUntrackedFiles.size > 5 ? `<li style="font-size: 0.9em; color: var(--text-muted);">...and ${selectedUntrackedFiles.size - 5} more</li>` : '';
 
     // Build explanation based on file types
     let whatWillHappen = '';

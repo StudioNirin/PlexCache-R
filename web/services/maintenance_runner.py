@@ -1,6 +1,7 @@
 """Maintenance runner service - runs heavy maintenance actions in a background thread"""
 
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -11,6 +12,31 @@ from dataclasses import dataclass, field
 from web.services.maintenance_service import ActionResult
 
 logger = logging.getLogger(__name__)
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds into human-readable duration like '1m 23s' or '45s'"""
+    seconds = max(0, seconds)
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours = int(minutes // 60)
+    mins = minutes % 60
+    return f"{hours}h {mins:02d}m"
+
+
+def _format_bytes(num_bytes: int) -> str:
+    """Format bytes into human-readable string like '2.1 GB' or '450 MB'"""
+    size = float(num_bytes)
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024 or unit == 'TB':
+            return f"{size:.1f} {unit}" if unit != 'B' else f"{int(size)} B"
+        size /= 1024
+    return f"{size:.1f} TB"
+
 
 # Actions that should run asynchronously (heavy I/O)
 ASYNC_ACTIONS = {
@@ -51,6 +77,12 @@ class MaintenanceResult:
     action_result: Optional[ActionResult] = None
     error_message: Optional[str] = None
     file_count: int = 0
+    files_processed: int = 0       # Count of completed files
+    current_file: str = ""         # Basename of file currently being processed
+    current_file_index: int = 0    # 1-based index (0 = not started)
+    bytes_total: int = 0           # Total bytes of current file being copied
+    bytes_copied: int = 0          # Bytes copied so far for current file
+    copy_start_time: Optional[float] = None  # time.time() when current copy began
 
 
 class MaintenanceRunner:
@@ -139,6 +171,31 @@ class MaintenanceRunner:
         # Inject stop_check into kwargs so service methods can check for stop
         method_kwargs["stop_check"] = lambda: self._stop_requested
 
+        # Inject progress_callback so service methods can report per-file progress
+        def _progress_callback(current_index: int, total: int, filename: str):
+            with self._lock:
+                if self._result:
+                    self._result.current_file_index = current_index
+                    self._result.current_file = filename
+                    self._result.files_processed = current_index - 1  # previous file is done
+                    # Reset byte progress for new file
+                    self._result.bytes_total = 0
+                    self._result.bytes_copied = 0
+                    self._result.copy_start_time = None
+
+        method_kwargs["progress_callback"] = _progress_callback
+
+        # Inject bytes_progress_callback for chunked copy progress
+        def _bytes_callback(bytes_copied: int, bytes_total: int):
+            with self._lock:
+                if self._result:
+                    if bytes_copied == 0:
+                        self._result.copy_start_time = time.time()
+                    self._result.bytes_copied = bytes_copied
+                    self._result.bytes_total = bytes_total
+
+        method_kwargs["bytes_progress_callback"] = _bytes_callback
+
         self._thread = threading.Thread(
             target=self._run_action,
             args=(action_name, service_method, method_args, method_kwargs, on_complete),
@@ -172,6 +229,50 @@ class MaintenanceRunner:
                 if self._result:
                     self._result.state = MaintenanceState.IDLE
 
+    # Maps action names to activity feed display strings
+    ACTION_ACTIVITY_LABELS = {
+        "protect-with-backup": "Protected",
+        "sync-to-array": "Moved to Array",
+        "fix-with-backup": "Fixed",
+        "restore-plexcached": "Restored Backup",
+        "delete-plexcached": "Deleted Backup",
+    }
+
+    def _record_maintenance_activity(self, action_name: str, action_result: ActionResult):
+        """Record maintenance file operations to the shared activity feed."""
+        if not action_result or not action_result.affected_paths:
+            return
+
+        label = self.ACTION_ACTIVITY_LABELS.get(action_name)
+        if not label:
+            return
+
+        from web.services.operation_runner import FileActivity, load_activity, save_activity, MAX_RECENT_ACTIVITY
+
+        now = datetime.now()
+        new_entries = []
+
+        for path in action_result.affected_paths:
+            filename = os.path.basename(path)
+            # Try to get file size (file may be gone after delete/move)
+            try:
+                size_bytes = os.path.getsize(path)
+            except OSError:
+                size_bytes = 0
+
+            new_entries.append(FileActivity(
+                timestamp=now,
+                action=label,
+                filename=filename,
+                size_bytes=size_bytes,
+            ))
+
+        # Load existing, prepend new, cap, save
+        activities = load_activity()
+        activities = new_entries + activities
+        activities = activities[:MAX_RECENT_ACTIVITY]
+        save_activity(activities)
+
     def _run_action(
         self,
         action_name: str,
@@ -193,6 +294,13 @@ class MaintenanceRunner:
             else:
                 logger.info(f"Maintenance action completed: {action_name}")
 
+            # Record successful file operations to the activity feed
+            if action_result and action_result.affected_paths:
+                try:
+                    self._record_maintenance_activity(action_name, action_result)
+                except Exception as e:
+                    logger.error(f"Failed to record maintenance activity: {e}")
+
         except Exception as e:
             error_message = str(e)
             logger.exception(f"Maintenance action failed: {action_name}")
@@ -204,6 +312,15 @@ class MaintenanceRunner:
                 self._result.completed_at = datetime.now()
                 self._result.duration_seconds = duration
                 self._result.action_result = action_result
+
+                # Clear progress fields on completion
+                if not self._stop_requested:
+                    self._result.files_processed = self._result.file_count
+                self._result.current_file = ""
+                self._result.current_file_index = 0
+                self._result.bytes_total = 0
+                self._result.bytes_copied = 0
+                self._result.copy_start_time = None
 
                 if error_message:
                     self._result.state = MaintenanceState.FAILED
@@ -240,7 +357,60 @@ class MaintenanceRunner:
             "duration_seconds": round(result.duration_seconds, 1),
             "file_count": result.file_count,
             "error_message": result.error_message,
+            "files_processed": result.files_processed,
+            "current_file": result.current_file,
+            "current_file_index": result.current_file_index,
         }
+
+        # Elapsed time
+        elapsed = 0
+        if result.started_at:
+            if result.completed_at:
+                elapsed = result.duration_seconds
+            else:
+                elapsed = (datetime.now() - result.started_at).total_seconds()
+        status["elapsed_display"] = _format_duration(elapsed)
+
+        # Progress percent, bytes display, and ETA (running only)
+        if result.file_count > 0 and result.state == MaintenanceState.RUNNING:
+            # Blended progress: completed files + fractional current file from bytes
+            file_fraction = 0
+            if result.bytes_total > 0:
+                file_fraction = result.bytes_copied / result.bytes_total
+            overall = (result.files_processed + file_fraction) / result.file_count
+            status["progress_percent"] = min(int(overall * 100), 100)
+
+            # Bytes display (only while copying)
+            if result.bytes_total > 0:
+                status["bytes_display"] = f"{_format_bytes(result.bytes_copied)} / {_format_bytes(result.bytes_total)}"
+            else:
+                status["bytes_display"] = ""
+
+            # ETA from copy byte rate when actively copying
+            if result.bytes_total > 0 and result.bytes_copied > 0 and result.copy_start_time:
+                copy_elapsed = time.time() - result.copy_start_time
+                if copy_elapsed > 0:
+                    rate = result.bytes_copied / copy_elapsed
+                    current_remaining = (result.bytes_total - result.bytes_copied) / rate
+                    # Estimate remaining files from average completed-file time
+                    future_files = result.file_count - result.files_processed - 1
+                    future_time = 0
+                    if future_files > 0 and result.files_processed > 0:
+                        future_time = future_files * (elapsed / result.files_processed)
+                    status["eta_display"] = _format_duration(current_remaining + future_time)
+                else:
+                    status["eta_display"] = ""
+            elif result.files_processed > 0 and elapsed > 0:
+                # Fallback: file-level average (for non-copy operations like rename/delete)
+                avg = elapsed / result.files_processed
+                remaining = result.file_count - result.files_processed
+                status["eta_display"] = _format_duration(avg * remaining)
+            else:
+                status["eta_display"] = ""
+        else:
+            status["progress_percent"] = 100 if result.state != MaintenanceState.RUNNING else 0
+            status["bytes_display"] = ""
+            status["eta_display"] = ""
 
         # Add action result details for completed state
         if result.action_result:

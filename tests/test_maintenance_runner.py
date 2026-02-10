@@ -18,7 +18,7 @@ from web.services.maintenance_service import ActionResult
 def _start(runner, action_name="protect-with-backup", service_method=None, **kwargs):
     """Start an action with OperationRunner mocked as idle."""
     if service_method is None:
-        service_method = lambda stop_check=None: ActionResult(success=True, message="ok")
+        service_method = lambda **kwargs: ActionResult(success=True, message="ok")
 
     # The local import in start_action resolves get_operation_runner from the source module
     mock_op = MagicMock()
@@ -43,7 +43,7 @@ class TestMaintenanceRunnerStates:
         runner = MaintenanceRunner()
         hold = threading.Event()
 
-        def slow(stop_check=None):
+        def slow(**kwargs):
             hold.wait(timeout=5)
             return ActionResult(success=True, message="ok")
 
@@ -60,7 +60,7 @@ class TestMaintenanceRunnerStates:
         runner = MaintenanceRunner()
         result = ActionResult(success=True, message="Protected 3 files", affected_count=3)
 
-        _start(runner, service_method=lambda stop_check=None: result, file_count=3)
+        _start(runner, service_method=lambda **kwargs: result, file_count=3)
         runner._thread.join(timeout=2)
 
         assert runner.state == MaintenanceState.COMPLETED
@@ -71,7 +71,7 @@ class TestMaintenanceRunnerStates:
     def test_failed_state_on_exception(self):
         runner = MaintenanceRunner()
 
-        def failing_method(stop_check=None):
+        def failing_method(**kwargs):
             raise IOError("Disk full")
 
         _start(runner, action_name="sync-to-array", service_method=failing_method, file_count=1)
@@ -92,7 +92,7 @@ class TestMaintenanceRunnerStates:
     def test_dismiss_resets_failed_to_idle(self):
         runner = MaintenanceRunner()
 
-        def failing(stop_check=None):
+        def failing(**kwargs):
             raise RuntimeError("boom")
 
         _start(runner, action_name="sync-to-array", service_method=failing)
@@ -123,7 +123,7 @@ class TestMaintenanceRunnerMutualExclusion:
         with patch("web.services.operation_runner.get_operation_runner", return_value=mock_op):
             started = runner.start_action(
                 action_name="protect-with-backup",
-                service_method=lambda stop_check=None: ActionResult(success=True, message="ok"),
+                service_method=lambda **kwargs: ActionResult(success=True, message="ok"),
             )
 
         assert started is False
@@ -134,7 +134,7 @@ class TestMaintenanceRunnerMutualExclusion:
 
         hold = threading.Event()
 
-        def slow_action(stop_check=None):
+        def slow_action(**kwargs):
             hold.wait(timeout=5)
             return ActionResult(success=True, message="ok")
 
@@ -164,7 +164,7 @@ class TestMaintenanceRunnerStop:
         runner = MaintenanceRunner()
         hold = threading.Event()
 
-        def slow_action(stop_check=None):
+        def slow_action(**kwargs):
             hold.wait(timeout=5)
             return ActionResult(success=True, message="ok")
 
@@ -182,7 +182,8 @@ class TestMaintenanceRunnerStop:
         runner = MaintenanceRunner()
         stop_check_values = []
 
-        def action_with_stop_check(stop_check=None):
+        def action_with_stop_check(**kwargs):
+            stop_check = kwargs['stop_check']
             stop_check_values.append(stop_check())
             time.sleep(0.1)
             stop_check_values.append(stop_check())
@@ -216,7 +217,7 @@ class TestMaintenanceRunnerStatusDict:
         runner = MaintenanceRunner()
         hold = threading.Event()
 
-        def slow(stop_check=None):
+        def slow(**kwargs):
             hold.wait(timeout=5)
             return ActionResult(success=True, message="ok")
 
@@ -236,7 +237,7 @@ class TestMaintenanceRunnerStatusDict:
         runner = MaintenanceRunner()
         result = ActionResult(success=True, message="Moved 2 file(s) to array", affected_count=2, errors=[])
 
-        _start(runner, action_name="sync-to-array", service_method=lambda stop_check=None: result, file_count=2)
+        _start(runner, action_name="sync-to-array", service_method=lambda **kwargs: result, file_count=2)
         runner._thread.join(timeout=2)
 
         status = runner.get_status_dict()
@@ -261,7 +262,7 @@ class TestMaintenanceRunnerOnComplete:
         _start(
             runner,
             action_name="delete-plexcached",
-            service_method=lambda stop_check=None: ActionResult(success=True, message="ok"),
+            service_method=lambda **kwargs: ActionResult(success=True, message="ok"),
             on_complete=callback,
         )
         runner._thread.join(timeout=2)
@@ -271,7 +272,7 @@ class TestMaintenanceRunnerOnComplete:
         runner = MaintenanceRunner()
         callback = MagicMock()
 
-        def failing(stop_check=None):
+        def failing(**kwargs):
             raise RuntimeError("fail")
 
         _start(runner, action_name="sync-to-array", service_method=failing, on_complete=callback)

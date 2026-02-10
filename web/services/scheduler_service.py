@@ -11,7 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE
+from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE, get_time_format
 
 logger = logging.getLogger(__name__)
 
@@ -295,19 +295,28 @@ class SchedulerService:
             "next_run": self._next_run.isoformat() if self._next_run else None,
         }
 
-    def _format_time_12h(self, time_str: str) -> str:
-        """Convert HH:MM to 12-hour format with AM/PM"""
+    def _format_time_display(self, time_str: str) -> str:
+        """Convert HH:MM to display format based on user's time_format setting."""
         try:
             hour, minute = map(int, time_str.split(":"))
-            period = "AM" if hour < 12 else "PM"
-            hour_12 = hour % 12
-            if hour_12 == 0:
-                hour_12 = 12
-            if minute == 0:
-                return f"{hour_12} {period}"
-            return f"{hour_12}:{minute:02d} {period}"
+            if get_time_format() == "12h":
+                period = "AM" if hour < 12 else "PM"
+                hour_12 = hour % 12
+                if hour_12 == 0:
+                    hour_12 = 12
+                if minute == 0:
+                    return f"{hour_12} {period}"
+                return f"{hour_12}:{minute:02d} {period}"
+            else:
+                return f"{hour}:{minute:02d}"
         except (ValueError, AttributeError):
             return time_str
+
+    def _datetime_display_fmt(self) -> str:
+        """Return strftime format string for date+time based on user's time_format setting."""
+        if get_time_format() == "12h":
+            return "%Y-%m-%d %-I:%M %p"
+        return "%Y-%m-%d %H:%M"
 
     def _format_relative_time(self, target: datetime) -> str:
         """Format a future datetime as relative time (e.g., 'in 12m', 'in 2h 30m')"""
@@ -339,7 +348,7 @@ class SchedulerService:
         # Format schedule description
         if config.schedule_type == "interval":
             start_time = config.interval_start_time or "00:00"
-            start_time_display = self._format_time_12h(start_time)
+            start_time_display = self._format_time_display(start_time)
             schedule_desc = f"Every {config.interval_hours}h from {start_time_display}"
         else:
             schedule_desc = f"Cron: {config.cron_expression}"
@@ -376,10 +385,10 @@ class SchedulerService:
             "dry_run": config.dry_run,
             "verbose": config.verbose,
             "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
-            "next_run_display": job.next_run_time.strftime("%Y-%m-%d %I:%M %p") if job and job.next_run_time else "Not scheduled",
+            "next_run_display": job.next_run_time.strftime(self._datetime_display_fmt()) if job and job.next_run_time else "Not scheduled",
             "next_run_relative": next_run_relative,
             "last_run": last_run_dt.isoformat() if last_run_dt else None,
-            "last_run_display": last_run_dt.strftime("%Y-%m-%d %I:%M %p") if last_run_dt else "Never",
+            "last_run_display": last_run_dt.strftime(self._datetime_display_fmt()) if last_run_dt else "Never",
         }
 
     def validate_cron(self, expression: str) -> Dict[str, Any]:
@@ -390,10 +399,11 @@ class SchedulerService:
             next_runs = []
             from datetime import timedelta
             base = datetime.now()
+            display_fmt = self._datetime_display_fmt()
             for i in range(3):
                 next_time = trigger.get_next_fire_time(None, base)
                 if next_time:
-                    next_runs.append(next_time.strftime("%Y-%m-%d %I:%M %p"))
+                    next_runs.append(next_time.strftime(display_fmt))
                     base = next_time + timedelta(seconds=1)
 
             return {
