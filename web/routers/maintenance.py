@@ -6,9 +6,12 @@ from typing import List, Optional
 from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from web.config import templates
+from web.config import templates, get_time_format
 from web.services.maintenance_service import get_maintenance_service
-from web.services.maintenance_runner import get_maintenance_runner, ASYNC_ACTIONS
+from web.services.maintenance_runner import (
+    get_maintenance_runner, ASYNC_ACTIONS, ACTION_HISTORY_LABELS,
+    MaintenanceHistoryEntry, get_maintenance_history, _format_duration,
+)
 from web.services.operation_runner import get_operation_runner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_MAINTENANCE_AUDIT, CACHE_KEY_MAINTENANCE_HEALTH, CACHE_KEY_DASHBOARD_STATS
 from core.system_utils import SystemDetector
@@ -238,6 +241,73 @@ async def dismiss_maintenance_action():
     return JSONResponse({"ok": True})
 
 
+def _record_sync_action(
+    action_name: str,
+    started_at: datetime,
+    result,
+):
+    """Record a synchronous maintenance action to the persistent history."""
+    import os
+    import uuid
+    try:
+        completed_at = datetime.now()
+        duration = (completed_at - started_at).total_seconds()
+
+        affected_files = []
+        if hasattr(result, "affected_paths") and result.affected_paths:
+            affected_files = [os.path.basename(p) for p in result.affected_paths[:25]]
+
+        entry = MaintenanceHistoryEntry(
+            id=str(uuid.uuid4()),
+            action_name=action_name,
+            action_display=ACTION_HISTORY_LABELS.get(action_name, action_name),
+            timestamp=started_at.isoformat(),
+            completed_at=completed_at.isoformat(),
+            duration_seconds=round(duration, 1),
+            duration_display=_format_duration(duration),
+            file_count=result.affected_count if hasattr(result, "affected_count") else 0,
+            affected_count=result.affected_count if hasattr(result, "affected_count") else 0,
+            success=result.success if hasattr(result, "success") else True,
+            was_stopped=False,
+            errors=result.errors[:20] if hasattr(result, "errors") else [],
+            error_count=len(result.errors) if hasattr(result, "errors") else 0,
+            affected_files=affected_files,
+            source="sync",
+        )
+        get_maintenance_history().record(entry)
+    except Exception as e:
+        logger.error(f"Failed to record sync maintenance history: {e}")
+
+
+# === History Endpoint ===
+
+@router.get("/history", response_class=HTMLResponse)
+def action_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return the action history partial"""
+    history = get_maintenance_history()
+    all_entries = history.get_all()
+    total_count = len(all_entries)
+    entries = all_entries[offset:offset + limit]
+    time_format = get_time_format()
+
+    return templates.TemplateResponse(
+        "maintenance/partials/action_history.html",
+        {
+            "request": request,
+            "entries": entries,
+            "time_format": time_format,
+            "total_count": total_count,
+            "showing": offset + len(entries),
+            "offset": offset,
+            "limit": limit,
+        }
+    )
+
+
 # === Action Routes ===
 
 @router.post("/restore-plexcached", response_class=HTMLResponse)
@@ -415,10 +485,12 @@ def add_to_exclude(
 ):
     """Add files to exclude list"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.add_to_exclude(paths, dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("add-to-exclude", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -440,10 +512,12 @@ def clean_exclude(
 ):
     """Clean stale exclude entries"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.clean_exclude(dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("clean-exclude", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -465,10 +539,12 @@ def clean_timestamps(
 ):
     """Clean stale timestamp entries"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.clean_timestamps(dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("clean-timestamps", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -491,10 +567,12 @@ def fix_timestamps(
 ):
     """Fix invalid file timestamps"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.fix_file_timestamps(paths, dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("fix-timestamps", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -518,10 +596,12 @@ def resolve_duplicate(
 ):
     """Resolve a duplicate file"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.resolve_duplicate(cache_path, keep, dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("resolve-duplicate", started_at, result)
 
     audit_results = service.run_full_audit()
 

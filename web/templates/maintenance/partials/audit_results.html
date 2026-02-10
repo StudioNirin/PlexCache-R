@@ -401,6 +401,31 @@
 </div>
 {% endif %}
 
+<!-- Action History Section -->
+<div class="card mb-2">
+    <div class="card-header" style="cursor: pointer;" onclick="toggleHistorySection()">
+        <i data-lucide="history"></i>
+        <h2>Action History</h2>
+        <div style="margin-left: auto; display: flex; align-items: center;">
+            <i data-lucide="chevron-down" id="history-section-chevron" style="width: 18px; height: 18px; transition: transform 0.2s;"></i>
+        </div>
+    </div>
+    <div id="history-section-content" style="display: none;">
+        <div class="card-body" style="padding: 0;">
+            <div id="history-container"
+                 hx-get="/maintenance/history"
+                 hx-trigger="revealed"
+                 hx-swap="innerHTML">
+                <!-- Loading skeleton -->
+                <div style="padding: 2rem; text-align: center;">
+                    <div class="spinner" style="width: 20px; height: 20px; margin: 0 auto 0.5rem;"></div>
+                    <span class="text-muted">Loading history...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
 .cleanup-action {
     display: flex;
@@ -664,6 +689,26 @@ function moveToArraySelected() {
 
     // sync-to-array now handles all cases: restores backups if they exist, copies if not
     showConfirmModal('Move to Array', message, 'sync-to-array', formData, false);
+}
+
+// Toggle action history section
+function toggleHistorySection() {
+    const content = document.getElementById('history-section-content');
+    const chevron = document.getElementById('history-section-chevron');
+    if (!content) return;
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        if (chevron) chevron.style.transform = 'rotate(180deg)';
+        // Trigger HTMX to process the revealed element
+        if (typeof htmx !== 'undefined') {
+            htmx.process(content);
+        }
+    } else {
+        content.style.display = 'none';
+        if (chevron) chevron.style.transform = '';
+    }
+    if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // Toggle stale entries list visibility

@@ -1,10 +1,13 @@
 """Maintenance runner service - runs heavy maintenance actions in a background thread"""
 
+import json
 import logging
 import os
+import tempfile
 import threading
 import time
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Callable, Any, List
 from dataclasses import dataclass, field
@@ -47,13 +50,27 @@ ASYNC_ACTIONS = {
     "delete-plexcached",
 }
 
-# Human-readable display names for actions
+# Human-readable display names for actions (progress messages)
 ACTION_DISPLAY = {
     "protect-with-backup": "Keeping {count} file(s) on cache...",
     "sync-to-array": "Moving {count} file(s) to array...",
     "fix-with-backup": "Fixing {count} file(s) with backup...",
     "restore-plexcached": "Restoring {count} backup(s)...",
     "delete-plexcached": "Deleting {count} backup(s)...",
+}
+
+# Outcome-oriented labels for history entries
+ACTION_HISTORY_LABELS = {
+    "protect-with-backup": "Keep on Cache",
+    "sync-to-array": "Move to Array",
+    "fix-with-backup": "Fix with Backup",
+    "restore-plexcached": "Restore Backup",
+    "delete-plexcached": "Delete Backup",
+    "add-to-exclude": "Add to Exclude",
+    "clean-exclude": "Clean Exclude",
+    "clean-timestamps": "Clean Timestamps",
+    "fix-timestamps": "Fix Timestamps",
+    "resolve-duplicate": "Resolve Duplicate",
 }
 
 
@@ -63,6 +80,157 @@ class MaintenanceState(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+@dataclass
+class MaintenanceHistoryEntry:
+    """A single recorded maintenance action for the history log"""
+    id: str
+    action_name: str
+    action_display: str
+    timestamp: str          # ISO 8601 start time
+    completed_at: str       # ISO 8601 completion time
+    duration_seconds: float
+    duration_display: str
+    file_count: int
+    affected_count: int
+    success: bool
+    was_stopped: bool
+    errors: List[str] = field(default_factory=list)
+    error_count: int = 0
+    affected_files: List[str] = field(default_factory=list)
+    source: str = "async"   # "async" or "sync"
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "action_name": self.action_name,
+            "action_display": self.action_display,
+            "timestamp": self.timestamp,
+            "completed_at": self.completed_at,
+            "duration_seconds": self.duration_seconds,
+            "duration_display": self.duration_display,
+            "file_count": self.file_count,
+            "affected_count": self.affected_count,
+            "success": self.success,
+            "was_stopped": self.was_stopped,
+            "errors": self.errors,
+            "error_count": self.error_count,
+            "affected_files": self.affected_files,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MaintenanceHistoryEntry":
+        return cls(
+            id=data.get("id", str(uuid.uuid4())),
+            action_name=data.get("action_name", ""),
+            action_display=data.get("action_display", ""),
+            timestamp=data.get("timestamp", ""),
+            completed_at=data.get("completed_at", ""),
+            duration_seconds=data.get("duration_seconds", 0),
+            duration_display=data.get("duration_display", ""),
+            file_count=data.get("file_count", 0),
+            affected_count=data.get("affected_count", 0),
+            success=data.get("success", True),
+            was_stopped=data.get("was_stopped", False),
+            errors=data.get("errors", []),
+            error_count=data.get("error_count", 0),
+            affected_files=data.get("affected_files", []),
+            source=data.get("source", "async"),
+        )
+
+
+class MaintenanceHistory:
+    """Thread-safe persistent storage for maintenance action history.
+
+    Stores entries in DATA_DIR/maintenance_history.json with automatic
+    pruning (30 days max age, 100 entry cap).
+    """
+
+    MAX_ENTRIES = 100
+    MAX_AGE_DAYS = 30
+
+    def __init__(self):
+        from web.config import DATA_DIR
+        self._file = DATA_DIR / "maintenance_history.json"
+        self._lock = threading.Lock()
+
+    def _load(self) -> List[dict]:
+        """Load entries from disk. Returns empty list on error."""
+        try:
+            if self._file.exists():
+                with open(self._file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.warning(f"Failed to load maintenance history: {e}")
+        return []
+
+    def _save(self, entries: List[dict]):
+        """Atomic save: write to temp file then replace."""
+        self._file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(self._file.parent), suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(entries, f, indent=2)
+                os.replace(tmp_path, str(self._file))
+            except Exception:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        except (IOError, OSError) as e:
+            logger.error(f"Failed to save maintenance history: {e}")
+
+    def _prune(self, entries: List[dict]) -> List[dict]:
+        """Remove entries older than MAX_AGE_DAYS, then cap at MAX_ENTRIES."""
+        cutoff = (datetime.now() - timedelta(days=self.MAX_AGE_DAYS)).isoformat()
+        entries = [e for e in entries if e.get("timestamp", "") >= cutoff]
+        return entries[:self.MAX_ENTRIES]
+
+    def record(self, entry: "MaintenanceHistoryEntry"):
+        """Add a new history entry (newest first) and save."""
+        with self._lock:
+            entries = self._load()
+            entries.insert(0, entry.to_dict())
+            entries = self._prune(entries)
+            self._save(entries)
+
+    def get_all(self) -> List["MaintenanceHistoryEntry"]:
+        """Return all entries (newest first)."""
+        with self._lock:
+            entries = self._load()
+        return [MaintenanceHistoryEntry.from_dict(e) for e in entries]
+
+    def get_recent(self, limit: int = 20) -> List["MaintenanceHistoryEntry"]:
+        """Return the most recent `limit` entries."""
+        with self._lock:
+            entries = self._load()
+        return [MaintenanceHistoryEntry.from_dict(e) for e in entries[:limit]]
+
+    def total_count(self) -> int:
+        """Return the total number of entries on disk."""
+        with self._lock:
+            return len(self._load())
+
+
+# Singleton
+_maintenance_history: Optional[MaintenanceHistory] = None
+
+
+def get_maintenance_history() -> MaintenanceHistory:
+    """Get or create the maintenance history singleton"""
+    global _maintenance_history
+    if _maintenance_history is None:
+        _maintenance_history = MaintenanceHistory()
+    return _maintenance_history
 
 
 @dataclass
@@ -273,6 +441,48 @@ class MaintenanceRunner:
         activities = activities[:MAX_RECENT_ACTIVITY]
         save_activity(activities)
 
+    def _record_history(self, action_name: str, action_result: Optional[ActionResult]):
+        """Record this action to the persistent maintenance history."""
+        try:
+            result = self._result
+            if not result:
+                return
+
+            errors = []
+            error_count = 0
+            affected_count = 0
+            affected_files = []
+
+            if action_result:
+                errors = action_result.errors[:20]
+                error_count = len(action_result.errors)
+                affected_count = action_result.affected_count
+                affected_files = [
+                    os.path.basename(p) for p in action_result.affected_paths[:25]
+                ]
+
+            entry = MaintenanceHistoryEntry(
+                id=str(uuid.uuid4()),
+                action_name=action_name,
+                action_display=ACTION_HISTORY_LABELS.get(action_name, action_name),
+                timestamp=result.started_at.isoformat() if result.started_at else datetime.now().isoformat(),
+                completed_at=result.completed_at.isoformat() if result.completed_at else datetime.now().isoformat(),
+                duration_seconds=round(result.duration_seconds, 1),
+                duration_display=_format_duration(result.duration_seconds),
+                file_count=result.file_count,
+                affected_count=affected_count,
+                success=action_result.success if action_result else (result.error_message is None),
+                was_stopped=self._stop_requested,
+                errors=errors,
+                error_count=error_count,
+                affected_files=affected_files,
+                source="async",
+            )
+
+            get_maintenance_history().record(entry)
+        except Exception as e:
+            logger.error(f"Failed to record maintenance history: {e}")
+
     def _run_action(
         self,
         action_name: str,
@@ -329,6 +539,9 @@ class MaintenanceRunner:
                 else:
                     self._result.state = MaintenanceState.COMPLETED
                     self._state = MaintenanceState.COMPLETED
+
+            # Record to persistent history
+            self._record_history(action_name, action_result)
 
             # Call on_complete callback (e.g., cache invalidation)
             if on_complete:
