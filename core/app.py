@@ -102,12 +102,26 @@ class PlexCacheApp:
                 print("ERROR: Another instance of PlexCache is already running. Exiting.")
                 return
 
-            # Check if Unraid mover is running (prevents race condition)
+            # Wait for Unraid mover to finish (prevents race condition)
             if self._is_mover_running():
-                logging.warning("Unraid mover is currently running. Exiting to prevent race condition.")
-                logging.warning("PlexCache will run on the next scheduled execution after mover completes.")
-                print("WARNING: Unraid mover is running. Exiting to avoid conflicts.")
-                return
+                max_wait_seconds = 4 * 60 * 60  # 4 hours
+                poll_interval = 30  # Check every 30 seconds
+                logging.warning("Unraid mover is currently running. Waiting for it to finish before proceeding...")
+                print("WARNING: Unraid mover is running. Waiting for it to finish...")
+                waited = 0
+                while self._is_mover_running():
+                    if self.should_stop:
+                        logging.info("Stop requested while waiting for mover. Exiting.")
+                        return
+                    if waited >= max_wait_seconds:
+                        logging.warning(f"Mover still running after {max_wait_seconds // 3600} hours. Skipping this run.")
+                        return
+                    time.sleep(poll_interval)
+                    waited += poll_interval
+                    if waited % 300 == 0:  # Log every 5 minutes
+                        logging.info(f"Still waiting for mover to finish... ({waited // 60} minutes elapsed)")
+                minutes_waited = waited / 60
+                logging.info(f"Unraid mover finished after {minutes_waited:.1f} minutes of waiting. Proceeding with PlexCache run.")
 
             # Load configuration
             logging.debug("Loading configuration...")
@@ -372,20 +386,34 @@ class PlexCacheApp:
         the mover is actively moving files, which can result in files
         being moved back to the array before they're added to the exclude list.
 
+        Detection methods (in order):
+        1. PID file check - works in both CLI and Docker (if /var/run is mounted)
+        2. pgrep fallback - works in CLI or Docker with --pid=host
+
         Returns:
             True if mover is running, False otherwise.
         """
         if not self.system_detector.is_unraid:
             return False
 
+        # Check for mover PID file (created by mover/age_mover, removed on completion)
+        # In Docker: /host_var_run/mover.pid (mount /var/run:/host_var_run:ro)
+        # On host:   /var/run/mover.pid
+        for pid_path in ['/host_var_run/mover.pid', '/var/run/mover.pid']:
+            if os.path.exists(pid_path):
+                logging.info(f"Unraid mover detected via PID file: {pid_path}")
+                return True
+
         try:
-            # Check for mover process using pgrep
+            # Fallback: check for mover process using pgrep
+            # Works on host or in Docker with --pid=host
             result = subprocess.run(
                 ['pgrep', '-f', '/usr/local/sbin/mover'],
                 capture_output=True,
                 text=True
             )
             if result.returncode == 0 and result.stdout.strip():
+                logging.info("Unraid mover detected via pgrep (mover)")
                 return True
 
             # Also check for the age_mover script (CA Mover Tuning plugin)
@@ -394,11 +422,14 @@ class PlexCacheApp:
                 capture_output=True,
                 text=True
             )
-            return result.returncode == 0 and result.stdout.strip() != ''
+            if result.returncode == 0 and result.stdout.strip() != '':
+                logging.info("Unraid mover detected via pgrep (age_mover)")
+                return True
 
         except (subprocess.SubprocessError, FileNotFoundError):
-            # If we can't check, assume mover is not running
-            return False
+            pass
+
+        return False
 
     def _init_plex_manager(self) -> None:
         """Initialize the Plex manager with token cache."""
