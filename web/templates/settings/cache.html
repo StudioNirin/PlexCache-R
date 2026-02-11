@@ -81,6 +81,15 @@
             </div>
 
             <div class="form-group">
+                <label class="switch">
+                    <input type="checkbox" name="cleanup_empty_folders"
+                           {% if settings.cleanup_empty_folders | default(true) %}checked{% endif %}>
+                    <span>Clean Up Empty Folders</span>
+                </label>
+                <div class="form-hint">Remove empty parent folders on cache after moving files to array. Disable if you use year-based or other intentional empty folder structures.</div>
+            </div>
+
+            <div class="form-group">
                 <label for="hardlinked_files">Hardlinked Files Handling</label>
                 <select id="hardlinked_files" name="hardlinked_files">
                     <option value="skip" {% if settings.hardlinked_files == 'skip' or not settings.hardlinked_files %}selected{% endif %}>Skip (preserve for seeders)</option>

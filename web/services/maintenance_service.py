@@ -1202,6 +1202,9 @@ class MaintenanceService:
 
     def _cleanup_empty_directories(self):
         """Remove empty directories from cache paths"""
+        settings = self._load_settings()
+        if not settings.get('cleanup_empty_folders', True):
+            return
         cache_dirs, _ = self._get_paths()
         for cache_dir in cache_dirs:
             if os.path.exists(cache_dir):

@@ -180,6 +180,10 @@ class CacheConfig:
     # "move" - Cache hard-linked files; seed copy preserved via remaining hard link
     hardlinked_files: str = "skip"
 
+    # Clean up empty parent folders on cache after moving files to array
+    # Disable if you use year-based or other intentional empty folder structures
+    cleanup_empty_folders: bool = True
+
     # Excluded folders: skip these directories during cache scanning
     # Hidden directories (dot-prefixed like .Trash, .Recycle.Bin) are always skipped automatically
     # Use this for non-dot-prefixed folders like Synology @Recycle, #recycle, etc.
@@ -419,6 +423,9 @@ class ConfigManager:
             logging.warning(f"Invalid hardlinked_files '{hardlinked_files}', using 'skip'")
             hardlinked_files = 'skip'
         self.cache.hardlinked_files = hardlinked_files
+
+        # Load cleanup_empty_folders setting (default True to preserve existing behavior)
+        self.cache.cleanup_empty_folders = self.settings_data.get('cleanup_empty_folders', True)
 
         # Load excluded folders for directory scanning
         excluded_folders = self.settings_data.get('excluded_folders', [])

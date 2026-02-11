@@ -65,6 +65,8 @@ class PlexCacheApp:
         # Eviction tracking
         self.evicted_count = 0
         self.evicted_bytes = 0
+        # Deferred exclude list removal for move-back files (issue #13)
+        self._move_back_exclude_paths: list = []
 
         # Stop request flag (for web UI to abort operations)
         self._stop_requested = False
@@ -514,7 +516,8 @@ class PlexCacheApp:
             path_modifier=self.file_path_modifier,
             stop_check=lambda: self.should_stop,  # Allow FileMover to check for stop requests
             create_plexcached_backups=self.config_manager.cache.create_plexcached_backups,
-            hardlinked_files=self.config_manager.cache.hardlinked_files
+            hardlinked_files=self.config_manager.cache.hardlinked_files,
+            cleanup_empty_folders=self.config_manager.cache.cleanup_empty_folders
         )
 
     def _init_cache_management(self) -> None:
@@ -1207,6 +1210,20 @@ class PlexCacheApp:
             if files_to_restore or files_to_move:
                 self._log_restore_and_move_summary(files_to_restore, files_to_move)
             self._safe_move_files(self.media_to_array, 'array')
+
+            # Deferred exclude list cleanup: only remove entries for files that actually moved (issue #13)
+            # This prevents losing tracking of files if a move fails (e.g., disk full, I/O error)
+            if self._move_back_exclude_paths and self.file_mover and not self.dry_run:
+                successful_moves = set(self.file_mover._successful_array_moves)
+                if successful_moves:
+                    self.file_filter.remove_files_from_exclude_list(list(successful_moves))
+
+                # Log warnings for files that failed to move (their exclude entries stay protected)
+                deferred_count = len(self._move_back_exclude_paths)
+                succeeded_count = len(successful_moves)
+                if succeeded_count < deferred_count:
+                    failed_count = deferred_count - succeeded_count
+                    logging.warning(f"{failed_count} file(s) failed to move to array — exclude entries preserved for retry")
 
         # Step 2: Run smart eviction BEFORE filtering/caching (frees more space if needed)
         # This runs after array moves so we have accurate space calculations
@@ -2021,10 +2038,10 @@ class PlexCacheApp:
             current_ondeck_items = self.ondeck_items
             # Use the freshly fetched watchlist items (already filtered for retention in _process_watchlist)
             current_watchlist_items = getattr(self, 'watchlist_items', set())
-            
+
             # Get files that should be moved back to array (tracked by exclude file)
             # Pass files_to_skip to prevent removing active session files from exclude list
-            files_to_move_back, cache_paths_to_remove = self.file_filter.get_files_to_move_back_to_array(
+            files_to_move_back, stale_entries, move_back_exclude_paths = self.file_filter.get_files_to_move_back_to_array(
                 current_ondeck_items, current_watchlist_items, set(self.files_to_skip)
             )
 
@@ -2032,12 +2049,18 @@ class PlexCacheApp:
                 logging.debug(f"Found {len(files_to_move_back)} files to move back to array")
                 self.media_to_array.extend(files_to_move_back)
 
-            # Clean up stale entries from exclude list (files that no longer exist on cache)
+            # Clean up stale entries immediately (files already gone from cache — safe to remove)
             # Skip in dry-run mode to avoid modifying tracking files
-            if cache_paths_to_remove and not self.dry_run:
-                self.file_filter.remove_files_from_exclude_list(cache_paths_to_remove)
-            elif cache_paths_to_remove and self.dry_run:
-                logging.debug(f"[DRY RUN] Would remove {len(cache_paths_to_remove)} stale entries from exclude list")
+            if stale_entries and not self.dry_run:
+                self.file_filter.remove_files_from_exclude_list(stale_entries)
+            elif stale_entries and self.dry_run:
+                logging.debug(f"[DRY RUN] Would remove {len(stale_entries)} stale entries from exclude list")
+
+            # Store move-back exclude paths for deferred removal after moves succeed (issue #13)
+            # These entries stay protected in the exclude list until the file is confirmed moved
+            self._move_back_exclude_paths = move_back_exclude_paths
+            if move_back_exclude_paths:
+                logging.debug(f"Deferred {len(move_back_exclude_paths)} exclude entries pending successful array moves")
         except Exception as e:
             logging.exception(f"Error checking files to move back to array: {type(e).__name__}: {e}")
     
