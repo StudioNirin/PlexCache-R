@@ -3,16 +3,14 @@
 from datetime import datetime
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from typing import List
 from urllib.parse import unquote
 
-from web.config import TEMPLATES_DIR
+from web.config import templates
 from web.services import get_cache_service, get_settings_service, get_operation_runner, get_scheduler_service, ScheduleConfig, get_maintenance_service
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]:
@@ -61,6 +59,8 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         "watchlist_count": cache_stats["watchlist_count"],
         "eviction_over_threshold": cache_stats.get("eviction_over_threshold", False),
         "eviction_over_by_display": cache_stats.get("eviction_over_by_display"),
+        "cache_limit_exceeded": cache_stats.get("cache_limit_exceeded", False),
+        "min_free_space_warning": cache_stats.get("min_free_space_warning", False),
         "last_run": last_run,
         "is_running": operation_runner.is_running,
         "plex_connected": plex_connected,
@@ -68,7 +68,7 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         "next_run": schedule_status.get("next_run_display", "Not scheduled"),
         "next_run_relative": schedule_status.get("next_run_relative"),
         "health_status": health["status"],
-        "health_issues": health["unprotected_count"] + health["orphaned_count"],
+        "health_issues": health["orphaned_count"],
         "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"]
     }
 
@@ -79,7 +79,7 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
 
 
 @router.get("/dashboard/stats-content", response_class=HTMLResponse)
-async def dashboard_stats_content(request: Request):
+def dashboard_stats_content(request: Request):
     """Full dashboard stats container for lazy loading"""
     stats, cache_age = _get_dashboard_stats_data(use_cache=True)
 
@@ -94,7 +94,7 @@ async def dashboard_stats_content(request: Request):
 
 
 @router.get("/dashboard/stats", response_class=HTMLResponse)
-async def dashboard_stats(request: Request):
+def dashboard_stats(request: Request):
     """Dashboard stats partial for HTMX polling"""
     stats, _ = _get_dashboard_stats_data(use_cache=True)
 
@@ -108,7 +108,7 @@ async def dashboard_stats(request: Request):
 
 
 @router.get("/cache/files", response_class=HTMLResponse)
-async def cache_files_table(
+def cache_files_table(
     request: Request,
     source: str = "all",
     search: str = "",
@@ -176,29 +176,39 @@ async def cache_files_table(
 
 
 @router.post("/cache/evict/{file_path:path}", response_class=HTMLResponse)
-async def evict_file(request: Request, file_path: str):
+def evict_file(request: Request, file_path: str):
     """Evict a single file from cache"""
     cache_service = get_cache_service()
 
-    # URL decode the path
+    # URL decode the path and validate
     decoded_path = unquote(file_path)
+    if not decoded_path or not decoded_path.startswith("/"):
+        return '''<div class="alert alert-error" id="evict-alert">
+            <i data-lucide="alert-circle"></i>
+            <span>Invalid file path</span>
+        </div>
+        <script>
+            setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
+        </script>'''
 
     result = cache_service.evict_file(decoded_path)
 
     # Return an alert message
-    if result["success"]:
+    if result.get("success"):
+        message = result.get("message", "File evicted")
         return f'''<div class="alert alert-success" id="evict-alert">
             <i data-lucide="check-circle"></i>
-            <span>{result["message"]}</span>
+            <span>{message}</span>
         </div>
         <script>
             setTimeout(() => document.getElementById('evict-alert')?.remove(), 3000);
             htmx.trigger('#cache-table-body', 'refresh');
         </script>'''
     else:
+        message = result.get("message", "Eviction failed")
         return f'''<div class="alert alert-error" id="evict-alert">
             <i data-lucide="alert-circle"></i>
-            <span>{result["message"]}</span>
+            <span>{message}</span>
         </div>
         <script>
             setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
@@ -308,7 +318,7 @@ async def get_schedule_status():
 
 
 @router.get("/cache/storage", response_class=HTMLResponse)
-async def cache_storage_stats(request: Request, expiring_within: int = 7):
+def cache_storage_stats(request: Request, expiring_within: int = 7):
     """Storage stats partial for HTMX polling"""
     # Validate expiring_within to allowed values
     if expiring_within not in [3, 7, 14, 30]:
@@ -326,7 +336,7 @@ async def cache_storage_stats(request: Request, expiring_within: int = 7):
 
 
 @router.get("/cache/priorities-content", response_class=HTMLResponse)
-async def cache_priorities_content(
+def cache_priorities_content(
     request: Request,
     sort: str = "priority",
     dir: str = "desc"
@@ -372,7 +382,7 @@ async def cache_priorities_content(
 
 
 @router.get("/cache/simulate-eviction", response_class=HTMLResponse)
-async def simulate_eviction(request: Request, threshold: int = 95):
+def simulate_eviction(request: Request, threshold: int = 95):
     """Simulate eviction at a given threshold percentage"""
     cache_service = get_cache_service()
 
@@ -430,7 +440,7 @@ async def health_check():
 
 
 @router.get("/status")
-async def detailed_status():
+def detailed_status():
     """
     Detailed status endpoint for monitoring and debugging.
 
@@ -545,10 +555,13 @@ async def get_operation_indicator(request: Request):
 @router.get("/operation-banner", response_class=HTMLResponse)
 async def get_operation_banner(request: Request):
     """Return global operation status banner HTML - shown on all pages when operation is running"""
+    from web.services.maintenance_runner import get_maintenance_runner
+
     operation_runner = get_operation_runner()
     status = operation_runner.get_status_dict()
+    maint_status = get_maintenance_runner().get_status_dict()
 
     return templates.TemplateResponse(
         "components/global_operation_banner.html",
-        {"request": request, "status": status}
+        {"request": request, "status": status, "maint_status": maint_status}
     )

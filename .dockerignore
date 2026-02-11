@@ -36,7 +36,7 @@ logs/
 data/
 *.log
 plexcache_settings.json
-plexcache_mover_files_to_exclude.txt
+plexcache_cached_files.txt
 unraid_mover_exclusions.txt
 plexcache.lock
 

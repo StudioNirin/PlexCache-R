@@ -120,6 +120,19 @@ body {
     color: var(--plex-text);
 }
 
+.sidebar-brand .dev-badge {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    background: var(--plex-orange);
+    color: #000;
+    line-height: 1;
+    flex-shrink: 0;
+    align-self: center;
+}
+
 .sidebar-nav {
     list-style: none;
     padding: 0.5rem 0;
@@ -164,11 +177,11 @@ body {
     justify-content: center;
 }
 
-/* Top right controls (theme toggle, etc.) - positioned in main content area */
+/* Top right controls (theme toggle, etc.) - positioned in content-wrapper */
 .top-controls {
-    position: fixed;
-    top: 1rem;
-    right: 1.5rem;
+    position: absolute;
+    top: 0;
+    right: 0;
     z-index: 101;
     display: flex;
     gap: 0.5rem;
@@ -321,6 +334,7 @@ body {
 .content-wrapper {
     max-width: 1200px;
     width: 100%;
+    position: relative;
 }
 
 /* ==================== Page Header ==================== */
@@ -2325,7 +2339,7 @@ footer .version {
     .page-header {
         flex-direction: column;
         align-items: flex-start;
-        padding-right: 0; /* Reset padding on mobile */
+        padding-right: 0; /* No theme toggle on mobile */
     }
 
     .stats-row {

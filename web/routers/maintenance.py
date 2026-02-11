@@ -1,21 +1,23 @@
 """Maintenance routes - cache audit and fix actions"""
 
+import logging
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Request, Form, Query
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, JSONResponse
 
-from web.config import TEMPLATES_DIR
+from web.config import templates, get_time_format
 from web.services.maintenance_service import get_maintenance_service
+from web.services.maintenance_runner import (
+    get_maintenance_runner, ASYNC_ACTIONS, ACTION_HISTORY_LABELS,
+    MaintenanceHistoryEntry, get_maintenance_history, _format_duration,
+)
+from web.services.operation_runner import get_operation_runner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_MAINTENANCE_AUDIT, CACHE_KEY_MAINTENANCE_HEALTH, CACHE_KEY_DASHBOARD_STATS
-from core.system_utils import SystemDetector
 
-# Cache system detection (doesn't change during runtime)
-_system_detector = SystemDetector()
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 # In-memory cache for full audit results (not JSON-serializable)
@@ -88,6 +90,83 @@ def _get_cached_audit_results(force_refresh: bool = False):
         return results, now
 
 
+def _check_blocked(action_name: str) -> Optional[str]:
+    """Check if a maintenance action is blocked by another running operation.
+
+    Returns an HTML alert string if blocked, None if OK to proceed.
+    """
+    runner = get_maintenance_runner()
+    op_runner = get_operation_runner()
+
+    if runner.is_running:
+        return (
+            '<div class="alert alert-warning maintenance-action-blocked" style="margin-bottom: 1rem;">'
+            '<i data-lucide="alert-triangle"></i>'
+            '<span>A maintenance action is already running. Please wait for it to complete.</span>'
+            '</div><script>lucide.createIcons();</script>'
+        )
+
+    if op_runner.is_running:
+        return (
+            '<div class="alert alert-warning maintenance-action-blocked" style="margin-bottom: 1rem;">'
+            '<i data-lucide="alert-triangle"></i>'
+            '<span>A PlexCache operation is running. Please wait for it to complete.</span>'
+            '</div><script>lucide.createIcons();</script>'
+        )
+
+    return None
+
+
+def _get_max_workers() -> int:
+    """Read max_concurrent_moves_array from settings for parallel maintenance."""
+    try:
+        import json
+        from web.config import SETTINGS_FILE
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+            return max(1, int(settings.get('max_concurrent_moves_array', 2)))
+    except (json.JSONDecodeError, IOError, ValueError, TypeError):
+        pass
+    return 2
+
+
+def _start_async_action(action_name: str, service_method, method_args=(), method_kwargs=None, file_count=0, max_workers=1) -> Optional[str]:
+    """Start an async maintenance action via the runner.
+
+    Returns HTML response string if started or blocked, None if couldn't start.
+    """
+    blocked = _check_blocked(action_name)
+    if blocked:
+        return blocked
+
+    runner = get_maintenance_runner()
+    started = runner.start_action(
+        action_name=action_name,
+        service_method=service_method,
+        method_args=method_args,
+        method_kwargs=method_kwargs or {},
+        file_count=file_count,
+        on_complete=_invalidate_caches,
+        max_workers=max_workers,
+    )
+
+    if started:
+        return (
+            '<div class="alert alert-info maintenance-async-started" style="margin-bottom: 1rem;">'
+            '<i data-lucide="loader"></i>'
+            '<span>Action started in background. You can navigate away from this page.</span>'
+            '</div><script>lucide.createIcons();</script>'
+        )
+    else:
+        return (
+            '<div class="alert alert-warning" style="margin-bottom: 1rem;">'
+            '<i data-lucide="alert-triangle"></i>'
+            '<span>Could not start action. Another operation may be running.</span>'
+            '</div><script>lucide.createIcons();</script>'
+        )
+
+
 @router.get("/", response_class=HTMLResponse)
 async def maintenance_page(request: Request):
     """Main maintenance page - loads instantly with skeleton, audit fetched via HTMX"""
@@ -101,7 +180,7 @@ async def maintenance_page(request: Request):
 
 
 @router.get("/audit", response_class=HTMLResponse)
-async def run_audit(request: Request, refresh: bool = Query(default=False, description="Force refresh")):
+def run_audit(request: Request, refresh: bool = Query(default=False, description="Force refresh")):
     """Run audit and return HTMX partial with results"""
     results, updated_at = _get_cached_audit_results(force_refresh=refresh)
 
@@ -122,7 +201,6 @@ async def run_audit(request: Request, refresh: bool = Query(default=False, descr
             "request": request,
             "results": results,
             "cache_age": cache_age or "just now",
-            "is_unraid": _system_detector.is_unraid
         }
     )
     # Prevent browser caching so refresh button always fetches fresh data
@@ -131,7 +209,7 @@ async def run_audit(request: Request, refresh: bool = Query(default=False, descr
 
 
 @router.get("/health", response_class=HTMLResponse)
-async def health_summary(request: Request):
+def health_summary(request: Request):
     """Get health summary for dashboard widget"""
     service = get_maintenance_service()
     health = service.get_health_summary()
@@ -145,10 +223,105 @@ async def health_summary(request: Request):
     )
 
 
+# === Maintenance Runner Control Routes ===
+
+@router.post("/stop-action", response_class=HTMLResponse)
+async def stop_maintenance_action(request: Request):
+    """Stop the current maintenance action"""
+    from web.services.maintenance_runner import get_maintenance_runner
+
+    runner = get_maintenance_runner()
+    runner.stop_action()
+
+    # Return updated banner
+    status = get_operation_runner().get_status_dict()
+    maint_status = runner.get_status_dict()
+
+    return templates.TemplateResponse(
+        "components/global_operation_banner.html",
+        {"request": request, "status": status, "maint_status": maint_status}
+    )
+
+
+@router.post("/dismiss-action")
+async def dismiss_maintenance_action():
+    """Dismiss a completed/failed maintenance action"""
+    runner = get_maintenance_runner()
+    runner.dismiss()
+    return JSONResponse({"ok": True})
+
+
+def _record_sync_action(
+    action_name: str,
+    started_at: datetime,
+    result,
+):
+    """Record a synchronous maintenance action to the persistent history."""
+    import os
+    import uuid
+    try:
+        completed_at = datetime.now()
+        duration = (completed_at - started_at).total_seconds()
+
+        affected_files = []
+        if hasattr(result, "affected_paths") and result.affected_paths:
+            affected_files = [os.path.basename(p) for p in result.affected_paths[:25]]
+
+        entry = MaintenanceHistoryEntry(
+            id=str(uuid.uuid4()),
+            action_name=action_name,
+            action_display=ACTION_HISTORY_LABELS.get(action_name, action_name),
+            timestamp=started_at.isoformat(),
+            completed_at=completed_at.isoformat(),
+            duration_seconds=round(duration, 1),
+            duration_display=_format_duration(duration),
+            file_count=result.affected_count if hasattr(result, "affected_count") else 0,
+            affected_count=result.affected_count if hasattr(result, "affected_count") else 0,
+            success=result.success if hasattr(result, "success") else True,
+            was_stopped=False,
+            errors=result.errors[:20] if hasattr(result, "errors") else [],
+            error_count=len(result.errors) if hasattr(result, "errors") else 0,
+            affected_files=affected_files,
+            source="sync",
+        )
+        get_maintenance_history().record(entry)
+    except Exception as e:
+        logger.error(f"Failed to record sync maintenance history: {e}")
+
+
+# === History Endpoint ===
+
+@router.get("/history", response_class=HTMLResponse)
+def action_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return the action history partial"""
+    history = get_maintenance_history()
+    all_entries = history.get_all()
+    total_count = len(all_entries)
+    entries = all_entries[offset:offset + limit]
+    time_format = get_time_format()
+
+    return templates.TemplateResponse(
+        "maintenance/partials/action_history.html",
+        {
+            "request": request,
+            "entries": entries,
+            "time_format": time_format,
+            "total_count": total_count,
+            "showing": offset + len(entries),
+            "offset": offset,
+            "limit": limit,
+        }
+    )
+
+
 # === Action Routes ===
 
 @router.post("/restore-plexcached", response_class=HTMLResponse)
-async def restore_plexcached(
+def restore_plexcached(
     request: Request,
     paths: List[str] = Form(default=[]),
     restore_all: bool = Form(default=False),
@@ -158,31 +331,44 @@ async def restore_plexcached(
     """Restore orphaned .plexcached backups"""
     service = get_maintenance_service()
 
+    if dry_run:
+        # Synchronous dry-run path
+        if restore_all:
+            result = service.restore_all_plexcached(dry_run=True, orphaned_only=orphaned_only)
+        else:
+            result = service.restore_plexcached(paths, dry_run=True)
+
+        audit_results = service.run_full_audit()
+        return templates.TemplateResponse(
+            "maintenance/partials/action_result.html",
+            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+        )
+
+    # Async path - run in background
+    max_workers = _get_max_workers()
+    file_count = len(paths) if not restore_all else 0
     if restore_all:
-        result = service.restore_all_plexcached(dry_run=dry_run, orphaned_only=orphaned_only)
+        response = _start_async_action(
+            "restore-plexcached",
+            service.restore_all_plexcached,
+            method_kwargs={"dry_run": False, "orphaned_only": orphaned_only},
+            file_count=file_count,
+            max_workers=max_workers,
+        )
     else:
-        result = service.restore_plexcached(paths, dry_run=dry_run)
-
-    # Invalidate caches if actual changes were made
-    if not dry_run:
-        _invalidate_caches()
-
-    # Re-run audit to get updated results
-    audit_results = service.run_full_audit()
-
-    return templates.TemplateResponse(
-        "maintenance/partials/action_result.html",
-        {
-            "request": request,
-            "action_result": result,
-            "results": audit_results,
-            "dry_run": dry_run
-        }
-    )
+        response = _start_async_action(
+            "restore-plexcached",
+            service.restore_plexcached,
+            method_args=(paths,),
+            method_kwargs={"dry_run": False},
+            file_count=len(paths),
+            max_workers=max_workers,
+        )
+    return HTMLResponse(response)
 
 
 @router.post("/delete-plexcached", response_class=HTMLResponse)
-async def delete_plexcached(
+def delete_plexcached(
     request: Request,
     paths: List[str] = Form(default=[]),
     delete_all: bool = Form(default=False),
@@ -191,119 +377,142 @@ async def delete_plexcached(
     """Delete orphaned .plexcached backups (when no longer needed)"""
     service = get_maintenance_service()
 
+    if dry_run:
+        if delete_all:
+            result = service.delete_all_plexcached(dry_run=True)
+        else:
+            result = service.delete_plexcached(paths, dry_run=True)
+
+        audit_results = service.run_full_audit()
+        return templates.TemplateResponse(
+            "maintenance/partials/action_result.html",
+            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+        )
+
+    # Async path
+    max_workers = _get_max_workers()
     if delete_all:
-        result = service.delete_all_plexcached(dry_run=dry_run)
+        response = _start_async_action(
+            "delete-plexcached",
+            service.delete_all_plexcached,
+            method_kwargs={"dry_run": False},
+            max_workers=max_workers,
+        )
     else:
-        result = service.delete_plexcached(paths, dry_run=dry_run)
-
-    # Invalidate caches if actual changes were made
-    if not dry_run:
-        _invalidate_caches()
-
-    # Re-run audit to get updated results
-    audit_results = service.run_full_audit()
-
-    return templates.TemplateResponse(
-        "maintenance/partials/action_result.html",
-        {
-            "request": request,
-            "action_result": result,
-            "results": audit_results,
-            "dry_run": dry_run
-        }
-    )
+        response = _start_async_action(
+            "delete-plexcached",
+            service.delete_plexcached,
+            method_args=(paths,),
+            method_kwargs={"dry_run": False},
+            file_count=len(paths),
+            max_workers=max_workers,
+        )
+    return HTMLResponse(response)
 
 
 @router.post("/fix-with-backup", response_class=HTMLResponse)
-async def fix_with_backup(
+def fix_with_backup(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
 ):
     """Fix files that have .plexcached backup"""
     service = get_maintenance_service()
-    result = service.fix_with_backup(paths, dry_run=dry_run)
 
-    if not dry_run:
-        _invalidate_caches()
+    if dry_run:
+        result = service.fix_with_backup(paths, dry_run=True)
+        audit_results = service.run_full_audit()
+        return templates.TemplateResponse(
+            "maintenance/partials/action_result.html",
+            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+        )
 
-    audit_results = service.run_full_audit()
-
-    return templates.TemplateResponse(
-        "maintenance/partials/action_result.html",
-        {
-            "request": request,
-            "action_result": result,
-            "results": audit_results,
-            "dry_run": dry_run
-        }
+    max_workers = _get_max_workers()
+    response = _start_async_action(
+        "fix-with-backup",
+        service.fix_with_backup,
+        method_args=(paths,),
+        method_kwargs={"dry_run": False},
+        file_count=len(paths),
+        max_workers=max_workers,
     )
+    return HTMLResponse(response)
 
 
 @router.post("/sync-to-array", response_class=HTMLResponse)
-async def sync_to_array(
+def sync_to_array(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
 ):
     """Move files to array - restores backups if they exist, copies if not"""
     service = get_maintenance_service()
-    result = service.sync_to_array(paths, dry_run=dry_run)
 
-    if not dry_run:
-        _invalidate_caches()
+    if dry_run:
+        result = service.sync_to_array(paths, dry_run=True)
+        audit_results = service.run_full_audit()
+        return templates.TemplateResponse(
+            "maintenance/partials/action_result.html",
+            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+        )
 
-    audit_results = service.run_full_audit()
-
-    return templates.TemplateResponse(
-        "maintenance/partials/action_result.html",
-        {
-            "request": request,
-            "action_result": result,
-            "results": audit_results,
-            "dry_run": dry_run
-        }
+    max_workers = _get_max_workers()
+    response = _start_async_action(
+        "sync-to-array",
+        service.sync_to_array,
+        method_args=(paths,),
+        method_kwargs={"dry_run": False},
+        file_count=len(paths),
+        max_workers=max_workers,
     )
-
-
-@router.post("/add-to-exclude", response_class=HTMLResponse)
-async def add_to_exclude(
-    request: Request,
-    paths: List[str] = Form(default=[]),
-    dry_run: bool = Form(default=True)
-):
-    """Add files to exclude list"""
-    service = get_maintenance_service()
-    result = service.add_to_exclude(paths, dry_run=dry_run)
-
-    if not dry_run:
-        _invalidate_caches()
-
-    audit_results = service.run_full_audit()
-
-    return templates.TemplateResponse(
-        "maintenance/partials/action_result.html",
-        {
-            "request": request,
-            "action_result": result,
-            "results": audit_results,
-            "dry_run": dry_run
-        }
-    )
+    return HTMLResponse(response)
 
 
 @router.post("/protect-with-backup", response_class=HTMLResponse)
-async def protect_with_backup(
+def protect_with_backup(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
 ):
     """Protect files by creating .plexcached backup on array and adding to exclude list"""
     service = get_maintenance_service()
-    result = service.protect_with_backup(paths, dry_run=dry_run)
+
+    if dry_run:
+        result = service.protect_with_backup(paths, dry_run=True)
+        audit_results = service.run_full_audit()
+        return templates.TemplateResponse(
+            "maintenance/partials/action_result.html",
+            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+        )
+
+    max_workers = _get_max_workers()
+    response = _start_async_action(
+        "protect-with-backup",
+        service.protect_with_backup,
+        method_args=(paths,),
+        method_kwargs={"dry_run": False},
+        file_count=len(paths),
+        max_workers=max_workers,
+    )
+    return HTMLResponse(response)
+
+
+# === Synchronous Action Routes (instant operations) ===
+
+@router.post("/add-to-exclude", response_class=HTMLResponse)
+def add_to_exclude(
+    request: Request,
+    paths: List[str] = Form(default=[]),
+    dry_run: bool = Form(default=True)
+):
+    """Add files to exclude list"""
+    service = get_maintenance_service()
+    started_at = datetime.now()
+    result = service.add_to_exclude(paths, dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("add-to-exclude", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -319,16 +528,18 @@ async def protect_with_backup(
 
 
 @router.post("/clean-exclude", response_class=HTMLResponse)
-async def clean_exclude(
+def clean_exclude(
     request: Request,
     dry_run: bool = Form(default=True)
 ):
     """Clean stale exclude entries"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.clean_exclude(dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("clean-exclude", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -344,16 +555,18 @@ async def clean_exclude(
 
 
 @router.post("/clean-timestamps", response_class=HTMLResponse)
-async def clean_timestamps(
+def clean_timestamps(
     request: Request,
     dry_run: bool = Form(default=True)
 ):
     """Clean stale timestamp entries"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.clean_timestamps(dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("clean-timestamps", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -369,17 +582,19 @@ async def clean_timestamps(
 
 
 @router.post("/fix-timestamps", response_class=HTMLResponse)
-async def fix_timestamps(
+def fix_timestamps(
     request: Request,
     paths: List[str] = Form(default=[]),
     dry_run: bool = Form(default=True)
 ):
     """Fix invalid file timestamps"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.fix_file_timestamps(paths, dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("fix-timestamps", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -395,7 +610,7 @@ async def fix_timestamps(
 
 
 @router.post("/resolve-duplicate", response_class=HTMLResponse)
-async def resolve_duplicate(
+def resolve_duplicate(
     request: Request,
     cache_path: str = Form(...),
     keep: str = Form(...),  # "cache" or "array"
@@ -403,10 +618,12 @@ async def resolve_duplicate(
 ):
     """Resolve a duplicate file"""
     service = get_maintenance_service()
+    started_at = datetime.now()
     result = service.resolve_duplicate(cache_path, keep, dry_run=dry_run)
 
     if not dry_run:
         _invalidate_caches()
+        _record_sync_action("resolve-duplicate", started_at, result)
 
     audit_results = service.run_full_audit()
 
@@ -424,7 +641,7 @@ async def resolve_duplicate(
 # === Preview Routes (always dry_run) ===
 
 @router.get("/preview/restore-plexcached", response_class=HTMLResponse)
-async def preview_restore_plexcached(request: Request):
+def preview_restore_plexcached(request: Request):
     """Preview what restore-plexcached would do"""
     service = get_maintenance_service()
     result = service.restore_all_plexcached(dry_run=True)
@@ -440,7 +657,7 @@ async def preview_restore_plexcached(request: Request):
 
 
 @router.get("/preview/clean-exclude", response_class=HTMLResponse)
-async def preview_clean_exclude(request: Request):
+def preview_clean_exclude(request: Request):
     """Preview what clean-exclude would do"""
     service = get_maintenance_service()
     result = service.clean_exclude(dry_run=True)
@@ -458,7 +675,7 @@ async def preview_clean_exclude(request: Request):
 
 
 @router.get("/preview/clean-timestamps", response_class=HTMLResponse)
-async def preview_clean_timestamps(request: Request):
+def preview_clean_timestamps(request: Request):
     """Preview what clean-timestamps would do"""
     service = get_maintenance_service()
     result = service.clean_timestamps(dry_run=True)

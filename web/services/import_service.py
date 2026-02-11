@@ -123,8 +123,10 @@ class ImportService:
             )
 
         # Check for exclude file (at root level of import folder)
-        # Support both old and new filenames
+        # Support both old and new filenames (check newest first)
         exclude_file = self.import_dir / "unraid_mover_exclusions.txt"
+        if not exclude_file.exists():
+            exclude_file = self.import_dir / "plexcache_cached_files.txt"
         if not exclude_file.exists():
             exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
         if exclude_file.exists() and exclude_file.stat().st_size > 0:
@@ -322,7 +324,7 @@ class ImportService:
                         converted_lines.append(converted_path + '\n')
 
                 # Write to config location
-                target_exclude = CONFIG_DIR / "plexcache_mover_files_to_exclude.txt"
+                target_exclude = CONFIG_DIR / "plexcache_cached_files.txt"
                 with open(target_exclude, 'w') as f:
                     f.writelines(converted_lines)
 
@@ -340,8 +342,10 @@ class ImportService:
                 if settings_file.exists():
                     shutil.move(str(settings_file), str(self.completed_dir / "plexcache_settings.json"))
 
-                # Move exclude file (check both old and new filenames)
+                # Move exclude file (check all filename variants)
                 exclude_file = self.import_dir / "unraid_mover_exclusions.txt"
+                if not exclude_file.exists():
+                    exclude_file = self.import_dir / "plexcache_cached_files.txt"
                 if not exclude_file.exists():
                     exclude_file = self.import_dir / "plexcache_mover_files_to_exclude.txt"
                 if exclude_file.exists():

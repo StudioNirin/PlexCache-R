@@ -2,17 +2,15 @@
 
 from fastapi import APIRouter, Request, Query
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
-from web.config import TEMPLATES_DIR
+from web.config import templates
 from web.services import get_cache_service, get_settings_service
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 @router.get("/", response_class=HTMLResponse)
-async def cache_list(
+def cache_list(
     request: Request,
     source: str = Query("all", description="Filter by source"),
     search: str = Query("", description="Search filter"),
@@ -85,7 +83,7 @@ async def cache_list(
 
 
 @router.get("/drive", response_class=HTMLResponse)
-async def cache_drive(request: Request, expiring_within: int = 7):
+def cache_drive(request: Request, expiring_within: int = 7):
     """Cache drive details page
 
     Args:

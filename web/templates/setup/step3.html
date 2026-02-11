@@ -27,7 +27,9 @@
                 <div style="font-size: 0.9rem;">
                     <strong style="color: var(--plex-info);">What is "Cacheable"?</strong>
                     <p style="margin: 0.25rem 0 0 0; color: var(--plex-text-muted);">
-                        Check <strong>Cacheable</strong> for libraries stored on your Unraid array that can be moved to the cache drive.
+                        Check <strong>Cacheable</strong> for libraries stored on your
+                        {% if is_unraid %}Unraid array{% else %}main storage{% endif %}
+                        that can be moved to the cache drive.
                         Leave unchecked for remote storage (NAS, cloud mounts, network shares) where files cannot be physically relocated.
                     </p>
                 </div>
@@ -85,8 +87,9 @@
                     <strong style="color: var(--plex-orange);">Docker Detected: Host Cache Path</strong>
                     <p style="margin: 0.25rem 0 0 0; color: var(--plex-text-muted);">
                         If your Docker volume mounts remap cache paths (e.g., <code>/mnt/cache_downloads:/mnt/cache</code>),
-                        set <strong>Host Cache</strong> to what Unraid sees (e.g., <code>/mnt/cache_downloads/Movies/</code>).
-                        This ensures the Unraid mover exclude list uses the correct paths.
+                        set <strong>Host Cache</strong> to what the host sees (e.g., <code>/mnt/cache_downloads/Movies/</code>).
+                        {% if is_unraid %}This ensures the Unraid mover exclude list uses the correct paths.
+                        {% else %}This ensures the cache tracking file uses the correct paths.{% endif %}
                     </p>
                 </div>
             </div>

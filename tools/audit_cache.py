@@ -11,6 +11,14 @@ import sys
 import shutil
 import subprocess
 
+# Add project root to path so we can import core modules
+SCRIPT_DIR_INIT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT_INIT = os.path.dirname(SCRIPT_DIR_INIT) if os.path.basename(SCRIPT_DIR_INIT) == 'tools' else SCRIPT_DIR_INIT
+if PROJECT_ROOT_INIT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT_INIT)
+
+from core.system_utils import get_array_direct_path
+
 # Get script directory and resolve project root
 # If we're in tools/, go up one level to project root
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,7 +33,7 @@ SETTINGS_FILE = os.path.join(PROJECT_ROOT, "plexcache_settings.json")
 # Default paths (will be overwritten if settings file exists)
 CACHE_DIRS = []
 ARRAY_DIRS = []
-EXCLUDE_FILE = os.path.join(PROJECT_ROOT, "plexcache_mover_files_to_exclude.txt")
+EXCLUDE_FILE = os.path.join(PROJECT_ROOT, "plexcache_cached_files.txt")
 TIMESTAMPS_FILE = os.path.join(DATA_DIR, "timestamps.json")
 
 # Legacy file locations (for migration)
@@ -65,8 +73,8 @@ def load_settings():
 
                 # Only include cacheable mappings with valid paths
                 if mapping.get('cacheable', True) and cache_path and real_path:
-                    # Convert real_path (/mnt/user/) to array path (/mnt/user0/)
-                    array_path = real_path.replace('/mnt/user/', '/mnt/user0/')
+                    # Convert real_path to array-direct path (ZFS-aware)
+                    array_path = get_array_direct_path(real_path)
                     CACHE_DIRS.append(cache_path)
                     ARRAY_DIRS.append(array_path)
 
@@ -84,9 +92,8 @@ def load_settings():
                 print("   (Or use path_mappings for multi-path mode)")
                 sys.exit(1)
 
-            # Convert real_source (/mnt/user/) to array path (/mnt/user0/)
-            # Unraid: /mnt/user/ is merged view, /mnt/user0/ is array only
-            array_source = real_source.replace('/mnt/user/', '/mnt/user0/')
+            # Convert real_source to array-direct path (ZFS-aware)
+            array_source = get_array_direct_path(real_source)
 
             # Build cache and array directory paths from nas_library_folders
             for folder in nas_library_folders:

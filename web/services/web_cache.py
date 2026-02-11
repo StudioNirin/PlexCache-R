@@ -293,7 +293,7 @@ def init_web_cache():
             "next_run": schedule_status.get("next_run_display", "Not scheduled"),
             "next_run_relative": schedule_status.get("next_run_relative"),
             "health_status": health["status"],
-            "health_issues": health["unprotected_count"] + health["orphaned_count"],
+            "health_issues": health["orphaned_count"],
             "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"]
         }
 
@@ -335,8 +335,6 @@ def _audit_results_to_dict(results) -> dict:
         'timestamp_entry_count': results.timestamp_entry_count,
         'health_status': results.health_status,
         'unprotected_count': len(results.unprotected_files),
-        'new_downloads_count': len(results.new_downloads),
-        'critical_unprotected_count': len(results.critical_unprotected),
         'orphaned_count': len(results.orphaned_plexcached),
         'stale_exclude_count': len(results.stale_exclude_entries),
         'stale_timestamp_count': len(results.stale_timestamp_entries),

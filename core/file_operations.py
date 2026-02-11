@@ -9,6 +9,7 @@ import logging
 import threading
 import json
 import time
+import tempfile
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Set, Optional, Tuple, Dict, TYPE_CHECKING, Callable
@@ -169,10 +170,20 @@ class JSONTracker:
         pass
 
     def _save(self) -> None:
-        """Save tracker data to file."""
+        """Save tracker data to file atomically (write-to-temp-then-rename)."""
         try:
-            with open(self.tracker_file, 'w', encoding='utf-8') as f:
-                json.dump(self._data, f, indent=2)
+            dir_name = os.path.dirname(self.tracker_file) or '.'
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self._data, f, indent=2)
+                os.replace(tmp_path, self.tracker_file)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except IOError as e:
             logging.error(f"Could not save {self._tracker_name} file: {type(e).__name__}: {e}")
 
@@ -322,10 +333,20 @@ class CacheTimestampTracker:
             self._timestamps = {}
 
     def _save(self) -> None:
-        """Save timestamps to file."""
+        """Save timestamps to file atomically (write-to-temp-then-rename)."""
         try:
-            with open(self.timestamp_file, 'w', encoding='utf-8') as f:
-                json.dump(self._timestamps, f, indent=2)
+            dir_name = os.path.dirname(self.timestamp_file) or '.'
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self._timestamps, f, indent=2)
+                os.replace(tmp_path, self.timestamp_file)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except IOError as e:
             logging.error(f"Could not save timestamp file: {type(e).__name__}: {e}")
 
@@ -1445,8 +1466,8 @@ class PlexcachedMigration:
             # On Unraid, check user0 (direct array) for .plexcached
             # This is the authoritative location - .plexcached should be on array
             if self.is_unraid:
-                array_file_user0 = array_file.replace("/mnt/user/", "/mnt/user0/", 1)
-                plexcached_file = array_file_user0 + PLEXCACHED_EXTENSION
+                array_file_direct = get_array_direct_path(array_file)
+                plexcached_file = array_file_direct + PLEXCACHED_EXTENSION
 
                 # Check if .plexcached exists on array
                 if os.path.isfile(plexcached_file):
@@ -1454,11 +1475,11 @@ class PlexcachedMigration:
                     continue
 
                 # Check if original exists on array (file wasn't cached yet)
-                if os.path.isfile(array_file_user0):
+                if os.path.isfile(array_file_direct):
                     logging.debug(f"Original exists on array, no migration needed: {cache_file}")
                     continue
 
-                array_file_check = array_file_user0
+                array_file_check = array_file_direct
             else:
                 array_file_check = array_file
                 plexcached_file = array_file + PLEXCACHED_EXTENSION
@@ -2208,7 +2229,7 @@ class FileFilter:
         # Note: Retention period check is handled upstream in get_files_to_move_back_to_array()
         # which correctly distinguishes between TV shows (retention applies) and movies (no retention)
 
-        array_file = file.replace("/mnt/user/", "/mnt/user0/", 1) if self.is_unraid else file
+        array_file = get_array_direct_path(file) if self.is_unraid else file
         array_path = os.path.dirname(array_file)
 
         # Check if exact file already exists on array
@@ -2240,7 +2261,7 @@ class FileFilter:
 
     def _should_add_to_cache(self, file: str, cache_file_name: str) -> bool:
         """Determine if a file should be added to the cache."""
-        array_file = file.replace("/mnt/user/", "/mnt/user0/", 1) if self.is_unraid else file
+        array_file = get_array_direct_path(file) if self.is_unraid else file
 
         # Check if file already exists on cache
         if os.path.isfile(cache_file_name):
@@ -2380,7 +2401,7 @@ class FileFilter:
 
     def get_files_to_move_back_to_array(self, current_ondeck_items: Set[str],
                                        current_watchlist_items: Set[str],
-                                       files_to_skip: Optional[Set[str]] = None) -> Tuple[List[str], List[str]]:
+                                       files_to_skip: Optional[Set[str]] = None) -> Tuple[List[str], List[str], List[str]]:
         """Get files in cache that should be moved back to array because they're no longer needed.
 
         For TV shows: Episodes before the OnDeck episode are considered watched and will be moved back.
@@ -2395,16 +2416,24 @@ class FileFilter:
             current_watchlist_items: Set of file paths currently on watchlist.
             files_to_skip: Optional set of file paths to skip (e.g., active sessions).
                           These files will NOT be marked for removal from exclude list.
+
+        Returns:
+            Tuple of (files_to_move_back, stale_entries, move_back_exclude_paths):
+            - files_to_move_back: Array paths for files to move back.
+            - stale_entries: Exclude list paths for files no longer on cache (safe to remove immediately).
+            - move_back_exclude_paths: Exclude list paths for files being moved back
+              (only safe to remove after the move succeeds).
         """
         files_to_move_back = []
-        cache_paths_to_remove = []
+        stale_entries = []
+        move_back_exclude_paths = []
         retention_holds = []
 
         try:
             # Read exclude file
             if not os.path.exists(self.mover_cache_exclude_file):
                 logging.info("No exclude file found, nothing to move back")
-                return files_to_move_back, cache_paths_to_remove
+                return files_to_move_back, stale_entries, move_back_exclude_paths
 
             with open(self.mover_cache_exclude_file, 'r') as f:
                 cache_files = [line.strip() for line in f if line.strip()]
@@ -2421,7 +2450,7 @@ class FileFilter:
                 check_path = self._translate_from_host_path(cache_file)
                 if not os.path.exists(check_path):
                     logging.debug(f"Cache file no longer exists: {cache_file}")
-                    cache_paths_to_remove.append(cache_file)
+                    stale_entries.append(cache_file)
                     continue
 
                 # Determine if file should be kept
@@ -2469,7 +2498,7 @@ class FileFilter:
                 display_name = self._extract_display_name(cache_file)
                 logging.debug(f"Media no longer needed, will move back to array: {display_name} - {cache_file}")
                 files_to_move_back.append(array_file)
-                cache_paths_to_remove.append(cache_file)
+                move_back_exclude_paths.append(cache_file)
 
             # Log retention summary
             if retention_holds:
@@ -2482,7 +2511,7 @@ class FileFilter:
         except Exception as e:
             logging.exception(f"Error getting files to move back to array: {type(e).__name__}: {e}")
 
-        return files_to_move_back, cache_paths_to_remove
+        return files_to_move_back, stale_entries, move_back_exclude_paths
 
     def _extract_tv_info(self, file_path: str) -> Optional[Tuple[str, int, int]]:
         """
@@ -2786,7 +2815,8 @@ class FileMover:
                  path_modifier: Optional['MultiPathModifier'] = None,
                  stop_check: Optional[Callable[[], bool]] = None,
                  create_plexcached_backups: bool = True,
-                 hardlinked_files: str = "skip"):
+                 hardlinked_files: str = "skip",
+                 cleanup_empty_folders: bool = True):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
@@ -2798,6 +2828,7 @@ class FileMover:
         self._stop_check = stop_check  # Callback to check if stop requested
         self.create_plexcached_backups = create_plexcached_backups  # Whether to create .plexcached backups
         self.hardlinked_files = hardlinked_files  # How to handle hard-linked files: "skip" or "move"
+        self.cleanup_empty_folders = cleanup_empty_folders  # Whether to remove empty parent folders after moves
         self._exclude_file_lock = threading.Lock()
         # Progress tracking
         self._progress_lock = threading.Lock()
@@ -2815,6 +2846,9 @@ class FileMover:
         self._stop_requested = False
         # Hard-link tracking: maps cache file paths to inode numbers for restoration
         self._hardlink_inodes: Dict[str, int] = {}
+        # Track successful array moves for deferred exclude list cleanup (issue #13)
+        self._successful_array_moves: List[str] = []
+        self._successful_array_moves_lock = threading.Lock()
 
     def move_media_files(self, files: List[str], destination: str,
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
@@ -2830,6 +2864,9 @@ class FileMover:
         """
         # Store source map for use during moves
         self._source_map = source_map or {}
+        # Reset successful array moves tracker for deferred exclude list cleanup
+        if destination == 'array':
+            self._successful_array_moves = []
         logging.debug(f"Moving media files to {destination}...")
         logging.debug(f"Total files to process: {len(files)}")
 
@@ -2905,7 +2942,7 @@ class FileMover:
 
         # Modify the user path if unraid is True
         if self.is_unraid:
-            user_path = user_path.replace("/mnt/user/", "/mnt/user0/", 1)
+            user_path = get_array_direct_path(user_path)
 
         # Get the user file name by joining the user path with the base name of the file to move
         user_file_name = os.path.join(user_path, os.path.basename(file_to_move))
@@ -3346,6 +3383,9 @@ class FileMover:
                 result = self._move_to_cache(src, dest, cache_file_name, original_path)
             elif destination == 'array':
                 result = self._move_to_array(src, dest, cache_file_name)
+                if result == 0:
+                    with self._successful_array_moves_lock:
+                        self._successful_array_moves.append(cache_file_name)
             else:
                 result = 0
 
@@ -3901,7 +3941,8 @@ class FileMover:
                     os.remove(cache_file)
                     logging.debug(f"Deleted cache file: {cache_file}")
                     # Clean up empty parent folders (per File and Folder Management Policy)
-                    self._cleanup_empty_parent_folders(cache_file)
+                    if self.cleanup_empty_folders:
+                        self._cleanup_empty_parent_folders(cache_file)
                 else:
                     logging.debug(f"Cache file already removed: {cache_file}")
 

@@ -5,12 +5,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
-from web.config import TEMPLATES_DIR, LOGS_DIR
+from web.config import templates, LOGS_DIR
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 @router.get("/", response_class=HTMLResponse)

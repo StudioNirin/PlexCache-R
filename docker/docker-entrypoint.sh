@@ -36,10 +36,10 @@ if [ ! -L "/app/logs" ]; then
     ln -sf /config/logs /app/logs
 fi
 
-# Mover exclude files
-if [ ! -L "/app/plexcache_mover_files_to_exclude.txt" ]; then
-    rm -f /app/plexcache_mover_files_to_exclude.txt 2>/dev/null || true
-    ln -sf /config/plexcache_mover_files_to_exclude.txt /app/plexcache_mover_files_to_exclude.txt
+# Cached files list
+if [ ! -L "/app/plexcache_cached_files.txt" ]; then
+    rm -f /app/plexcache_cached_files.txt 2>/dev/null || true
+    ln -sf /config/plexcache_cached_files.txt /app/plexcache_cached_files.txt
 fi
 
 if [ ! -L "/app/unraid_mover_exclusions.txt" ]; then

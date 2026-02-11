@@ -32,7 +32,7 @@
                 <div class="form-group">
                     <label for="watchlist_retention_days">Watchlist Retention (days)</label>
                     <input type="number" id="watchlist_retention_days" name="watchlist_retention_days"
-                           value="{{ settings.watchlist_retention_days | default(14) }}" min="0" max="365" step="0.5">
+                           value="{{ '%g' % (settings.watchlist_retention_days | default(14) | float) }}" min="0" max="365" step="0.5">
                     <div class="form-hint">Auto-expire watchlist items after this period (0 = never expire)</div>
                 </div>
             </div>
@@ -59,6 +59,10 @@
                 Cache Management
             </h3>
 
+            <div class="form-hint" style="margin-bottom: 1rem;">
+                Cache Limit and Eviction are based on <strong>total drive usage</strong> (all files on the cache drive), not just PlexCache-managed files. Other applications, downloads, and system files all count toward the limit.
+            </div>
+
             <div class="form-group">
                 <label class="switch">
                     <input type="checkbox" name="watched_move"
@@ -74,6 +78,15 @@
                     <span>Create .plexcached Backup Files</span>
                 </label>
                 <div class="form-hint">When moving files to cache, keep backup on array (allows recovery if cache fails)</div>
+            </div>
+
+            <div class="form-group">
+                <label class="switch">
+                    <input type="checkbox" name="cleanup_empty_folders"
+                           {% if settings.cleanup_empty_folders | default(true) %}checked{% endif %}>
+                    <span>Clean Up Empty Folders</span>
+                </label>
+                <div class="form-hint">Remove empty parent folders on cache after moving files to array. Disable if you use year-based or other intentional empty folder structures.</div>
             </div>
 
             <div class="form-group">
@@ -124,12 +137,28 @@
                            value="{{ settings.cache_limit | default('250GB') }}"
                            placeholder="500GB or 75%"
                            oninput="updateCacheCalculations()">
-                    <div class="form-hint">Stop caching new files when drive usage exceeds this (e.g., 500GB or 75%)</div>
+                    <div class="form-hint">Maximum <strong>total drive usage</strong> before PlexCache stops caching (e.g., 500GB or 75%). Includes all files on the drive, not just PlexCache-managed files. Leave empty for no cap.</div>
                     <div id="cache_limit_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                    <div id="cache_limit_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
+                        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                        <span id="cache_limit_warning_text"></span>
+                    </div>
+                    <div id="cache_limit_hint" class="form-hint" style="display: none; color: var(--plex-text-muted); margin-top: 0.25rem;"></div>
                 </div>
 
                 <div class="form-group">
-                    <!-- Empty column for grid alignment -->
+                    <label for="min_free_space">Min Free Space</label>
+                    <input type="text" id="min_free_space" name="min_free_space"
+                           value="{{ settings.min_free_space | default('') }}"
+                           placeholder="50GB or 5%"
+                           oninput="updateCacheCalculations()">
+                    <div class="form-hint">Safety floor: always keep at least this much free space on the drive (e.g., 50GB or 5%). Useful when other apps also write to the cache drive. Leave empty to disable.</div>
+                    <div id="min_free_space_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                    <div id="min_free_space_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
+                        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                        <span id="min_free_space_warning_text"></span>
+                    </div>
+                    <div id="min_free_space_hint" class="form-hint" style="display: none; color: var(--plex-text-muted); margin-top: 0.25rem;"></div>
                 </div>
             </div>
 
@@ -165,7 +194,7 @@
                     Add Folder
                 </button>
                 <div class="form-hint" style="margin-top: 0.5rem;">
-                    Common examples: <code>@Recycle</code>, <code>#recycle</code>, <code>@eaDir</code>
+                    Common examples: <code>@Recycle</code>, <code>#recycle</code>
                 </div>
             </div>
 
@@ -191,7 +220,7 @@
                     <input type="number" id="cache_eviction_threshold_percent" name="cache_eviction_threshold_percent"
                            value="{{ settings.cache_eviction_threshold_percent | default(95) }}" min="50" max="100"
                            oninput="updateCacheCalculations()">
-                    <div class="form-hint">Start evicting when drive usage exceeds this % of Cache Limit</div>
+                    <div class="form-hint">Start evicting low-priority files when total drive usage exceeds this percentage of your Cache Limit</div>
                     <div id="eviction_threshold_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
                 </div>
 
@@ -268,6 +297,9 @@
 // Drive info from server (auto-detected)
 const autoDetectedBytes = {{ drive_info.total_bytes | default(0) }};
 const autoDetectedDisplay = "{{ drive_info.total_display | default('Unknown') }}";
+const currentDriveUsedBytes = {{ drive_info.used_bytes | default(0) }};
+const currentDriveUsedDisplay = "{{ drive_info.used_display | default('Unknown') }}";
+const currentDriveFreeBytes = {{ drive_info.free_bytes | default(0) }};
 
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -321,12 +353,15 @@ function parseCacheLimit(value) {
 function updateCacheCalculations() {
     const cacheDriveSizeInput = document.getElementById('cache_drive_size');
     const cacheLimitInput = document.getElementById('cache_limit');
+    const minFreeSpaceInput = document.getElementById('min_free_space');
     const evictionThresholdInput = document.getElementById('cache_eviction_threshold_percent');
     const cacheLimitCalc = document.getElementById('cache_limit_calculated');
+    const minFreeSpaceCalc = document.getElementById('min_free_space_calculated');
     const evictionThresholdCalc = document.getElementById('eviction_threshold_calculated');
     const driveSizeDisplay = document.getElementById('drive_size_display');
 
     const cacheLimitValue = cacheLimitInput.value;
+    const minFreeSpaceValue = minFreeSpaceInput.value;
     const evictionPercent = parseInt(evictionThresholdInput.value) || 95;
 
     // Get effective drive size (manual or auto)
@@ -348,6 +383,9 @@ function updateCacheCalculations() {
     // Calculate cache limit bytes
     const cacheLimitBytes = parseCacheLimit(cacheLimitValue);
 
+    // Calculate min free space bytes
+    const minFreeSpaceBytes = parseCacheLimit(minFreeSpaceValue);
+
     // Update cache limit display
     if (cacheLimitBytes > 0) {
         if (cacheLimitValue.includes('%') && effectiveSize > 0) {
@@ -362,9 +400,75 @@ function updateCacheCalculations() {
         // Calculate and show eviction threshold
         const evictionBytes = Math.round(cacheLimitBytes * evictionPercent / 100);
         evictionThresholdCalc.textContent = `= ${formatBytes(evictionBytes)} (${evictionPercent}% of ${formatBytes(cacheLimitBytes)})`;
+
+        // Show warning if drive is already over cache limit
+        const warningDiv = document.getElementById('cache_limit_warning');
+        const warningText = document.getElementById('cache_limit_warning_text');
+        if (warningDiv && currentDriveUsedBytes > 0) {
+            if (currentDriveUsedBytes >= cacheLimitBytes) {
+                warningText.textContent = `Drive is currently at ${currentDriveUsedDisplay} — already over this limit. No new files will be cached until usage drops below ${formatBytes(cacheLimitBytes)}.`;
+                warningDiv.style.display = 'block';
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            } else {
+                warningDiv.style.display = 'none';
+            }
+        }
     } else {
         cacheLimitCalc.textContent = '';
         evictionThresholdCalc.textContent = '';
+        const warningDiv = document.getElementById('cache_limit_warning');
+        if (warningDiv) warningDiv.style.display = 'none';
+    }
+
+    // Update min free space display
+    if (minFreeSpaceBytes > 0) {
+        if (minFreeSpaceValue.includes('%') && effectiveSize > 0) {
+            minFreeSpaceCalc.textContent = `= ${formatBytes(minFreeSpaceBytes)} of ${effectiveDisplay} must stay free`;
+        } else if (effectiveSize > 0) {
+            const percent = (minFreeSpaceBytes / effectiveSize * 100).toFixed(1);
+            minFreeSpaceCalc.textContent = `= ${percent}% of ${effectiveDisplay} drive must stay free`;
+        } else {
+            minFreeSpaceCalc.textContent = `= ${formatBytes(minFreeSpaceBytes)} must stay free`;
+        }
+
+        // Show warning if drive is already below floor
+        const mfsWarningDiv = document.getElementById('min_free_space_warning');
+        const mfsWarningText = document.getElementById('min_free_space_warning_text');
+        if (mfsWarningDiv && currentDriveFreeBytes > 0) {
+            if (currentDriveFreeBytes < minFreeSpaceBytes) {
+                mfsWarningText.textContent = `Drive currently has ${formatBytes(currentDriveFreeBytes)} free — already below this floor. No new files will be cached until free space exceeds ${formatBytes(minFreeSpaceBytes)}.`;
+                mfsWarningDiv.style.display = 'block';
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            } else {
+                mfsWarningDiv.style.display = 'none';
+            }
+        }
+    } else {
+        minFreeSpaceCalc.textContent = '';
+        const mfsWarningDiv = document.getElementById('min_free_space_warning');
+        if (mfsWarningDiv) mfsWarningDiv.style.display = 'none';
+    }
+
+    // Contextual hints between cache_limit and min_free_space
+    const cacheLimitHint = document.getElementById('cache_limit_hint');
+    const minFreeSpaceHint = document.getElementById('min_free_space_hint');
+
+    if (cacheLimitHint) {
+        if (cacheLimitBytes === 0 && minFreeSpaceBytes > 0) {
+            cacheLimitHint.textContent = 'No cache limit set — min free space will be the only constraint.';
+            cacheLimitHint.style.display = 'block';
+        } else {
+            cacheLimitHint.style.display = 'none';
+        }
+    }
+
+    if (minFreeSpaceHint) {
+        if (minFreeSpaceBytes === 0 && cacheLimitBytes > 0) {
+            minFreeSpaceHint.textContent = 'Tip: Set a min free space floor as a safety net in case other apps fill the drive.';
+            minFreeSpaceHint.style.display = 'block';
+        } else {
+            minFreeSpaceHint.style.display = 'none';
+        }
     }
 }
 

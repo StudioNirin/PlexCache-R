@@ -1,7 +1,6 @@
 """Setup wizard routes for first-run configuration"""
 
 import json
-import os
 import uuid
 import time
 import requests
@@ -9,13 +8,11 @@ from typing import Optional, Dict, Any, List
 
 from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 
-from web.config import TEMPLATES_DIR, PROJECT_ROOT
+from web.config import templates, PROJECT_ROOT
 from web.services import get_settings_service
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # PlexCache-R OAuth identifiers
 PLEXCACHE_PRODUCT_NAME = 'PlexCache-R'
@@ -108,8 +105,6 @@ async def setup_wizard(request: Request, step: int = 1):
         context["library_cacheable"] = settings.get("library_cacheable", {})
         context["cache_dir"] = settings.get("cache_dir", "/mnt/cache")
         context["path_mappings"] = settings.get("path_mappings", [])
-        # Check if running in Docker (existence of /.dockerenv or /run/.containerenv)
-        context["is_docker"] = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
     elif step == 4:
         # Users - use cached data if available, otherwise fetch from Plex

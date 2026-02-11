@@ -9,8 +9,13 @@
 
         <h2>Welcome to PlexCache-R</h2>
         <p class="description">
+            {% if is_unraid %}
             Intelligent media caching for Plex on Unraid. Cache your frequently-accessed
             media to a fast SSD while keeping the rest on your array.
+            {% else %}
+            Intelligent media caching for Plex. Cache your frequently-accessed
+            media to a fast drive while keeping the rest on your storage pool.
+            {% endif %}
         </p>
 
         <ul class="feature-list" style="text-align: left;">
@@ -20,7 +25,7 @@
             </li>
             <li>
                 <i data-lucide="check-circle"></i>
-                <span>Move watched content back to the array</span>
+                <span>{% if is_unraid %}Move watched content back to the array{% else %}Move watched content back to main storage{% endif %}</span>
             </li>
             <li>
                 <i data-lucide="check-circle"></i>

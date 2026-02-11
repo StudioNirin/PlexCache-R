@@ -44,20 +44,28 @@
                     <div class="form-group">
                         <label for="new_plex_path">Plex Path</label>
                         <input type="text" id="new_plex_path" name="plex_path" placeholder="/media/tv" required>
-                        <div class="form-hint">Path as seen by Plex (container path)</div>
+                        <div class="form-hint">Path as Plex sees it. Find this in Plex under Settings &gt; Libraries.</div>
                     </div>
                 </div>
 
                 <div class="grid grid-2">
                     <div class="form-group">
                         <label for="new_real_path">Real Path</label>
-                        <input type="text" id="new_real_path" name="real_path" placeholder="/mnt/user/media/tv" required>
-                        <div class="form-hint">Actual filesystem path</div>
+                        <input type="text" id="new_real_path" name="real_path"
+                               placeholder="{% if is_unraid %}/mnt/user/TV Shows/{% else %}/media/tv{% endif %}" required>
+                        <div class="form-hint">
+                            {% if is_unraid %}Where files live on your Unraid share (e.g., <code>/mnt/user/Movies/</code>). Works with both array and ZFS pool shares.
+                            {% else %}Actual filesystem path where your media files are stored.{% endif %}
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="new_cache_path">Cache Path</label>
-                        <input type="text" id="new_cache_path" name="cache_path" placeholder="/mnt/cache/media/tv">
-                        <div class="form-hint">Cache drive path (optional)</div>
+                        <input type="text" id="new_cache_path" name="cache_path"
+                               placeholder="{% if is_unraid %}/mnt/cache/TV Shows/{% else %}/mnt/ssd/tv{% endif %}">
+                        <div class="form-hint">
+                            {% if is_unraid %}Fast drive path to cache files to (e.g., <code>/mnt/cache/Movies/</code>).
+                            {% else %}Fast drive path where cached copies are stored (optional).{% endif %}
+                        </div>
                     </div>
                 </div>
 
@@ -66,7 +74,7 @@
                     <label for="new_host_cache_path" style="color: var(--plex-orange);">Host Cache Path (Docker)</label>
                     <input type="text" id="new_host_cache_path" name="host_cache_path" placeholder="/mnt/cache_downloads/media/tv">
                     <div class="form-hint">
-                        The actual host path Unraid sees. Only needed if Docker remaps your cache path
+                        The actual host path {% if is_unraid %}Unraid{% else %}the host{% endif %} sees. Only needed if Docker remaps your cache path
                         (e.g., <code>/mnt/cache_downloads:/mnt/cache</code>).
                     </div>
                 </div>

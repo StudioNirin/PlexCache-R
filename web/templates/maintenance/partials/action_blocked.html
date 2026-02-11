@@ -1,0 +1,6 @@
+<!-- Shown when a maintenance action can't start because something else is running -->
+<div class="alert alert-warning" style="margin-bottom: 1rem;">
+    <i data-lucide="alert-triangle"></i>
+    <span>{{ message | default("An operation is currently running. Please wait for it to complete before starting a new action.") }}</span>
+</div>
+<script>lucide.createIcons();</script>

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Callable
 from dataclasses import dataclass, field
 
-from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE
+from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
 
 # Activity persistence settings - use DATA_DIR for Docker compatibility
 ACTIVITY_FILE = DATA_DIR / "recent_activity.json"
@@ -55,15 +55,20 @@ class OperationState(str, Enum):
 class FileActivity:
     """Represents a file operation"""
     timestamp: datetime
-    action: str  # "cached", "restored", "moved"
+    action: str  # "Cached", "Restored", "Protected", "Moved to Array", etc.
     filename: str
     size_bytes: int = 0
     users: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        fmt = get_time_format()
+        if fmt == "12h":
+            time_display = self.timestamp.strftime("%-I:%M:%S %p")
+        else:
+            time_display = self.timestamp.strftime("%H:%M:%S")
         return {
             "timestamp": self.timestamp.isoformat(),
-            "time_display": self.timestamp.strftime("%H:%M:%S"),
+            "time_display": time_display,
             "action": self.action,
             "filename": self.filename,
             "size": self._format_size(self.size_bytes),
@@ -78,6 +83,71 @@ class FileActivity:
                 return f"{size_bytes:.2f} {unit}"
             size_bytes /= 1024
         return f"{size_bytes:.2f} PB"
+
+
+MAX_RECENT_ACTIVITY = 500
+
+
+def load_activity() -> List[FileActivity]:
+    """Load activity from disk, filtering out entries older than retention period."""
+    try:
+        if not ACTIVITY_FILE.exists():
+            return []
+
+        with open(ACTIVITY_FILE, 'r') as f:
+            data = json.load(f)
+
+        cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
+        activities = []
+
+        for item in data:
+            try:
+                timestamp = datetime.fromisoformat(item['timestamp'])
+                if timestamp > cutoff:
+                    activities.append(FileActivity(
+                        timestamp=timestamp,
+                        action=item['action'],
+                        filename=item['filename'],
+                        size_bytes=item.get('size_bytes', 0),
+                        users=item.get('users', [])
+                    ))
+            except (KeyError, ValueError):
+                continue  # Skip malformed entries
+
+        # Sort by timestamp descending (newest first) and limit
+        activities.sort(key=lambda x: x.timestamp, reverse=True)
+        return activities[:MAX_RECENT_ACTIVITY]
+
+    except Exception as e:
+        logging.debug(f"Could not load activity history: {e}")
+        return []
+
+
+def save_activity(activities: List[FileActivity]) -> None:
+    """Save activity to disk, filtering out old entries."""
+    try:
+        # Ensure data directory exists
+        ACTIVITY_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
+
+        # Filter to only entries within retention period
+        data = []
+        for activity in activities:
+            if activity.timestamp > cutoff:
+                data.append({
+                    'timestamp': activity.timestamp.isoformat(),
+                    'action': activity.action,
+                    'filename': activity.filename,
+                    'size_bytes': activity.size_bytes,
+                    'users': activity.users
+                })
+
+        with open(ACTIVITY_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+
+    except Exception as e:
+        logging.debug(f"Could not save activity history: {e}")
 
 
 @dataclass
@@ -103,9 +173,11 @@ class WebLogHandler(logging.Handler):
     def __init__(self, callback: Callable[[str], None]):
         super().__init__()
         self.callback = callback
+        fmt = get_time_format()
+        datefmt = '%-I:%M:%S %p' if fmt == '12h' else '%H:%M:%S'
         self.setFormatter(logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s',
-            datefmt='%H:%M:%S'
+            datefmt=datefmt
         ))
 
     def emit(self, record):
@@ -127,8 +199,8 @@ class OperationRunner:
         self._log_messages: List[str] = []
         self._max_log_messages = 500
         self._subscribers: List[asyncio.Queue] = []
-        self._recent_activity: List[FileActivity] = []
-        self._max_recent_activity = 100  # Stacks across runs, keeps last 100 entries
+        self._recent_activity: List[FileActivity] = load_activity()
+        self._max_recent_activity = MAX_RECENT_ACTIVITY
         self._stop_requested = False  # Flag to signal operation should stop
         self._app_instance: Optional["PlexCacheApp"] = None  # Reference to running app
         # Track current operation type based on headers
@@ -144,8 +216,6 @@ class OperationRunner:
         # Tracker data for user lookups (loaded on operation start)
         self._ondeck_tracker: Dict = {}
         self._watchlist_tracker: Dict = {}
-        # Load persisted activity from disk
-        self._load_activity()
 
     def _load_trackers(self) -> None:
         """Load OnDeck and Watchlist trackers for user lookups"""
@@ -216,64 +286,19 @@ class OperationRunner:
 
         return sorted(users)
 
-    def _load_activity(self) -> None:
-        """Load activity from disk, filtering out entries older than retention period."""
-        try:
-            if not ACTIVITY_FILE.exists():
-                return
+    def _save_activity(self, new_entry: FileActivity = None) -> None:
+        """Save activity to disk.
 
-            with open(ACTIVITY_FILE, 'r') as f:
-                data = json.load(f)
-
-            cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
-            activities = []
-
-            for item in data:
-                try:
-                    timestamp = datetime.fromisoformat(item['timestamp'])
-                    if timestamp > cutoff:
-                        activities.append(FileActivity(
-                            timestamp=timestamp,
-                            action=item['action'],
-                            filename=item['filename'],
-                            size_bytes=item.get('size_bytes', 0),
-                            users=item.get('users', [])
-                        ))
-                except (KeyError, ValueError):
-                    continue  # Skip malformed entries
-
-            # Sort by timestamp descending (newest first) and limit
-            activities.sort(key=lambda x: x.timestamp, reverse=True)
-            self._recent_activity = activities[:self._max_recent_activity]
-
-        except Exception as e:
-            logging.debug(f"Could not load activity history: {e}")
-
-    def _save_activity(self) -> None:
-        """Save activity to disk, filtering out old entries."""
-        try:
-            # Ensure data directory exists
-            ACTIVITY_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-            cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
-
-            # Filter to only entries within retention period
-            data = []
-            for activity in self._recent_activity:
-                if activity.timestamp > cutoff:
-                    data.append({
-                        'timestamp': activity.timestamp.isoformat(),
-                        'action': activity.action,
-                        'filename': activity.filename,
-                        'size_bytes': activity.size_bytes,
-                        'users': activity.users
-                    })
-
-            with open(ACTIVITY_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
-
-        except Exception as e:
-            logging.debug(f"Could not save activity history: {e}")
+        If new_entry is provided, loads existing entries from disk first
+        to avoid overwriting entries added by MaintenanceRunner.
+        """
+        if new_entry:
+            activities = load_activity()
+            activities.insert(0, new_entry)
+            activities = activities[:MAX_RECENT_ACTIVITY]
+            save_activity(activities)
+        else:
+            save_activity(self._recent_activity)
 
     @property
     def state(self) -> OperationState:
@@ -306,9 +331,12 @@ class OperationRunner:
 
     @property
     def recent_activity(self) -> List[dict]:
-        """Get recent file activity as list of dicts"""
-        with self._lock:
-            return [a.to_dict() for a in self._recent_activity]
+        """Get recent file activity as list of dicts.
+
+        Reloads from disk to include entries written by MaintenanceRunner.
+        """
+        activities = load_activity()
+        return [a.to_dict() for a in activities]
 
     def _parse_size(self, size_str: str) -> int:
         """Parse a size string like '1.5 GB' into bytes."""
@@ -383,8 +411,8 @@ class OperationRunner:
                 self._recent_activity.insert(0, activity)
                 if len(self._recent_activity) > self._max_recent_activity:
                     self._recent_activity = self._recent_activity[:self._max_recent_activity]
-            # Persist to disk
-            self._save_activity()
+            # Persist to disk (load-merge-save to avoid overwriting maintenance entries)
+            self._save_activity(new_entry=activity)
             return
 
         # Note: Legacy preview header entries (without [Action] prefix) are intentionally
@@ -428,8 +456,14 @@ class OperationRunner:
             verbose: If True, enable DEBUG level logging
 
         Returns:
-            True if operation started, False if already running
+            True if operation started, False if already running or maintenance is running
         """
+        # Check mutual exclusion with MaintenanceRunner
+        from web.services.maintenance_runner import get_maintenance_runner
+        if get_maintenance_runner().is_running:
+            logging.info("Operation blocked - maintenance action in progress")
+            return False
+
         with self._lock:
             if self._state == OperationState.RUNNING:
                 return False

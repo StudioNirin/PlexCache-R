@@ -48,6 +48,7 @@ class CacheSettings:
     cache_retention_hours: int = 12
     cache_drive_size: str = ""  # Manual override for drive size (for ZFS)
     cache_limit: str = "250GB"
+    min_free_space: str = ""
     cache_eviction_mode: str = "none"
     cache_eviction_threshold_percent: int = 95
     eviction_min_priority: int = 60
@@ -249,10 +250,12 @@ class SettingsService:
             "watchlist_retention_days": raw.get("watchlist_retention_days", 0),
             "watched_move": raw.get("watched_move", True),
             "create_plexcached_backups": raw.get("create_plexcached_backups", True),
+            "cleanup_empty_folders": raw.get("cleanup_empty_folders", True),
             "hardlinked_files": raw.get("hardlinked_files", "skip"),
             "cache_retention_hours": raw.get("cache_retention_hours", 12),
             "cache_drive_size": raw.get("cache_drive_size", ""),
             "cache_limit": raw.get("cache_limit", "250GB"),
+            "min_free_space": raw.get("min_free_space", ""),
             "cache_eviction_mode": raw.get("cache_eviction_mode", "none"),
             "cache_eviction_threshold_percent": raw.get("cache_eviction_threshold_percent", 95),
             "eviction_min_priority": raw.get("eviction_min_priority", 60),
@@ -281,10 +284,12 @@ class SettingsService:
             "watchlist_retention_days": ("watchlist_retention_days", float),
             "watched_move": ("watched_move", lambda x: x == "on" or x is True),
             "create_plexcached_backups": ("create_plexcached_backups", lambda x: x == "on" or x is True),
+            "cleanup_empty_folders": ("cleanup_empty_folders", lambda x: x == "on" or x is True),
             "hardlinked_files": ("hardlinked_files", str),
             "cache_retention_hours": ("cache_retention_hours", safe_int),
             "cache_drive_size": ("cache_drive_size", str),
             "cache_limit": ("cache_limit", str),
+            "min_free_space": ("min_free_space", str),
             "cache_eviction_mode": ("cache_eviction_mode", str),
             "cache_eviction_threshold_percent": ("cache_eviction_threshold_percent", safe_int),
             "eviction_min_priority": ("eviction_min_priority", safe_int),
@@ -346,7 +351,8 @@ class SettingsService:
         raw = self._load_raw()
         return {
             "max_log_files": raw.get("max_log_files", 24),
-            "keep_error_logs_days": raw.get("keep_error_logs_days", 7)
+            "keep_error_logs_days": raw.get("keep_error_logs_days", 7),
+            "time_format": raw.get("time_format", "24h")
         }
 
     def save_logging_settings(self, settings: Dict[str, Any]) -> bool:
@@ -370,6 +376,12 @@ class SettingsService:
                     raw["keep_error_logs_days"] = keep_error_logs_days
             except (ValueError, TypeError):
                 pass
+
+        # Validate and save time_format
+        if "time_format" in settings:
+            time_format = settings["time_format"]
+            if time_format in ("12h", "24h"):
+                raw["time_format"] = time_format
 
         return self._save_raw(raw)
 
@@ -999,7 +1011,7 @@ class SettingsService:
             "users_toggle", "skip_ondeck", "skip_watchlist", "watchlist_toggle",
             "watchlist_episodes", "watchlist_retention_days", "watched_move",
             "create_plexcached_backups", "hardlinked_files", "cache_retention_hours",
-            "cache_limit", "cache_eviction_mode", "cache_eviction_threshold_percent",
+            "cache_limit", "min_free_space", "cache_eviction_mode", "cache_eviction_threshold_percent",
             "eviction_min_priority", "remote_watchlist_toggle", "remote_watchlist_rss_url",
             "notification_type", "unraid_level", "unraid_levels", "webhook_url",
             "webhook_level", "webhook_levels", "max_log_files", "keep_error_logs_days",

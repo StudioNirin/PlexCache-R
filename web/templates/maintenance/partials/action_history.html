@@ -1,0 +1,149 @@
+{% if entries %}
+<div class="table-container" style="max-height: 500px; overflow-y: auto;">
+    <table id="history-table" style="font-size: 0.9rem;">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Action</th>
+                <th>Result</th>
+                <th>Files</th>
+                <th>Duration</th>
+                <th style="width: 40px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+            <tr class="history-row" style="cursor: pointer;" onclick="toggleHistoryDetail('{{ entry.id }}')">
+                <td class="text-muted" style="white-space: nowrap;">
+                    {% set ts = entry.timestamp %}
+                    {% if ts %}
+                        {% set parts = ts.split('T') %}
+                        {% if parts|length >= 2 %}
+                            {% set date_part = parts[0] %}
+                            {% set time_parts = parts[1].split('.')[0].split(':') %}
+                            {% if time_format == '12h' and time_parts|length >= 2 %}
+                                {% set h = time_parts[0]|int %}
+                                {% set ampm = 'AM' if h < 12 else 'PM' %}
+                                {% set h12 = h % 12 %}
+                                {% if h12 == 0 %}{% set h12 = 12 %}{% endif %}
+                                {{ date_part[5:] }} {{ h12 }}:{{ time_parts[1] }} {{ ampm }}
+                            {% else %}
+                                {{ date_part[5:] }} {{ time_parts[0] }}:{{ time_parts[1] }}
+                            {% endif %}
+                        {% else %}
+                            {{ ts[:16] }}
+                        {% endif %}
+                    {% endif %}
+                </td>
+                <td>
+                    {% set badge_color = 'badge-muted' %}
+                    {% if not entry.success %}
+                        {% set badge_color = 'badge-danger' %}
+                    {% elif entry.action_name in ['protect-with-backup', 'fix-with-backup', 'add-to-exclude'] %}
+                        {% set badge_color = 'badge-success' %}
+                    {% elif entry.action_name in ['restore-plexcached', 'sync-to-array'] %}
+                        {% set badge_color = 'badge-info' %}
+                    {% elif entry.action_name in ['delete-plexcached'] %}
+                        {% set badge_color = 'badge-warning' %}
+                    {% endif %}
+                    <span class="badge {{ badge_color }}">{{ entry.action_display }}</span>
+                    {% if entry.was_stopped %}
+                    <span class="badge badge-warning" style="margin-left: 0.25rem;">Stopped</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if entry.success %}
+                    <span style="color: var(--success);">
+                        <i data-lucide="check-circle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                        OK
+                    </span>
+                    {% else %}
+                    <span style="color: var(--danger);">
+                        <i data-lucide="x-circle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                        {{ entry.error_count }} error{{ 's' if entry.error_count != 1 else '' }}
+                    </span>
+                    {% endif %}
+                </td>
+                <td class="text-muted">{{ entry.affected_count }}/{{ entry.file_count }}</td>
+                <td class="text-muted" style="white-space: nowrap;">{{ entry.duration_display }}</td>
+                <td style="text-align: center;">
+                    <i data-lucide="chevron-down" id="history-chevron-{{ entry.id }}" style="width: 14px; height: 14px; color: var(--plex-text-muted); transition: transform 0.2s;"></i>
+                </td>
+            </tr>
+            <!-- Detail row (hidden by default) -->
+            <tr id="history-detail-{{ entry.id }}" style="display: none;">
+                <td colspan="6" style="padding: 0.75rem 1rem; background: var(--plex-bg);">
+                    {% if entry.affected_files %}
+                    <div style="margin-bottom: {{ '0.75rem' if entry.errors else '0' }};">
+                        <strong style="font-size: 0.85rem;">Affected files:</strong>
+                        <ul style="margin: 0.25rem 0 0 1.25rem; padding: 0; font-size: 0.85rem;">
+                            {% for f in entry.affected_files %}
+                            <li class="text-muted">{{ f }}</li>
+                            {% endfor %}
+                            {% if entry.affected_count > entry.affected_files|length %}
+                            <li class="text-muted" style="font-style: italic;">...and {{ entry.affected_count - entry.affected_files|length }} more</li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                    {% if entry.errors %}
+                    <div>
+                        <strong style="font-size: 0.85rem; color: var(--danger);">Errors:</strong>
+                        <ul style="margin: 0.25rem 0 0 1.25rem; padding: 0; font-size: 0.85rem;">
+                            {% for err in entry.errors %}
+                            <li style="color: var(--danger);">{{ err }}</li>
+                            {% endfor %}
+                            {% if entry.error_count > entry.errors|length %}
+                            <li style="color: var(--danger); font-style: italic;">...and {{ entry.error_count - entry.errors|length }} more</li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                    {% if not entry.affected_files and not entry.errors %}
+                    <span class="text-muted" style="font-size: 0.85rem;">No additional details.</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_count > showing %}
+<div style="text-align: center; padding: 0.75rem;">
+    <button class="btn btn-sm btn-secondary"
+            hx-get="/maintenance/history?limit={{ limit }}&offset={{ showing }}"
+            hx-target="#history-more"
+            hx-swap="outerHTML">
+        Show more ({{ total_count - showing }} remaining)
+    </button>
+    <div id="history-more"></div>
+</div>
+{% endif %}
+
+{% else %}
+<div style="text-align: center; padding: 2rem;">
+    <i data-lucide="clock" style="width: 40px; height: 40px; color: var(--plex-text-muted); margin-bottom: 0.75rem;"></i>
+    <p class="text-muted" style="margin: 0;">No maintenance actions recorded yet.</p>
+</div>
+{% endif %}
+
+<script>
+function toggleHistoryDetail(id) {
+    const detail = document.getElementById('history-detail-' + id);
+    const chevron = document.getElementById('history-chevron-' + id);
+    if (!detail) return;
+
+    if (detail.style.display === 'none') {
+        detail.style.display = '';
+        if (chevron) chevron.style.transform = 'rotate(180deg)';
+    } else {
+        detail.style.display = 'none';
+        if (chevron) chevron.style.transform = '';
+    }
+}
+
+if (typeof lucide !== 'undefined') {
+    lucide.createIcons();
+}
+</script>

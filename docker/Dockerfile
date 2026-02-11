@@ -12,6 +12,7 @@ LABEL org.opencontainers.image.vendor="Brandon Haney"
 
 # Build args for version tracking
 ARG GIT_COMMIT=unknown
+ARG IMAGE_TAG=latest
 
 # Environment defaults
 ENV PYTHONUNBUFFERED=1 \
@@ -19,7 +20,8 @@ ENV PYTHONUNBUFFERED=1 \
     TZ=America/Los_Angeles \
     WEB_PORT=5757 \
     LOG_LEVEL=INFO \
-    GIT_COMMIT=$GIT_COMMIT
+    GIT_COMMIT=$GIT_COMMIT \
+    IMAGE_TAG=$IMAGE_TAG
 
 # Install system dependencies
 # php-cli is needed for Unraid's notify script (optional mount for Unraid notifications)

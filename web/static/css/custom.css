@@ -208,26 +208,35 @@ footer {
     opacity: 0.7;
 }
 
-/* Recent Activity scrollable container - hidden scrollbar */
+/* Recent Activity scrollable container */
 .recent-activity-scroll {
     max-height: 400px;
     overflow-y: auto;
-    /* Hide scrollbar for Chrome, Safari, Opera */
     -webkit-overflow-scrolling: touch;
 }
 
+/* Thin subtle scrollbar for Chrome/Safari/Edge */
 .recent-activity-scroll::-webkit-scrollbar {
-    display: none;
+    width: 6px;
 }
 
-/* Hide scrollbar for Firefox */
-.recent-activity-scroll {
-    scrollbar-width: none;
+.recent-activity-scroll::-webkit-scrollbar-track {
+    background: transparent;
 }
 
-/* Hide scrollbar for IE and Edge */
+.recent-activity-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+}
+
+.recent-activity-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* Thin scrollbar for Firefox */
 .recent-activity-scroll {
-    -ms-overflow-style: none;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
 /* Keep table header sticky while scrolling */

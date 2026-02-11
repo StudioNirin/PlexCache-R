@@ -2,17 +2,17 @@
 
 import time
 import uuid
+import threading
 from pathlib import Path
 from typing import Dict, Any, List
 
 import requests
 from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 
-from web.config import TEMPLATES_DIR, CONFIG_DIR
+from web.config import templates, CONFIG_DIR
 from web.services import get_settings_service, get_scheduler_service
-from core.system_utils import get_disk_usage, detect_zfs
+from core.system_utils import get_disk_usage, detect_zfs, parse_size_bytes
 from core.file_operations import (
     PRIORITY_RANGE_ONDECK_MIN,
     PRIORITY_RANGE_ONDECK_MAX,
@@ -20,40 +20,19 @@ from core.file_operations import (
     PRIORITY_RANGE_WATCHLIST_MAX,
 )
 
-
-def _parse_size_bytes(size_str: str) -> int:
-    """Parse size string and return bytes. Returns 0 for auto-detect."""
-    if not size_str or size_str.strip() == "0":
-        return 0
-    size_str = size_str.strip().upper()
-    try:
-        if size_str.endswith('TB'):
-            return int(float(size_str[:-2]) * 1024**4)
-        elif size_str.endswith('GB'):
-            return int(float(size_str[:-2]) * 1024**3)
-        elif size_str.endswith('MB'):
-            return int(float(size_str[:-2]) * 1024**2)
-        elif size_str.endswith('T'):
-            return int(float(size_str[:-1]) * 1024**4)
-        elif size_str.endswith('G'):
-            return int(float(size_str[:-1]) * 1024**3)
-        elif size_str.endswith('M'):
-            return int(float(size_str[:-1]) * 1024**2)
-        else:
-            return int(float(size_str) * 1024**3)  # Default to GB
-    except ValueError:
-        return 0
+# Backward-compatible alias
+_parse_size_bytes = parse_size_bytes
 
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # OAuth constants
 PLEXCACHE_PRODUCT_NAME = 'PlexCache-R'
 PLEXCACHE_PRODUCT_VERSION = '3.0'
 
-# Store OAuth state in memory
+# Store OAuth state in memory (with lock for thread safety)
 _oauth_state: Dict[str, Any] = {}
+_oauth_state_lock = threading.Lock()
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -190,11 +169,20 @@ async def save_plex_settings(request: Request):
     # Get single values
     plex_url = form.get("plex_url", "")
     plex_token = form.get("plex_token", "")
-    days_to_monitor = int(form.get("days_to_monitor", 183))
-    number_episodes = int(form.get("number_episodes", 5))
+    try:
+        days_to_monitor = int(form.get("days_to_monitor", 183))
+    except (ValueError, TypeError):
+        days_to_monitor = 183
+    try:
+        number_episodes = int(form.get("number_episodes", 5))
+    except (ValueError, TypeError):
+        number_episodes = 5
 
     # Get multi-value checkbox fields
-    valid_sections = [int(v) for v in form.getlist("valid_sections")]
+    try:
+        valid_sections = [int(v) for v in form.getlist("valid_sections")]
+    except (ValueError, TypeError):
+        valid_sections = []
 
     # Note: users_toggle, skip_ondeck, skip_watchlist are now managed by /settings/users
     success = settings_service.save_plex_settings({
@@ -369,10 +357,8 @@ async def save_user_settings(request: Request):
 @router.get("/paths", response_class=HTMLResponse)
 async def settings_paths(request: Request):
     """Path mappings tab"""
-    import os
     settings_service = get_settings_service()
     mappings = settings_service.get_path_mappings()
-    is_docker = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
     return templates.TemplateResponse(
         "settings/paths.html",
@@ -381,7 +367,6 @@ async def settings_paths(request: Request):
             "page_title": "Path Settings",
             "active_tab": "paths",
             "mappings": mappings,
-            "is_docker": is_docker
         }
     )
 
@@ -398,9 +383,7 @@ async def add_path_mapping(
     enabled: str = Form(None)
 ):
     """Add a new path mapping"""
-    import os
     settings_service = get_settings_service()
-    is_docker = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
     # Default host_cache_path to cache_path if not provided
     effective_host_cache_path = host_cache_path if host_cache_path else cache_path
@@ -427,7 +410,6 @@ async def add_path_mapping(
                 "request": request,
                 "mapping": mapping,
                 "index": index,
-                "is_docker": is_docker
             }
         )
     else:
@@ -447,9 +429,7 @@ async def update_path_mapping(
     enabled: str = Form(None)
 ):
     """Update an existing path mapping"""
-    import os
     settings_service = get_settings_service()
-    is_docker = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
     # Default host_cache_path to cache_path if not provided
     effective_host_cache_path = host_cache_path if host_cache_path else cache_path
@@ -473,7 +453,6 @@ async def update_path_mapping(
                 "request": request,
                 "mapping": mapping,
                 "index": index,
-                "is_docker": is_docker
             }
         )
     else:
@@ -483,9 +462,7 @@ async def update_path_mapping(
 @router.delete("/paths/{index}", response_class=HTMLResponse)
 async def delete_path_mapping(request: Request, index: int):
     """Delete a path mapping and return the updated list"""
-    import os
     settings_service = get_settings_service()
-    is_docker = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
 
     success = settings_service.delete_path_mapping(index)
 
@@ -494,7 +471,7 @@ async def delete_path_mapping(request: Request, index: int):
         mappings = settings_service.get_path_mappings()
         return templates.TemplateResponse(
             "settings/partials/path_mappings_list.html",
-            {"request": request, "mappings": mappings, "is_docker": is_docker}
+            {"request": request, "mappings": mappings}
         )
     else:
         return HTMLResponse("<div class='alert alert-error'>Failed to delete mapping</div>")
@@ -532,6 +509,13 @@ async def settings_cache(request: Request):
                 drive_info["total_display"] = f"{total_gb/1024:.2f} TB"
             else:
                 drive_info["total_display"] = f"{total_gb:.1f} GB"
+            drive_info["free_bytes"] = disk_usage.free
+            drive_info["used_bytes"] = disk_usage.used
+            used_gb = disk_usage.used / (1024**3)
+            if used_gb >= 1024:
+                drive_info["used_display"] = f"{used_gb/1024:.2f} TB"
+            else:
+                drive_info["used_display"] = f"{used_gb:.1f} GB"
             # Add flag to indicate if using manual override
             if drive_size_override > 0:
                 drive_info["is_manual_override"] = True
@@ -597,13 +581,11 @@ async def save_cache_settings(request: Request):
 async def settings_notifications(request: Request):
     """Notification settings tab"""
     import os
-    from core.system_utils import SystemDetector
 
     settings_service = get_settings_service()
     settings = settings_service.get_notification_settings()
 
     # Check if Unraid notify script is available (for Docker info message)
-    detector = SystemDetector()
     notify_paths = [
         "/usr/local/emhttp/plugins/dynamix/scripts/notify",
         "/usr/local/emhttp/webGui/scripts/notify",
@@ -617,7 +599,6 @@ async def settings_notifications(request: Request):
             "page_title": "Notification Settings",
             "active_tab": "notifications",
             "settings": settings,
-            "is_docker": detector.is_docker,
             "unraid_notify_available": unraid_notify_available
         }
     )
@@ -776,14 +757,16 @@ async def settings_logging(request: Request):
 async def save_logging_settings(
     request: Request,
     max_log_files: int = Form(24),
-    keep_error_logs_days: int = Form(7)
+    keep_error_logs_days: int = Form(7),
+    time_format: str = Form("24h")
 ):
     """Save logging settings"""
     settings_service = get_settings_service()
 
     success = settings_service.save_logging_settings({
         "max_log_files": max_log_files,
-        "keep_error_logs_days": keep_error_logs_days
+        "keep_error_logs_days": keep_error_logs_days,
+        "time_format": time_format
     })
 
     if success:
@@ -1037,16 +1020,21 @@ async def import_settings_file(request: Request):
 
 def _get_or_create_client_id() -> str:
     """Get existing client ID from settings or create a new one"""
-    settings_service = get_settings_service()
-    settings = settings_service.get_all()
+    try:
+        settings_service = get_settings_service()
+        settings = settings_service.get_all()
 
-    if settings.get("plexcache_client_id"):
-        return settings["plexcache_client_id"]
+        if settings.get("plexcache_client_id"):
+            return settings["plexcache_client_id"]
 
-    # Generate and save new client ID
-    client_id = str(uuid.uuid4())
-    settings_service.save_general_settings({"plexcache_client_id": client_id})
-    return client_id
+        # Generate and save new client ID
+        client_id = str(uuid.uuid4())
+        settings_service.save_general_settings({"plexcache_client_id": client_id})
+        return client_id
+    except Exception as e:
+        import logging
+        logging.warning(f"Could not load/save client ID: {e}")
+        return str(uuid.uuid4())
 
 
 @router.post("/plex/oauth/start")
@@ -1080,11 +1068,12 @@ async def oauth_start():
         return JSONResponse({"success": False, "error": "Invalid response from Plex"})
 
     # Store pin for polling
-    _oauth_state[client_id] = {
-        "pin_id": pin_id,
-        "pin_code": pin_code,
-        "created": time.time()
-    }
+    with _oauth_state_lock:
+        _oauth_state[client_id] = {
+            "pin_id": pin_id,
+            "pin_code": pin_code,
+            "created": time.time()
+        }
 
     auth_url = f"https://app.plex.tv/auth#?clientID={client_id}&code={pin_code}&context%5Bdevice%5D%5Bproduct%5D={PLEXCACHE_PRODUCT_NAME}"
 
@@ -1098,16 +1087,17 @@ async def oauth_start():
 @router.get("/plex/oauth/poll")
 async def oauth_poll(client_id: str = Query(...)):
     """Poll for OAuth completion"""
-    if client_id not in _oauth_state:
-        return JSONResponse({"success": False, "error": "Invalid or expired client ID"})
+    with _oauth_state_lock:
+        if client_id not in _oauth_state:
+            return JSONResponse({"success": False, "error": "Invalid or expired client ID"})
 
-    state = _oauth_state[client_id]
-    pin_id = state["pin_id"]
+        state = _oauth_state[client_id]
+        pin_id = state["pin_id"]
 
-    # Check if state is too old (10 minutes)
-    if time.time() - state["created"] > 600:
-        del _oauth_state[client_id]
-        return JSONResponse({"success": False, "error": "OAuth session expired"})
+        # Check if state is too old (10 minutes)
+        if time.time() - state["created"] > 600:
+            del _oauth_state[client_id]
+            return JSONResponse({"success": False, "error": "OAuth session expired"})
 
     headers = {
         'Accept': 'application/json',
@@ -1128,7 +1118,8 @@ async def oauth_poll(client_id: str = Query(...)):
         auth_token = pin_status.get('authToken')
         if auth_token:
             # Clean up state
-            del _oauth_state[client_id]
+            with _oauth_state_lock:
+                _oauth_state.pop(client_id, None)
             return JSONResponse({
                 "success": True,
                 "complete": True,

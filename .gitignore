@@ -10,7 +10,7 @@ __pycache__/
 
 # User data files
 plexcache_settings.json
-plexcache_mover_files_to_exclude.txt
+plexcache_cached_files.txt
 plexcache_timestamps.json
 plexcache_watchlist_tracker.json
 plexcache_user_tokens.json

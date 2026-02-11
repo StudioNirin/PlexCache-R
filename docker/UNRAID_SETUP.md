@@ -148,7 +148,7 @@ PlexCache-R writes a list of cached files to prevent the Unraid mover from movin
 2. Go to **Settings** → **Mover Tuning**
 3. Set **File exclusion path** to:
    ```
-   /mnt/user/appdata/plexcache/plexcache_mover_files_to_exclude.txt
+   /mnt/user/appdata/plexcache/plexcache_cached_files.txt
    ```
 4. Click **Apply**
 
@@ -157,9 +157,9 @@ Now the Unraid mover will skip files that PlexCache-R has cached.
 ### How It Works
 
 ```
-PlexCache-R writes: /config/plexcache_mover_files_to_exclude.txt
+PlexCache-R writes: /config/plexcache_cached_files.txt
     ↓ (mapped to host)
-Host path: /mnt/user/appdata/plexcache/plexcache_mover_files_to_exclude.txt
+Host path: /mnt/user/appdata/plexcache/plexcache_cached_files.txt
     ↓ (CA Mover Tuning reads)
 Mover skips listed files
 ```
@@ -280,7 +280,7 @@ docker exec plexcache-r python3 plexcache.py --show-priorities
 ### Mover Moving Cached Files
 
 1. Confirm CA Mover Tuning is configured with the correct path
-2. Check the exclude file exists: `/mnt/user/appdata/plexcache/plexcache_mover_files_to_exclude.txt`
+2. Check the exclude file exists: `/mnt/user/appdata/plexcache/plexcache_cached_files.txt`
 3. Verify the file contains your cached media paths
 
 ### Permission Issues / "Path not writable" Error
@@ -309,7 +309,7 @@ If you were running PlexCache-R via User Scripts or the CLI version:
    ```bash
    mkdir -p /mnt/user/appdata/plexcache/import
    cp /path/to/plexcache_settings.json /mnt/user/appdata/plexcache/import/
-   cp /path/to/plexcache_mover_files_to_exclude.txt /mnt/user/appdata/plexcache/import/
+   cp /path/to/plexcache_cached_files.txt /mnt/user/appdata/plexcache/import/
    cp -r /path/to/data /mnt/user/appdata/plexcache/import/
    ```
 
@@ -341,7 +341,7 @@ After installation, your `/mnt/user/appdata/plexcache` folder will contain:
 ```
 /mnt/user/appdata/plexcache/
 ├── plexcache_settings.json              # Configuration
-├── plexcache_mover_files_to_exclude.txt # Mover exclude list
+├── plexcache_cached_files.txt            # Cached files list
 ├── data/
 │   ├── timestamps.json                   # Cache timestamps
 │   ├── ondeck_tracker.json               # OnDeck tracking

@@ -17,7 +17,7 @@ import os
 from core import __version__
 from core.config import ConfigManager
 from core.logging_config import LoggingManager, reset_warning_error_flag
-from core.system_utils import SystemDetector, FileUtils, SingleInstanceLock, get_disk_usage, get_array_direct_path
+from core.system_utils import SystemDetector, FileUtils, SingleInstanceLock, get_disk_usage, get_array_direct_path, detect_zfs, set_zfs_prefixes
 from core.plex_api import PlexManager, OnDeckItem
 from core.file_operations import MultiPathModifier, SubtitleFinder, FileFilter, FileMover, PlexcachedRestorer, CacheTimestampTracker, WatchlistTracker, OnDeckTracker, CachePriorityManager, PlexcachedMigration, get_media_identity, find_matching_plexcached
 
@@ -65,6 +65,8 @@ class PlexCacheApp:
         # Eviction tracking
         self.evicted_count = 0
         self.evicted_bytes = 0
+        # Deferred exclude list removal for move-back files (issue #13)
+        self._move_back_exclude_paths: list = []
 
         # Stop request flag (for web UI to abort operations)
         self._stop_requested = False
@@ -102,12 +104,26 @@ class PlexCacheApp:
                 print("ERROR: Another instance of PlexCache is already running. Exiting.")
                 return
 
-            # Check if Unraid mover is running (prevents race condition)
+            # Wait for Unraid mover to finish (prevents race condition)
             if self._is_mover_running():
-                logging.warning("Unraid mover is currently running. Exiting to prevent race condition.")
-                logging.warning("PlexCache will run on the next scheduled execution after mover completes.")
-                print("WARNING: Unraid mover is running. Exiting to avoid conflicts.")
-                return
+                max_wait_seconds = 4 * 60 * 60  # 4 hours
+                poll_interval = 30  # Check every 30 seconds
+                logging.warning("Unraid mover is currently running. Waiting for it to finish before proceeding...")
+                print("WARNING: Unraid mover is running. Waiting for it to finish...")
+                waited = 0
+                while self._is_mover_running():
+                    if self.should_stop:
+                        logging.info("Stop requested while waiting for mover. Exiting.")
+                        return
+                    if waited >= max_wait_seconds:
+                        logging.warning(f"Mover still running after {max_wait_seconds // 3600} hours. Skipping this run.")
+                        return
+                    time.sleep(poll_interval)
+                    waited += poll_interval
+                    if waited % 300 == 0:  # Log every 5 minutes
+                        logging.info(f"Still waiting for mover to finish... ({waited // 60} minutes elapsed)")
+                minutes_waited = waited / 60
+                logging.info(f"Unraid mover finished after {minutes_waited:.1f} minutes of waiting. Proceeding with PlexCache run.")
 
             # Load configuration
             logging.debug("Loading configuration...")
@@ -372,20 +388,34 @@ class PlexCacheApp:
         the mover is actively moving files, which can result in files
         being moved back to the array before they're added to the exclude list.
 
+        Detection methods (in order):
+        1. PID file check - works in both CLI and Docker (if /var/run is mounted)
+        2. pgrep fallback - works in CLI or Docker with --pid=host
+
         Returns:
             True if mover is running, False otherwise.
         """
         if not self.system_detector.is_unraid:
             return False
 
+        # Check for mover PID file (created by mover/age_mover, removed on completion)
+        # In Docker: /host_var_run/mover.pid (mount /var/run:/host_var_run:ro)
+        # On host:   /var/run/mover.pid
+        for pid_path in ['/host_var_run/mover.pid', '/var/run/mover.pid']:
+            if os.path.exists(pid_path):
+                logging.info(f"Unraid mover detected via PID file: {pid_path}")
+                return True
+
         try:
-            # Check for mover process using pgrep
+            # Fallback: check for mover process using pgrep
+            # Works on host or in Docker with --pid=host
             result = subprocess.run(
                 ['pgrep', '-f', '/usr/local/sbin/mover'],
                 capture_output=True,
                 text=True
             )
             if result.returncode == 0 and result.stdout.strip():
+                logging.info("Unraid mover detected via pgrep (mover)")
                 return True
 
             # Also check for the age_mover script (CA Mover Tuning plugin)
@@ -394,11 +424,14 @@ class PlexCacheApp:
                 capture_output=True,
                 text=True
             )
-            return result.returncode == 0 and result.stdout.strip() != ''
+            if result.returncode == 0 and result.stdout.strip() != '':
+                logging.info("Unraid mover detected via pgrep (age_mover)")
+                return True
 
         except (subprocess.SubprocessError, FileNotFoundError):
-            # If we can't check, assume mover is not running
-            return False
+            pass
+
+        return False
 
     def _init_plex_manager(self) -> None:
         """Initialize the Plex manager with token cache."""
@@ -483,7 +516,8 @@ class PlexCacheApp:
             path_modifier=self.file_path_modifier,
             stop_check=lambda: self.should_stop,  # Allow FileMover to check for stop requests
             create_plexcached_backups=self.config_manager.cache.create_plexcached_backups,
-            hardlinked_files=self.config_manager.cache.hardlinked_files
+            hardlinked_files=self.config_manager.cache.hardlinked_files,
+            cleanup_empty_folders=self.config_manager.cache.cleanup_empty_folders
         )
 
     def _init_cache_management(self) -> None:
@@ -498,6 +532,41 @@ class PlexCacheApp:
             eviction_min_priority=self.config_manager.cache.eviction_min_priority,
             number_episodes=self.config_manager.plex.number_episodes
         )
+
+    def _detect_zfs_paths(self) -> None:
+        """Detect ZFS-backed path mappings and configure array-direct path conversion.
+
+        On Unraid, /mnt/user/ is normally converted to /mnt/user0/ (array-direct) to
+        avoid FUSE ambiguity. But ZFS pool-only shares (shareUseCache=only) never have
+        files at /mnt/user0/ — their files live on the ZFS pool. For these paths, we
+        skip the conversion so file operations work correctly.
+
+        Only runs on Unraid (non-ZFS systems are unaffected).
+        """
+        if not self.system_detector.is_unraid:
+            return
+
+        zfs_prefixes = set()
+        all_mappings = self.config_manager.paths.path_mappings or []
+
+        for mapping in all_mappings:
+            if not mapping.enabled:
+                continue
+            real_path = mapping.real_path or ""
+            if real_path.startswith('/mnt/user/'):
+                is_zfs = detect_zfs(real_path)
+                if is_zfs:
+                    prefix = real_path.rstrip('/') + '/'
+                    zfs_prefixes.add(prefix)
+                    logging.info(f"ZFS pool detected for: {real_path} (array-direct conversion disabled)")
+                else:
+                    logging.debug(f"No ZFS detected for: {real_path} (standard array path)")
+
+        if zfs_prefixes:
+            set_zfs_prefixes(zfs_prefixes)
+            logging.info(f"ZFS prefixes configured: {zfs_prefixes}")
+        else:
+            logging.debug("No ZFS-backed paths found — all paths use standard array-direct conversion")
 
     def _migrate_exclude_file_paths(self, exclude_file: Path) -> None:
         """Migrate exclude file entries from container paths to host paths (Docker only).
@@ -574,6 +643,9 @@ class PlexCacheApp:
 
         # Initialize path modifier and subtitle finder
         self._init_path_modifier()
+
+        # Detect ZFS-backed path mappings (must happen before any file operations)
+        self._detect_zfs_paths()
 
         # Get file paths for trackers
         mover_exclude = self.config_manager.get_cached_files_file()
@@ -1139,6 +1211,20 @@ class PlexCacheApp:
                 self._log_restore_and_move_summary(files_to_restore, files_to_move)
             self._safe_move_files(self.media_to_array, 'array')
 
+            # Deferred exclude list cleanup: only remove entries for files that actually moved (issue #13)
+            # This prevents losing tracking of files if a move fails (e.g., disk full, I/O error)
+            if self._move_back_exclude_paths and self.file_mover and not self.dry_run:
+                successful_moves = set(self.file_mover._successful_array_moves)
+                if successful_moves:
+                    self.file_filter.remove_files_from_exclude_list(list(successful_moves))
+
+                # Log warnings for files that failed to move (their exclude entries stay protected)
+                deferred_count = len(self._move_back_exclude_paths)
+                succeeded_count = len(successful_moves)
+                if succeeded_count < deferred_count:
+                    failed_count = deferred_count - succeeded_count
+                    logging.warning(f"{failed_count} file(s) failed to move to array — exclude entries preserved for retry")
+
         # Step 2: Run smart eviction BEFORE filtering/caching (frees more space if needed)
         # This runs after array moves so we have accurate space calculations
         if self.media_to_cache:
@@ -1237,6 +1323,37 @@ class PlexCacheApp:
             limit_readable = f"{cache_limit_bytes / (1024**3):.1f}GB"
             return (cache_limit_bytes, limit_readable)
 
+    def _get_effective_min_free_space(self, cache_dir: str) -> tuple:
+        """Calculate effective min free space in bytes, handling percentage-based values.
+
+        Args:
+            cache_dir: Path to the cache directory.
+
+        Returns:
+            Tuple of (min_free_bytes, readable_str). Returns (0, None) if disabled.
+        """
+        min_free_bytes = self.config_manager.cache.min_free_space_bytes
+
+        if min_free_bytes == 0:
+            return (0, None)
+
+        if min_free_bytes < 0:
+            # Negative value indicates percentage
+            percent = abs(min_free_bytes)
+            try:
+                drive_size_override = self.config_manager.cache.cache_drive_size_bytes
+                disk_usage = get_disk_usage(cache_dir, drive_size_override)
+                total_drive_size = disk_usage.total
+                free_bytes = int(total_drive_size * percent / 100)
+                readable = f"{percent}% of {total_drive_size / (1024**3):.1f}GB = {free_bytes / (1024**3):.1f}GB"
+                return (free_bytes, readable)
+            except Exception as e:
+                logging.warning(f"Could not calculate cache drive size for min_free_space percentage: {e}")
+                return (0, None)
+        else:
+            readable = f"{min_free_bytes / (1024**3):.1f}GB"
+            return (min_free_bytes, readable)
+
     def _get_plexcache_tracked_size(self) -> tuple:
         """Calculate current PlexCache tracked size from exclude file.
 
@@ -1275,15 +1392,16 @@ class PlexCacheApp:
         return (plexcache_tracked, cached_files)
 
     def _apply_cache_limit(self, media_files: List[str], cache_dir: str) -> List[str]:
-        """Apply cache size limit, filtering out files that would exceed the limit.
+        """Apply cache size limit and min free space, filtering out files that would exceed limits.
 
-        Returns the list of files that fit within the cache limit.
+        Returns the list of files that fit within the most restrictive constraint.
         Files are prioritized in the order they appear (OnDeck items should come first).
         """
         cache_limit_bytes, limit_readable = self._get_effective_cache_limit(cache_dir)
+        min_free_bytes, min_free_readable = self._get_effective_min_free_space(cache_dir)
 
-        # No limit set or error calculating
-        if cache_limit_bytes == 0:
+        # No constraints set
+        if cache_limit_bytes == 0 and min_free_bytes == 0:
             return media_files
 
         # Get total cache drive usage (use manual override if configured)
@@ -1296,14 +1414,39 @@ class PlexCacheApp:
             logging.warning(f"Could not determine cache drive usage: {e}, skipping limit check")
             return media_files
 
-        logging.info(f"Cache limit: {limit_readable}")
-        logging.info(f"Cache drive usage: {drive_usage_gb:.2f}GB")
+        if cache_limit_bytes > 0:
+            logging.info(f"Cache limit: {limit_readable}")
+        if min_free_bytes > 0:
+            logging.info(f"Min free space: {min_free_readable}")
+        logging.info(f"Cache drive usage: {drive_usage_gb:.2f}GB (free: {disk_usage.free / (1024**3):.2f}GB)")
 
-        # Calculate available space from actual drive usage
-        available_space = cache_limit_bytes - drive_usage_bytes
+        # Calculate available space from each constraint
+        available_space = None
+        bottleneck = None
+
+        if cache_limit_bytes > 0:
+            cache_limit_available = cache_limit_bytes - drive_usage_bytes
+            available_space = cache_limit_available
+            bottleneck = "cache_limit"
+
+        if min_free_bytes > 0:
+            min_free_available = disk_usage.free - min_free_bytes
+            if available_space is None or min_free_available < available_space:
+                available_space = min_free_available
+                bottleneck = "min_free_space"
+
+        if available_space is None:
+            return media_files
+
+        # Log which constraint is the bottleneck when both are active
+        if cache_limit_bytes > 0 and min_free_bytes > 0:
+            logging.info(f"Active constraint: {bottleneck.replace('_', ' ')} (available: {available_space / (1024**3):.2f}GB)")
 
         if available_space <= 0:
-            logging.warning(f"Cache drive already at or over limit ({drive_usage_gb:.2f}GB used, limit is {limit_readable})")
+            if bottleneck == "min_free_space":
+                logging.warning(f"Drive free space ({disk_usage.free / (1024**3):.2f}GB) is at or below min free space floor ({min_free_readable})")
+            else:
+                logging.warning(f"Cache drive already at or over limit ({drive_usage_gb:.2f}GB used, limit is {limit_readable})")
             return []
         files_to_cache = []
         skipped_count = 0
@@ -1667,15 +1810,21 @@ class PlexCacheApp:
                         logging.info(f"Eviction upgrade detected: {old_name} -> {new_name}")
 
                         # Copy the upgraded cache file to array BEFORE deleting old backup
+                        # CRITICAL: Copy to /mnt/user0/ (array direct), NOT /mnt/user/ (FUSE)
+                        # If we copy to /mnt/user/, Unraid's cache policy may put the file
+                        # back on cache (if shareUseCache=yes), causing data loss
+                        array_direct_path = get_array_direct_path(array_path)
                         if os.path.exists(cache_path):
                             import shutil
                             try:
-                                shutil.copy2(cache_path, array_path)
-                                logging.debug(f"Copied upgraded file to array: {array_path}")
-                                # Verify copy succeeded
-                                if os.path.exists(array_path):
+                                array_direct_dir = os.path.dirname(array_direct_path)
+                                os.makedirs(array_direct_dir, exist_ok=True)
+                                shutil.copy2(cache_path, array_direct_path)
+                                logging.debug(f"Copied upgraded file to array: {array_direct_path}")
+                                # Verify copy succeeded using array-direct path
+                                if os.path.exists(array_direct_path):
                                     cache_size = os.path.getsize(cache_path)
-                                    array_size = os.path.getsize(array_path)
+                                    array_size = os.path.getsize(array_direct_path)
                                     if cache_size == array_size:
                                         array_restored = True
                                         # NOW safe to delete old backup
@@ -1683,7 +1832,7 @@ class PlexCacheApp:
                                         logging.debug(f"Deleted old .plexcached: {old_plexcached}")
                                     else:
                                         logging.error(f"Size mismatch after copy! Cache: {cache_size}, Array: {array_size}. Skipping eviction.")
-                                        os.remove(array_path)  # Remove failed copy
+                                        os.remove(array_direct_path)  # Remove failed copy
                                         continue
                             except OSError as e:
                                 logging.error(f"Failed to copy to array during eviction: {e}. Skipping eviction.")
@@ -1743,8 +1892,9 @@ class PlexCacheApp:
                         stat_info = os.stat(cache_path)
                         if stat_info.st_nlink > 1:
                             logging.debug(f"File has {stat_info.st_nlink} hardlinks, deleting won't free space: {os.path.basename(cache_path)}")
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logging.warning(f"Cannot stat cache file, skipping eviction: {os.path.basename(cache_path)}: {e}")
+                        continue
                     os.remove(cache_path)
                     logging.debug(f"Deleted cache file: {os.path.basename(cache_path)}")
                 else:
@@ -1888,10 +2038,10 @@ class PlexCacheApp:
             current_ondeck_items = self.ondeck_items
             # Use the freshly fetched watchlist items (already filtered for retention in _process_watchlist)
             current_watchlist_items = getattr(self, 'watchlist_items', set())
-            
+
             # Get files that should be moved back to array (tracked by exclude file)
             # Pass files_to_skip to prevent removing active session files from exclude list
-            files_to_move_back, cache_paths_to_remove = self.file_filter.get_files_to_move_back_to_array(
+            files_to_move_back, stale_entries, move_back_exclude_paths = self.file_filter.get_files_to_move_back_to_array(
                 current_ondeck_items, current_watchlist_items, set(self.files_to_skip)
             )
 
@@ -1899,12 +2049,18 @@ class PlexCacheApp:
                 logging.debug(f"Found {len(files_to_move_back)} files to move back to array")
                 self.media_to_array.extend(files_to_move_back)
 
-            # Clean up stale entries from exclude list (files that no longer exist on cache)
+            # Clean up stale entries immediately (files already gone from cache — safe to remove)
             # Skip in dry-run mode to avoid modifying tracking files
-            if cache_paths_to_remove and not self.dry_run:
-                self.file_filter.remove_files_from_exclude_list(cache_paths_to_remove)
-            elif cache_paths_to_remove and self.dry_run:
-                logging.debug(f"[DRY RUN] Would remove {len(cache_paths_to_remove)} stale entries from exclude list")
+            if stale_entries and not self.dry_run:
+                self.file_filter.remove_files_from_exclude_list(stale_entries)
+            elif stale_entries and self.dry_run:
+                logging.debug(f"[DRY RUN] Would remove {len(stale_entries)} stale entries from exclude list")
+
+            # Store move-back exclude paths for deferred removal after moves succeed (issue #13)
+            # These entries stay protected in the exclude list until the file is confirmed moved
+            self._move_back_exclude_paths = move_back_exclude_paths
+            if move_back_exclude_paths:
+                logging.debug(f"Deferred {len(move_back_exclude_paths)} exclude entries pending successful array moves")
         except Exception as e:
             logging.exception(f"Error checking files to move back to array: {type(e).__name__}: {e}")
     

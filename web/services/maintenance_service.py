@@ -5,12 +5,15 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Any
+from typing import Callable, Dict, List, Optional, Set, Any, Tuple
 
 from web.config import PROJECT_ROOT, DATA_DIR, CONFIG_DIR, SETTINGS_FILE
+from core.system_utils import get_array_direct_path
 
 
 @dataclass
@@ -27,7 +30,6 @@ class UnprotectedFile:
     recommended_action: str  # "fix_with_backup", "sync_to_array", "add_to_exclude"
     created_at: Optional[datetime] = None
     age_days: float = 0.0
-    is_likely_new_download: bool = False  # True if file is recent and not tracked by PlexCache
     has_invalid_timestamp: bool = False  # True if file has future date or very old date
 
 
@@ -73,22 +75,16 @@ class AuditResults:
     # Health status
     health_status: str = "healthy"  # "healthy", "warnings", "critical"
 
-    @property
-    def new_downloads(self) -> List[UnprotectedFile]:
-        """Files that are likely new Radarr/Sonarr downloads (not critical)"""
-        return [f for f in self.unprotected_files if f.is_likely_new_download]
-
-    @property
-    def critical_unprotected(self) -> List[UnprotectedFile]:
-        """Files that are truly unprotected (older files, critical)"""
-        return [f for f in self.unprotected_files if not f.is_likely_new_download]
-
     def calculate_health_status(self):
-        """Calculate overall health status based on issues"""
+        """Calculate overall health status based on issues.
+
+        Untracked files are informational (mover handles them naturally)
+        and do NOT affect health status.
+        """
         # Only truly orphaned backups are critical (not superseded or redundant)
         truly_orphaned = [b for b in self.orphaned_plexcached if b.backup_type == "orphaned"]
-        # Critical: unprotected files (older) and truly orphaned backups need immediate attention
-        if self.critical_unprotected or truly_orphaned:
+        # Critical: truly orphaned backups need immediate attention
+        if truly_orphaned:
             self.health_status = "critical"
         # Warnings: stale entries need cleanup, superseded/redundant backups can be cleaned
         elif self.stale_exclude_entries or self.stale_timestamp_entries or self.orphaned_plexcached:
@@ -98,9 +94,8 @@ class AuditResults:
 
     @property
     def total_issues(self) -> int:
-        """Count of actual issues (excludes new downloads which are informational)"""
-        return (len(self.critical_unprotected) +
-                len(self.orphaned_plexcached) +
+        """Count of issues needing attention (excludes untracked files which are informational)"""
+        return (len(self.orphaned_plexcached) +
                 len(self.stale_exclude_entries) +
                 len(self.stale_timestamp_entries))
 
@@ -112,6 +107,35 @@ class ActionResult:
     message: str
     affected_count: int = 0
     errors: List[str] = field(default_factory=list)
+    affected_paths: List[str] = field(default_factory=list)
+
+
+class _ByteProgressAggregator:
+    """Thread-safe byte progress aggregator for parallel file operations.
+
+    Collects per-chunk byte updates from multiple workers and reports
+    aggregate (total_copied, total_bytes) to an external callback.
+    """
+
+    def __init__(self, total_bytes: int, external_callback: Optional[Callable]):
+        self._lock = threading.Lock()
+        self._total_bytes = total_bytes
+        self._copied_bytes = 0
+        self._external_callback = external_callback
+
+    def make_worker_callback(self) -> Callable:
+        """Create a per-worker callback that aggregates byte progress."""
+        last_reported = [0]
+
+        def callback(copied: int, file_size: int):
+            delta = copied - last_reported[0]
+            last_reported[0] = copied
+            with self._lock:
+                self._copied_bytes += delta
+                if self._external_callback:
+                    self._external_callback(self._copied_bytes, self._total_bytes)
+
+        return callback
 
 
 class MaintenanceService:
@@ -121,11 +145,13 @@ class MaintenanceService:
     VIDEO_EXTENSIONS = ('.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts')
     # Subtitle extensions
     SUBTITLE_EXTENSIONS = ('.srt', '.sub', '.idx', '.ass', '.ssa', '.vtt', '.smi')
+    # Chunk size for copy progress reporting (4 MB)
+    _COPY_CHUNK_SIZE = 4 * 1024 * 1024
 
     def __init__(self):
         # Use CONFIG_DIR and DATA_DIR for Docker compatibility
         self.settings_file = SETTINGS_FILE
-        self.exclude_file = CONFIG_DIR / "plexcache_mover_files_to_exclude.txt"
+        self.exclude_file = CONFIG_DIR / "plexcache_cached_files.txt"
         self.timestamps_file = DATA_DIR / "timestamps.json"
         self._cache_dirs: List[str] = []
         self._array_dirs: List[str] = []
@@ -231,8 +257,8 @@ class MaintenanceService:
                 real_path = mapping.get('real_path', '').rstrip('/\\')
 
                 if mapping.get('cacheable', True) and cache_path and real_path:
-                    # Convert real_path (/mnt/user/) to array path (/mnt/user0/)
-                    array_path = real_path.replace('/mnt/user/', '/mnt/user0/')
+                    # Convert real_path to array-direct path (ZFS-aware)
+                    array_path = get_array_direct_path(real_path)
                     cache_dirs.append(cache_path)
                     array_dirs.append(array_path)
         else:
@@ -242,7 +268,7 @@ class MaintenanceService:
             nas_library_folders = settings.get('nas_library_folders', [])
 
             if cache_dir and real_source and nas_library_folders:
-                array_source = real_source.replace('/mnt/user/', '/mnt/user0/')
+                array_source = get_array_direct_path(real_source)
                 for folder in nas_library_folders:
                     folder = folder.strip('/\\')
                     cache_dirs.append(os.path.join(cache_dir, folder))
@@ -269,15 +295,146 @@ class MaintenanceService:
             return f"{int(size)} B"
         return f"{size:.2f} {units[unit_index]}"
 
+    def _copy_with_progress(self, src: str, dst: str,
+                             bytes_progress_callback: Optional[Callable] = None) -> None:
+        """Copy file with chunked progress reporting, preserving metadata like shutil.copy2."""
+        file_size = os.path.getsize(src)
+        if bytes_progress_callback:
+            bytes_progress_callback(0, file_size)
+
+        copied = 0
+        with open(src, 'rb') as fsrc, open(dst, 'wb') as fdst:
+            while True:
+                chunk = fsrc.read(self._COPY_CHUNK_SIZE)
+                if not chunk:
+                    break
+                fdst.write(chunk)
+                copied += len(chunk)
+                if bytes_progress_callback:
+                    bytes_progress_callback(copied, file_size)
+
+        # Preserve file metadata (timestamps, permissions) like copy2
+        shutil.copystat(src, dst)
+
+    def _run_parallel(
+        self,
+        items: list,
+        worker_fn: Callable,
+        max_workers: int,
+        stop_check: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable] = None,
+        active_callback: Optional[Callable] = None,
+    ) -> List[Tuple[str, bool, Optional[str]]]:
+        """Run worker_fn on each item in parallel with throttled submission.
+
+        Mirrors the throttled ThreadPoolExecutor pattern from FileMover._execute_move_commands.
+        Only max_workers tasks are in-flight at once; 1-second timeout on wait() for responsive
+        stop checking.
+
+        Args:
+            items: List of items to process.
+            worker_fn: Callable(item) -> (path, success, error_msg).
+            max_workers: Number of concurrent workers.
+            stop_check: Optional callable returning True to request stop.
+            progress_callback: Optional (completed_count, total, filename) callback.
+            active_callback: Optional callback receiving list of in-flight basenames.
+
+        Returns:
+            List of (path, success, error_msg) tuples.
+        """
+        results: List[Tuple[str, bool, Optional[str]]] = []
+        completed_count = 0
+        total = len(items)
+        future_to_item: dict = {}       # Map future -> original item path
+        active_basenames: list = []     # Ordered list of in-flight basenames
+
+        def _notify_active():
+            if active_callback:
+                active_callback(list(active_basenames))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            pending: set = set()
+            item_iter = iter(items)
+            all_submitted = False
+            stopped = False
+
+            while True:
+                # Check for stop request
+                if stop_check and stop_check():
+                    stopped = True
+                    for f in pending:
+                        f.cancel()
+                    break
+
+                # Submit new tasks up to max_workers
+                while not all_submitted and len(pending) < max_workers:
+                    try:
+                        item = next(item_iter)
+                        future = executor.submit(worker_fn, item)
+                        pending.add(future)
+                        future_to_item[future] = item
+                        active_basenames.append(os.path.basename(item))
+                        _notify_active()
+                    except StopIteration:
+                        all_submitted = True
+                        break
+
+                if not pending:
+                    break
+
+                # Wait for at least one task to complete (1s timeout for stop checks)
+                done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+                for future in done:
+                    # Remove from active tracking
+                    item_path = future_to_item.pop(future, "")
+                    basename = os.path.basename(item_path) if item_path else ""
+                    if basename in active_basenames:
+                        active_basenames.remove(basename)
+
+                    try:
+                        result = future.result()
+                        results.append(result)
+                    except Exception as e:
+                        results.append(("", False, str(e)))
+                    completed_count += 1
+                    if progress_callback:
+                        path = results[-1][0] or ""
+                        progress_callback(
+                            completed_count, total,
+                            os.path.basename(path) if path else ""
+                        )
+
+                # Notify after processing all done futures
+                if done:
+                    _notify_active()
+
+            # Wait for in-progress tasks on stop (up to 30s safety timeout)
+            if stopped and pending:
+                active_basenames.clear()
+                _notify_active()
+                done, still_pending = wait(pending, timeout=30.0)
+                for future in done:
+                    try:
+                        results.append(future.result())
+                    except Exception as e:
+                        results.append(("", False, str(e)))
+                for future in still_pending:
+                    results.append(("", False, "Timed out waiting for task"))
+
+        return results
+
     def get_cache_files(self) -> Set[str]:
         """Get all media files currently on cache"""
         cache_dirs, _ = self._get_paths()
         cache_files = set()
         extensions = self.VIDEO_EXTENSIONS + self.SUBTITLE_EXTENSIONS
 
+        def _walk_error(err):
+            logging.warning(f"Permission error scanning directory: {err}")
+
         for cache_dir in cache_dirs:
             if os.path.exists(cache_dir):
-                for root, dirs, files in os.walk(cache_dir):
+                for root, dirs, files in os.walk(cache_dir, onerror=_walk_error):
                     # Prune excluded directories (modifying dirs in-place skips them)
                     dirs[:] = [d for d in dirs if not self._should_skip_directory(d)]
                     for f in files:
@@ -355,9 +512,6 @@ class MaintenanceService:
         unprotected_paths = cache_files - exclude_files
         now = datetime.now()
 
-        # Threshold for "new download" detection (files created within this many days)
-        NEW_DOWNLOAD_THRESHOLD_DAYS = 30
-
         # Cutoff for "invalid" timestamps - before year 2000 or in the future
         min_valid_date = datetime(2000, 1, 1)
 
@@ -397,23 +551,9 @@ class MaintenanceService:
             has_backup, backup_path = self._check_plexcached_backup(cache_path)
             has_dup, array_path = self._check_array_duplicate(cache_path)
 
-            # Determine if this is likely a new Radarr/Sonarr download:
-            # - File is recent (created within threshold)
-            # - No .plexcached backup (PlexCache didn't move it to cache)
-            # Note: We don't check timestamps because PlexCache may have added
-            # the file to timestamps during a scan even if it didn't move it
-            is_new_download = (
-                age_days <= NEW_DOWNLOAD_THRESHOLD_DAYS and
-                not has_backup
-            )
-
             # Determine recommended action
-            if has_backup:
+            if has_backup or has_dup:
                 recommended = "fix_with_backup"
-            elif has_dup:
-                recommended = "fix_with_backup"  # Treat duplicates like backups
-            elif is_new_download:
-                recommended = "add_to_exclude"  # New downloads just need protection
             else:
                 recommended = "sync_to_array"
 
@@ -429,7 +569,6 @@ class MaintenanceService:
                 recommended_action=recommended,
                 created_at=created_at,
                 age_days=age_days,
-                is_likely_new_download=is_new_download,
                 has_invalid_timestamp=has_invalid_timestamp
             ))
 
@@ -621,8 +760,7 @@ class MaintenanceService:
         return {
             "status": results.health_status,
             "total_issues": results.total_issues,
-            "unprotected_count": len(results.critical_unprotected),  # Only critical ones
-            "new_downloads_count": len(results.new_downloads),
+            "unprotected_count": len(results.unprotected_files),
             "orphaned_count": len(results.orphaned_plexcached),
             "stale_exclude_count": len(results.stale_exclude_entries),
             "stale_timestamp_count": len(results.stale_timestamp_entries),
@@ -632,15 +770,54 @@ class MaintenanceService:
 
     # === Fix Actions ===
 
-    def restore_plexcached(self, paths: List[str], dry_run: bool = True) -> ActionResult:
+    def restore_plexcached(self, paths: List[str], dry_run: bool = True,
+                            stop_check: Optional[Callable[[], bool]] = None,
+                            progress_callback: Optional[Callable] = None,
+                            bytes_progress_callback: Optional[Callable] = None,
+                            max_workers: int = 1,
+                            active_callback: Optional[Callable] = None) -> ActionResult:
         """Restore orphaned .plexcached files to their original names"""
         if not paths:
             return ActionResult(success=False, message="No paths provided")
 
+        # --- Parallel path ---
+        if max_workers > 1 and not dry_run:
+            def _restore_worker(plexcached_path: str) -> Tuple[str, bool, Optional[str]]:
+                if not plexcached_path.endswith('.plexcached'):
+                    return (plexcached_path, False, f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
+                try:
+                    original_path = plexcached_path[:-11]
+                    if os.path.exists(original_path):
+                        os.remove(plexcached_path)
+                    else:
+                        os.rename(plexcached_path, original_path)
+                    return (plexcached_path, True, None)
+                except OSError as e:
+                    return (plexcached_path, False, f"{os.path.basename(plexcached_path)}: {str(e)}")
+
+            results = self._run_parallel(paths, _restore_worker, max_workers, stop_check, progress_callback, active_callback)
+
+            successful_paths = [path for path, success, _ in results if success]
+            errors = [err for _, success, err in results if not success and err]
+
+            return ActionResult(
+                success=len(successful_paths) > 0,
+                message=f"Restored {len(successful_paths)} backup file(s)",
+                affected_count=len(successful_paths),
+                errors=errors,
+                affected_paths=successful_paths,
+            )
+
+        # --- Sequential path (dry_run or max_workers <= 1) ---
         affected = 0
         errors = []
+        affected_paths = []
 
-        for plexcached_path in paths:
+        for i, plexcached_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(plexcached_path))
             if not plexcached_path.endswith('.plexcached'):
                 errors.append(f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
                 continue
@@ -659,6 +836,7 @@ class MaintenanceService:
                     else:
                         os.rename(plexcached_path, original_path)
                     affected += 1
+                    affected_paths.append(plexcached_path)
                 except OSError as e:
                     errors.append(f"{os.path.basename(plexcached_path)}: {str(e)}")
 
@@ -667,7 +845,8 @@ class MaintenanceService:
             success=affected > 0,
             message=f"{action} {affected} backup file(s)",
             affected_count=affected,
-            errors=errors
+            errors=errors,
+            affected_paths=affected_paths
         )
 
     def restore_all_plexcached(self, dry_run: bool = True, orphaned_only: bool = False) -> ActionResult:
@@ -686,15 +865,53 @@ class MaintenanceService:
         paths = [b.plexcached_path for b in backups]
         return self.restore_plexcached(paths, dry_run)
 
-    def delete_plexcached(self, paths: List[str], dry_run: bool = True) -> ActionResult:
+    def delete_plexcached(self, paths: List[str], dry_run: bool = True,
+                          stop_check: Optional[Callable[[], bool]] = None,
+                          progress_callback: Optional[Callable] = None,
+                          bytes_progress_callback: Optional[Callable] = None,
+                          max_workers: int = 1,
+                          active_callback: Optional[Callable] = None) -> ActionResult:
         """Delete orphaned .plexcached backup files (e.g., when no longer needed)"""
         if not paths:
             return ActionResult(success=False, message="No paths provided")
 
+        # --- Parallel path ---
+        if max_workers > 1 and not dry_run:
+            def _delete_worker(plexcached_path: str) -> Tuple[str, bool, Optional[str]]:
+                if not plexcached_path.endswith('.plexcached'):
+                    return (plexcached_path, False, f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
+                try:
+                    if os.path.exists(plexcached_path):
+                        os.remove(plexcached_path)
+                        return (plexcached_path, True, None)
+                    else:
+                        return (plexcached_path, False, f"{os.path.basename(plexcached_path)}: File not found")
+                except OSError as e:
+                    return (plexcached_path, False, f"{os.path.basename(plexcached_path)}: {str(e)}")
+
+            results = self._run_parallel(paths, _delete_worker, max_workers, stop_check, progress_callback, active_callback)
+
+            successful_paths = [path for path, success, _ in results if success]
+            errors = [err for _, success, err in results if not success and err]
+
+            return ActionResult(
+                success=len(successful_paths) > 0,
+                message=f"Deleted {len(successful_paths)} backup file(s)",
+                affected_count=len(successful_paths),
+                errors=errors,
+                affected_paths=successful_paths,
+            )
+
+        # --- Sequential path (dry_run or max_workers <= 1) ---
         affected = 0
         errors = []
+        affected_paths = []
 
-        for plexcached_path in paths:
+        for i, plexcached_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(plexcached_path))
             if not plexcached_path.endswith('.plexcached'):
                 errors.append(f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
                 continue
@@ -706,6 +923,7 @@ class MaintenanceService:
                     if os.path.exists(plexcached_path):
                         os.remove(plexcached_path)
                         affected += 1
+                        affected_paths.append(plexcached_path)
                     else:
                         errors.append(f"{os.path.basename(plexcached_path)}: File not found")
                 except OSError as e:
@@ -716,7 +934,8 @@ class MaintenanceService:
             success=affected > 0,
             message=f"{action} {affected} backup file(s)",
             affected_count=affected,
-            errors=errors
+            errors=errors,
+            affected_paths=affected_paths
         )
 
     def delete_all_plexcached(self, dry_run: bool = True) -> ActionResult:
@@ -725,15 +944,62 @@ class MaintenanceService:
         paths = [o.plexcached_path for o in orphaned]
         return self.delete_plexcached(paths, dry_run)
 
-    def fix_with_backup(self, paths: List[str], dry_run: bool = True) -> ActionResult:
+    def fix_with_backup(self, paths: List[str], dry_run: bool = True,
+                        stop_check: Optional[Callable[[], bool]] = None,
+                        progress_callback: Optional[Callable] = None,
+                        bytes_progress_callback: Optional[Callable] = None,
+                        max_workers: int = 1,
+                        active_callback: Optional[Callable] = None) -> ActionResult:
         """Fix unprotected files that have .plexcached backup - delete cache copy, restore backup"""
         if not paths:
             return ActionResult(success=False, message="No paths provided")
 
+        # --- Parallel path ---
+        if max_workers > 1 and not dry_run:
+            def _fix_worker(cache_path: str) -> Tuple[str, bool, Optional[str]]:
+                try:
+                    has_backup, backup_path = self._check_plexcached_backup(cache_path)
+                    has_dup, _ = self._check_array_duplicate(cache_path)
+
+                    if not has_backup and not has_dup:
+                        return (cache_path, False, f"{os.path.basename(cache_path)}: No backup or array copy found")
+
+                    if has_backup and backup_path:
+                        original_array_path = backup_path[:-11]
+                        os.rename(backup_path, original_array_path)
+
+                    if os.path.exists(cache_path):
+                        os.remove(cache_path)
+
+                    return (cache_path, True, None)
+                except OSError as e:
+                    return (cache_path, False, f"{os.path.basename(cache_path)}: {str(e)}")
+
+            results = self._run_parallel(paths, _fix_worker, max_workers, stop_check, progress_callback, active_callback)
+
+            successful_paths = [path for path, success, _ in results if success]
+            errors = [err for _, success, err in results if not success and err]
+
+            self._cleanup_empty_directories()
+
+            return ActionResult(
+                success=len(successful_paths) > 0,
+                message=f"Fixed {len(successful_paths)} file(s) with backup",
+                affected_count=len(successful_paths),
+                errors=errors,
+                affected_paths=successful_paths,
+            )
+
+        # --- Sequential path (dry_run or max_workers <= 1) ---
         affected = 0
         errors = []
+        affected_paths = []
 
-        for cache_path in paths:
+        for i, cache_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(cache_path))
             has_backup, backup_path = self._check_plexcached_backup(cache_path)
             has_dup, array_path = self._check_array_duplicate(cache_path)
 
@@ -755,6 +1021,7 @@ class MaintenanceService:
                         os.remove(cache_path)
 
                     affected += 1
+                    affected_paths.append(cache_path)
                 except OSError as e:
                     errors.append(f"{os.path.basename(cache_path)}: {str(e)}")
 
@@ -766,10 +1033,16 @@ class MaintenanceService:
             success=affected > 0,
             message=f"{action} {affected} file(s) with backup",
             affected_count=affected,
-            errors=errors
+            errors=errors,
+            affected_paths=affected_paths
         )
 
-    def sync_to_array(self, paths: List[str], dry_run: bool = True) -> ActionResult:
+    def sync_to_array(self, paths: List[str], dry_run: bool = True,
+                      stop_check: Optional[Callable[[], bool]] = None,
+                      progress_callback: Optional[Callable] = None,
+                      bytes_progress_callback: Optional[Callable] = None,
+                      max_workers: int = 1,
+                      active_callback: Optional[Callable] = None) -> ActionResult:
         """Move cache files to array - handles both files with and without backups.
 
         For each file:
@@ -780,10 +1053,96 @@ class MaintenanceService:
         if not paths:
             return ActionResult(success=False, message="No paths provided")
 
+        # --- Parallel path ---
+        if max_workers > 1 and not dry_run:
+            # Pre-calculate total bytes for files that need actual copying
+            total_bytes = 0
+            for cache_path in paths:
+                array_path = self._cache_to_array_path(cache_path)
+                if array_path:
+                    has_backup, _ = self._check_plexcached_backup(cache_path)
+                    has_dup, _ = self._check_array_duplicate(cache_path)
+                    if not has_backup and not has_dup:
+                        try:
+                            total_bytes += os.path.getsize(cache_path)
+                        except OSError:
+                            pass
+
+            aggregator = _ByteProgressAggregator(total_bytes, bytes_progress_callback) if total_bytes > 0 else None
+
+            if bytes_progress_callback and total_bytes > 0:
+                bytes_progress_callback(0, total_bytes)
+
+            def _sync_worker(cache_path: str) -> Tuple[str, bool, Optional[str]]:
+                try:
+                    array_path = self._cache_to_array_path(cache_path)
+                    if not array_path:
+                        return (cache_path, False, f"{os.path.basename(cache_path)}: Unknown path mapping")
+
+                    has_backup, backup_path = self._check_plexcached_backup(cache_path)
+                    has_dup, _ = self._check_array_duplicate(cache_path)
+
+                    if has_backup and backup_path:
+                        original_array_path = backup_path[:-11]
+                        if os.path.exists(original_array_path):
+                            os.remove(backup_path)
+                        else:
+                            os.rename(backup_path, original_array_path)
+                        if os.path.exists(cache_path):
+                            os.remove(cache_path)
+                        return (cache_path, True, None)
+
+                    elif has_dup:
+                        if os.path.exists(cache_path):
+                            os.remove(cache_path)
+                        return (cache_path, True, None)
+
+                    else:
+                        array_dir = os.path.dirname(array_path)
+                        os.makedirs(array_dir, exist_ok=True)
+
+                        worker_cb = aggregator.make_worker_callback() if aggregator else None
+                        self._copy_with_progress(cache_path, array_path, worker_cb)
+
+                        if os.path.exists(array_path):
+                            cache_size = os.path.getsize(cache_path)
+                            array_size = os.path.getsize(array_path)
+                            if cache_size == array_size:
+                                os.remove(cache_path)
+                                return (cache_path, True, None)
+                            else:
+                                return (cache_path, False, f"{os.path.basename(cache_path)}: Size mismatch after copy")
+                        else:
+                            return (cache_path, False, f"{os.path.basename(cache_path)}: Copy failed")
+
+                except OSError as e:
+                    return (cache_path, False, f"{os.path.basename(cache_path)}: {str(e)}")
+
+            results = self._run_parallel(paths, _sync_worker, max_workers, stop_check, progress_callback, active_callback)
+
+            successful_paths = [path for path, success, _ in results if success]
+            errors = [err for _, success, err in results if not success and err]
+
+            self._cleanup_empty_directories()
+
+            return ActionResult(
+                success=len(successful_paths) > 0,
+                message=f"Moved {len(successful_paths)} file(s) to array",
+                affected_count=len(successful_paths),
+                errors=errors,
+                affected_paths=successful_paths,
+            )
+
+        # --- Sequential path (dry_run or max_workers <= 1) ---
         affected = 0
         errors = []
+        affected_paths = []
 
-        for cache_path in paths:
+        for i, cache_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(cache_path))
             array_path = self._cache_to_array_path(cache_path)
             if not array_path:
                 errors.append(f"{os.path.basename(cache_path)}: Unknown path mapping")
@@ -813,20 +1172,22 @@ class MaintenanceService:
                         if os.path.exists(cache_path):
                             os.remove(cache_path)
                         affected += 1
+                        affected_paths.append(cache_path)
 
                     elif has_dup:
                         # Duplicate already exists on array, just delete cache copy
                         if os.path.exists(cache_path):
                             os.remove(cache_path)
                         affected += 1
+                        affected_paths.append(cache_path)
 
                     else:
                         # No backup/duplicate - copy to array first
                         array_dir = os.path.dirname(array_path)
                         os.makedirs(array_dir, exist_ok=True)
 
-                        # Copy file to array
-                        shutil.copy2(cache_path, array_path)
+                        # Copy file to array with progress
+                        self._copy_with_progress(cache_path, array_path, bytes_progress_callback)
 
                         # Verify copy
                         if os.path.exists(array_path):
@@ -836,6 +1197,7 @@ class MaintenanceService:
                             if cache_size == array_size:
                                 os.remove(cache_path)
                                 affected += 1
+                                affected_paths.append(cache_path)
                             else:
                                 errors.append(f"{os.path.basename(cache_path)}: Size mismatch after copy")
                         else:
@@ -852,7 +1214,8 @@ class MaintenanceService:
             success=affected > 0,
             message=f"{action} {affected} file(s) to array",
             affected_count=affected,
-            errors=errors
+            errors=errors,
+            affected_paths=affected_paths
         )
 
     def add_to_exclude(self, paths: List[str], dry_run: bool = True) -> ActionResult:
@@ -886,7 +1249,12 @@ class MaintenanceService:
                 errors=[str(e)]
             )
 
-    def protect_with_backup(self, paths: List[str], dry_run: bool = True) -> ActionResult:
+    def protect_with_backup(self, paths: List[str], dry_run: bool = True,
+                            stop_check: Optional[Callable[[], bool]] = None,
+                            progress_callback: Optional[Callable] = None,
+                            bytes_progress_callback: Optional[Callable] = None,
+                            max_workers: int = 1,
+                            active_callback: Optional[Callable] = None) -> ActionResult:
         """Protect cache files by creating .plexcached backup on array and adding to exclude list"""
         logging.info(f"protect_with_backup called with {len(paths)} paths, dry_run={dry_run}")
 
@@ -894,10 +1262,92 @@ class MaintenanceService:
             logging.warning("protect_with_backup: No paths provided")
             return ActionResult(success=False, message="No paths provided")
 
+        # --- Parallel path ---
+        if max_workers > 1 and not dry_run:
+            # Pre-calculate total bytes for files that need copying
+            total_bytes = 0
+            for cache_path in paths:
+                array_path = self._cache_to_array_path(cache_path)
+                if array_path and not os.path.exists(array_path + ".plexcached"):
+                    try:
+                        total_bytes += os.path.getsize(cache_path)
+                    except OSError:
+                        pass
+
+            aggregator = _ByteProgressAggregator(total_bytes, bytes_progress_callback) if total_bytes > 0 else None
+
+            # Signal initial byte total to runner
+            if bytes_progress_callback and total_bytes > 0:
+                bytes_progress_callback(0, total_bytes)
+
+            def _protect_worker(cache_path: str) -> Tuple[str, bool, Optional[str]]:
+                try:
+                    array_path = self._cache_to_array_path(cache_path)
+                    if not array_path:
+                        return (cache_path, False, f"{os.path.basename(cache_path)}: Unknown path mapping")
+
+                    plexcached_path = array_path + ".plexcached"
+
+                    if os.path.exists(plexcached_path):
+                        logging.info(f"Backup already exists for {os.path.basename(cache_path)}")
+                        return (cache_path, True, None)
+
+                    array_dir = os.path.dirname(array_path)
+                    os.makedirs(array_dir, exist_ok=True)
+
+                    cache_size = os.path.getsize(cache_path) if os.path.exists(cache_path) else 0
+                    logging.info(f"Copying {os.path.basename(cache_path)} ({cache_size / (1024**3):.2f} GB) to array...")
+
+                    worker_cb = aggregator.make_worker_callback() if aggregator else None
+                    self._copy_with_progress(cache_path, plexcached_path, worker_cb)
+
+                    # Verify copy
+                    if os.path.exists(plexcached_path):
+                        backup_size = os.path.getsize(plexcached_path)
+                        if cache_size != backup_size:
+                            os.remove(plexcached_path)
+                            return (cache_path, False, f"{os.path.basename(cache_path)}: Copy verification failed")
+                    else:
+                        return (cache_path, False, f"{os.path.basename(cache_path)}: Backup not created")
+
+                    logging.info(f"Protected: {os.path.basename(cache_path)}")
+                    return (cache_path, True, None)
+                except (IOError, OSError) as e:
+                    logging.exception(f"Error protecting {os.path.basename(cache_path)}: {e}")
+                    return (cache_path, False, f"{os.path.basename(cache_path)}: {str(e)}")
+
+            results = self._run_parallel(paths, _protect_worker, max_workers, stop_check, progress_callback, active_callback)
+
+            # Phase 2: batch metadata for successful files
+            successful_paths = [path for path, success, _ in results if success]
+            errors = [err for _, success, err in results if not success and err]
+
+            if successful_paths:
+                self._batch_add_to_exclude(successful_paths)
+                self._batch_add_to_timestamps(successful_paths)
+
+            affected = len(successful_paths)
+            logging.info(f"protect_with_backup complete: Protected {affected} file(s), {len(errors)} errors")
+            if errors:
+                logging.warning(f"protect_with_backup errors: {errors}")
+            return ActionResult(
+                success=affected > 0,
+                message=f"Protected {affected} file(s) with array backup",
+                affected_count=affected,
+                errors=errors,
+                affected_paths=successful_paths,
+            )
+
+        # --- Sequential path (dry_run or max_workers <= 1) ---
         affected = 0
         errors = []
+        affected_paths = []
 
         for i, cache_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(cache_path))
             logging.debug(f"Processing path {i+1}/{len(paths)}: {cache_path}")
 
             # Get the array path equivalent
@@ -928,7 +1378,7 @@ class MaintenanceService:
                         cache_size = os.path.getsize(cache_path) if os.path.exists(cache_path) else 0
                         logging.info(f"Copying {os.path.basename(cache_path)} ({cache_size / (1024**3):.2f} GB) to array...")
 
-                        shutil.copy2(cache_path, plexcached_path)
+                        self._copy_with_progress(cache_path, plexcached_path, bytes_progress_callback)
 
                         # Verify copy
                         if os.path.exists(plexcached_path):
@@ -953,6 +1403,7 @@ class MaintenanceService:
 
                     logging.info(f"Protected: {os.path.basename(cache_path)}")
                     affected += 1
+                    affected_paths.append(cache_path)
 
                 except (IOError, OSError) as e:
                     logging.exception(f"Error protecting {os.path.basename(cache_path)}: {e}")
@@ -966,7 +1417,8 @@ class MaintenanceService:
             success=affected > 0 or (dry_run and not errors),
             message=f"{action} {affected} file(s) with array backup",
             affected_count=affected,
-            errors=errors
+            errors=errors,
+            affected_paths=affected_paths
         )
 
     def _add_to_timestamps(self, cache_path: str):
@@ -986,6 +1438,30 @@ class MaintenanceService:
 
         with open(self.timestamps_file, 'w', encoding='utf-8') as f:
             json.dump(timestamps, f, indent=2)
+
+    def _batch_add_to_timestamps(self, paths: List[str]):
+        """Add multiple files to timestamps.json in one read-merge-write."""
+        timestamps = {}
+        if self.timestamps_file.exists():
+            try:
+                with open(self.timestamps_file, 'r', encoding='utf-8') as f:
+                    timestamps = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        now = datetime.now().isoformat()
+        for path in paths:
+            timestamps[path] = now
+
+        with open(self.timestamps_file, 'w', encoding='utf-8') as f:
+            json.dump(timestamps, f, indent=2)
+
+    def _batch_add_to_exclude(self, paths: List[str]):
+        """Add multiple files to exclude list in one file open."""
+        with open(self.exclude_file, 'a', encoding='utf-8') as f:
+            for path in paths:
+                host_path = self._translate_container_to_host_path(path)
+                f.write(host_path + '\n')
 
     def clean_exclude(self, dry_run: bool = True) -> ActionResult:
         """Remove stale entries from exclude list"""
@@ -1149,6 +1625,9 @@ class MaintenanceService:
 
     def _cleanup_empty_directories(self):
         """Remove empty directories from cache paths"""
+        settings = self._load_settings()
+        if not settings.get('cleanup_empty_folders', True):
+            return
         cache_dirs, _ = self._get_paths()
         for cache_dir in cache_dirs:
             if os.path.exists(cache_dir):

@@ -56,13 +56,14 @@
     <div class="card-header">
         <i data-lucide="gauge"></i>
         <h2>Cache Limit</h2>
+        <span class="text-muted" style="font-size: 0.8rem; margin-left: auto;">Based on total drive usage</span>
     </div>
     <div class="card-body">
         <div class="cache-limit-info">
             <!-- Stats Grid -->
             <div class="cache-limit-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
                 <div class="cache-limit-stat">
-                    <span class="cache-limit-label">Total Drive Usage:</span>
+                    <span class="cache-limit-label" title="All files on the cache drive (PlexCache + other applications + system files)">Total Drive Usage:</span>
                     <span class="cache-limit-value">{{ data.storage.used_display }}</span>
                 </div>
                 <div class="cache-limit-stat">
@@ -76,11 +77,16 @@
                 </div>
                 {% endif %}
                 <div class="cache-limit-stat">
-                    <span class="cache-limit-label">Available for Caching:</span>
+                    <span class="cache-limit-label" title="Remaining space before the cache limit is reached (limit minus total drive usage)">Available for Caching:</span>
                     <span class="cache-limit-value {% if data.storage.cache_limit_available <= 0 %}text-error{% elif data.storage.cache_limit_used_percent >= 90 %}text-warning{% else %}text-success{% endif %}">
                         {{ data.storage.cache_limit_available_display }}
                     </span>
                 </div>
+            </div>
+
+            <div style="font-size: 0.8rem; color: var(--plex-text-muted); margin-bottom: 0.75rem;">
+                <i data-lucide="info" style="width: 13px; height: 13px; vertical-align: middle;"></i>
+                Limit applies to <strong>all files</strong> on the drive. The gray bar ("Other") includes any files not managed by PlexCache, such as other applications, downloads, or system files.
             </div>
 
             <!-- Visual Bar with Markers - Stacked Bar Design -->

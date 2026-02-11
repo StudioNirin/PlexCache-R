@@ -13,12 +13,17 @@
                 <label for="notification_type">Notification Type</label>
                 <select id="notification_type" name="notification_type">
                     <option value="system" {% if settings.notification_type == 'system' %}selected{% endif %}>System (console only)</option>
+                    {% if is_unraid or is_docker %}
                     <option value="Unraid" {% if settings.notification_type == 'Unraid' %}selected{% endif %}>Unraid</option>
+                    {% endif %}
                     <option value="Webhook" {% if settings.notification_type == 'Webhook' %}selected{% endif %}>Webhook (Discord/Slack)</option>
+                    {% if is_unraid or is_docker %}
                     <option value="Both" {% if settings.notification_type == 'Both' %}selected{% endif %}>Both (Unraid + Webhook)</option>
+                    {% endif %}
                 </select>
             </div>
 
+            {% if is_unraid or is_docker %}
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
@@ -71,6 +76,7 @@
                     </label>
                 </div>
             </div>
+            {% endif %}
 
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 

@@ -2,14 +2,12 @@
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
-from web.config import TEMPLATES_DIR
+from web.config import templates
 from web.services import get_operation_runner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -33,7 +31,7 @@ async def dashboard(request: Request):
 
 
 @router.post("/refresh-stats", response_class=HTMLResponse)
-async def refresh_stats(request: Request):
+def refresh_stats(request: Request):
     """Force refresh dashboard stats and return updated container"""
     # Import here to avoid circular dependency
     from web.routers.api import _get_dashboard_stats_data

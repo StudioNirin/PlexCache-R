@@ -13,6 +13,10 @@ from web.services.maintenance_service import (
     ActionResult,
     get_maintenance_service,
 )
+from web.services.maintenance_runner import (
+    MaintenanceRunner, MaintenanceState, get_maintenance_runner,
+    MaintenanceHistory, MaintenanceHistoryEntry, get_maintenance_history,
+)
 from web.services.import_service import ImportService, ImportSummary, get_import_service
 
 __all__ = [
@@ -34,6 +38,12 @@ __all__ = [
     "DuplicateFile",
     "ActionResult",
     "get_maintenance_service",
+    "MaintenanceRunner",
+    "MaintenanceState",
+    "get_maintenance_runner",
+    "MaintenanceHistory",
+    "MaintenanceHistoryEntry",
+    "get_maintenance_history",
     "ImportService",
     "ImportSummary",
     "get_import_service",

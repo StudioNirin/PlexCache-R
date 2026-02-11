@@ -154,6 +154,13 @@ class CacheConfig:
     cache_limit: str = ""
     cache_limit_bytes: int = 0  # Parsed value in bytes (computed from cache_limit)
 
+    # Minimum free space: safety floor to keep on the cache drive
+    # Stops caching when free space drops below this, regardless of cache_limit
+    # Supports formats: "50GB", "5%", or just "50" (defaults to GB)
+    # Empty string or "0" means disabled
+    min_free_space: str = ""
+    min_free_space_bytes: int = 0  # Parsed value in bytes (computed from min_free_space)
+
     # Smart cache eviction settings
     # cache_eviction_mode: "smart" (priority-based), "fifo" (oldest first), or "none" (disabled)
     cache_eviction_mode: str = "none"
@@ -172,6 +179,10 @@ class CacheConfig:
     # "skip" - Don't cache hard-linked files; they'll be cached after seeding completes
     # "move" - Cache hard-linked files; seed copy preserved via remaining hard link
     hardlinked_files: str = "skip"
+
+    # Clean up empty parent folders on cache after moving files to array
+    # Disable if you use year-based or other intentional empty folder structures
+    cleanup_empty_folders: bool = True
 
     # Excluded folders: skip these directories during cache scanning
     # Hidden directories (dot-prefixed like .Trash, .Recycle.Bin) are always skipped automatically
@@ -383,6 +394,10 @@ class ConfigManager:
         self.cache.cache_limit = self.settings_data.get('cache_limit', "")
         self.cache.cache_limit_bytes = self._parse_cache_limit(self.cache.cache_limit)
 
+        # Load and parse min free space setting
+        self.cache.min_free_space = self.settings_data.get('min_free_space', "")
+        self.cache.min_free_space_bytes = self._parse_cache_limit(self.cache.min_free_space)
+
         # Load smart eviction settings (default: disabled)
         self.cache.cache_eviction_mode = self.settings_data.get('cache_eviction_mode', "none")
         self.cache.cache_eviction_threshold_percent = self.settings_data.get('cache_eviction_threshold_percent', 90)
@@ -408,6 +423,9 @@ class ConfigManager:
             logging.warning(f"Invalid hardlinked_files '{hardlinked_files}', using 'skip'")
             hardlinked_files = 'skip'
         self.cache.hardlinked_files = hardlinked_files
+
+        # Load cleanup_empty_folders setting (default True to preserve existing behavior)
+        self.cache.cleanup_empty_folders = self.settings_data.get('cleanup_empty_folders', True)
 
         # Load excluded folders for directory scanning
         excluded_folders = self.settings_data.get('excluded_folders', [])
@@ -851,11 +869,6 @@ class ConfigManager:
     def get_data_folder(self) -> Path:
         """Get the path for the data folder (tracking files)."""
         return Path(self.paths.data_folder)
-
-    def get_mover_exclude_file(self) -> Path:
-        """Get the path for the mover exclude file (stays in root for Unraid)."""
-        script_folder = Path(self.paths.script_folder)
-        return script_folder / "plexcache_mover_files_to_exclude.txt"
 
     def get_cached_files_file(self) -> Path:
         """Get the path for the cached files log."""

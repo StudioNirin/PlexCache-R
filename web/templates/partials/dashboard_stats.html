@@ -11,11 +11,21 @@
             <div class="progress-fill {% if stats.eviction_over_threshold %}progress-warning{% endif %}" style="width: {{ stats.usage_percent }}%"></div>
         </div>
         <div class="progress-label">
-            <span>{{ stats.cache_size }} / {{ stats.cache_limit }}</span>
+            <span title="Total drive usage / Drive capacity">{{ stats.cache_size }} / {{ stats.cache_limit }}</span>
             <span>{{ stats.usage_percent }}%</span>
         </div>
     </div>
-    {% if stats.eviction_over_threshold %}
+    {% if stats.cache_limit_exceeded %}
+    <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--danger);">
+        <i data-lucide="alert-circle" style="width: 12px; height: 12px; vertical-align: middle;"></i>
+        Over cache limit — caching paused
+    </div>
+    {% elif stats.min_free_space_warning %}
+    <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--danger);">
+        <i data-lucide="alert-circle" style="width: 12px; height: 12px; vertical-align: middle;"></i>
+        Below min free space floor — caching paused
+    </div>
+    {% elif stats.eviction_over_threshold %}
     <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--warning);">
         <i data-lucide="alert-triangle" style="width: 12px; height: 12px; vertical-align: middle;"></i>
         Over eviction threshold by {{ stats.eviction_over_by_display }}
