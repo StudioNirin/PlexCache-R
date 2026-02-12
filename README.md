@@ -1,5 +1,5 @@
 # PlexCache-R V3.0: Automate Plex Media Management
-### Updated 2/11/26
+### Updated 2/12/26
 
 ## Current Bugs / Todo List
 
@@ -33,6 +33,7 @@ The original PlexCache app only worked for local users for most features, due to
 - (New v3) - **ZFS Support** — Automatic detection of ZFS pool-only shares with correct path resolution.
 - (New v3) - **Min Free Space** — Safety floor setting to prevent caching when cache drive space is low.
 - (New v3) - **Docker Support** — Official container with Unraid template, auto-setup, and path translation.
+- (New v3) - **Byte-Level Progress** — Smooth progress bar updates every 10MB during file copies, with ETA from copy rate.
 - Move watched media present on the cache drive back to the array.
 - Move respective subtitles along with the media moved to or from the cache.
 - Filter media older than a specified number of days.
