@@ -164,7 +164,149 @@ See `docker/UNRAID_SETUP.md` for detailed Unraid setup instructions including CA
 
 ## Installation and Setup
 
-Please check out our [Wiki section](https://github.com/StudioNirin/PlexCache-R/wiki) for the step-by-step guide on how to setup PlexCache on your system. The WIKI should cover basically everything. If something doesn't make sense, or doesn't work, please open a new issue for it. But don't be upset if the answer is in the WIKI and we mock you for not reading it thoroughly first. 
+There are three ways to run PlexCache-R, depending on your preference:
+
+| | Docker | Manual + Web UI | Manual + CLI |
+|---|---|---|---|
+| **Best for** | Unraid users who prefer containers | Unraid/Linux users who prefer native installs | Lightweight, script-only usage |
+| **Web dashboard** | Yes (always on) | Yes (always on) | No |
+| **Scheduling** | Built-in (via Web UI) | Built-in (via Web UI) | External (cron / User Scripts) |
+| **Auto-start** | Docker restart policy | systemd or User Scripts plugin | cron `@reboot` or User Scripts |
+| **Default port** | 5757 | 5000 | N/A |
+| **Setup** | Web UI wizard on first visit | Web UI wizard on first visit | `--setup` CLI wizard |
+
+### Option 1: Docker (Recommended)
+
+See the [Docker Installation](#docker-installation-recommended-for-unraid) section above.
+
+### Option 2: Manual Install + Web UI
+
+This runs PlexCache-R as a persistent web server with dashboard, scheduler, and all V3.0 features.
+
+**Prerequisites:**
+- Python 3.9+
+- Git (to clone the repo)
+
+**Install:**
+```bash
+cd /mnt/user/appdata
+git clone https://github.com/StudioNirin/PlexCache-R.git
+cd PlexCache-R
+pip3 install -r requirements.txt
+```
+
+**Start the Web UI:**
+```bash
+python3 plexcache.py --web --host 0.0.0.0           # Listen on all interfaces, port 5000
+python3 plexcache.py --web --host 0.0.0.0 --port 8080  # Custom port
+```
+
+Then open `http://[YOUR_IP]:5000` in your browser. On first run, the Setup Wizard will guide you through configuration.
+
+#### Auto-Start on Boot (Unraid — User Scripts Plugin)
+
+The easiest way to auto-start on Unraid without Docker:
+
+1. Install **User Scripts** from Community Apps (if not already installed)
+2. Go to **Settings** → **User Scripts** → **Add New Script**
+3. Name it `PlexCache-R Web UI`
+4. Click the script name, then **Edit Script** and paste:
+
+```bash
+#!/bin/bash
+cd /mnt/user/appdata/PlexCache-R
+nohup python3 plexcache.py --web --host 0.0.0.0 --port 5000 > /dev/null 2>&1 &
+```
+
+5. Set the schedule to **At Startup of Array**
+6. Click **Apply**
+
+> **Tip:** To stop the server, find the process with `ps aux | grep plexcache` and `kill` it, or use the User Scripts **Stop** button if available.
+
+#### Auto-Start on Boot (Generic Linux — systemd)
+
+For non-Unraid Linux systems, create a systemd service:
+
+```bash
+sudo nano /etc/systemd/system/plexcache-r.service
+```
+
+```ini
+[Unit]
+Description=PlexCache-R Web UI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/PlexCache-R
+ExecStart=/usr/bin/python3 plexcache.py --web --host 0.0.0.0 --port 5000
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable plexcache-r
+sudo systemctl start plexcache-r
+```
+
+Check status with `sudo systemctl status plexcache-r` and logs with `journalctl -u plexcache-r -f`.
+
+### Option 3: Manual Install + CLI Only
+
+This is the original V1/V2 mode — no web server, no dashboard. PlexCache-R runs once, performs caching/eviction, and exits. You schedule it externally.
+
+**Install** (same as Option 2):
+```bash
+cd /mnt/user/appdata
+git clone https://github.com/StudioNirin/PlexCache-R.git
+cd PlexCache-R
+pip3 install -r requirements.txt
+```
+
+**First-time setup:**
+```bash
+python3 plexcache.py --setup
+```
+
+**Run manually:**
+```bash
+python3 plexcache.py                     # Normal run
+python3 plexcache.py --dry-run --verbose # Test run with full debug output
+```
+
+#### Schedule with Cron
+
+```bash
+crontab -e
+```
+
+```
+# Run PlexCache-R every 6 hours
+0 */6 * * * cd /mnt/user/appdata/PlexCache-R && python3 plexcache.py >> /mnt/user/appdata/PlexCache-R/logs/cron.log 2>&1
+```
+
+#### Schedule with Unraid User Scripts
+
+1. Install **User Scripts** from Community Apps
+2. **Add New Script** → name it `PlexCache-R`
+3. **Edit Script:**
+
+```bash
+#!/bin/bash
+cd /mnt/user/appdata/PlexCache-R
+python3 plexcache.py
+```
+
+4. Set schedule (e.g., **Custom** → `0 */6 * * *` for every 6 hours)
+5. Click **Apply**
+
+---
+
+For additional help, check the [Wiki](https://github.com/StudioNirin/PlexCache-R/wiki) for detailed guides. If something doesn't make sense or doesn't work, please open a new issue. But don't be upset if the answer is in the Wiki and we mock you for not reading it thoroughly first.
 
 ## Notes
 
