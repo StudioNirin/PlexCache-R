@@ -118,7 +118,7 @@ python3 plexcache.py --web --port 8080     # Custom port
 
 PlexCache-R is available as a Docker container, ideal for Unraid users.
 
-**Docker Hub:** `brandonhaney/plexcache-r`
+**Container Registry:** `ghcr.io/brandon-haney/plexcache-r`
 
 ### Quick Start
 
@@ -133,13 +133,13 @@ docker run -d \
   -e PUID=99 \
   -e PGID=100 \
   -e TZ=America/Los_Angeles \
-  brandonhaney/plexcache-r:latest
+  ghcr.io/brandon-haney/plexcache-r:latest
 ```
 
 ### Unraid Installation
 
 1. Go to **Docker** → **Add Container**
-2. Set **Repository**: `brandonhaney/plexcache-r`
+2. Set **Repository**: `ghcr.io/brandon-haney/plexcache-r`
 3. Add required volume mappings:
    - `/config` → `/mnt/user/appdata/plexcache`
    - `/mnt/cache` → `/mnt/cache` (read-write)
