@@ -2,7 +2,7 @@
 # Intelligent Plex media caching for Unraid
 #
 # Usage:
-#   docker-compose up -d          # Start container (pulls from Docker Hub)
+#   docker-compose up -d          # Start container (pulls from GHCR)
 #   docker-compose up -d --build  # Build and start (for development)
 #   docker-compose logs -f        # View logs
 #   docker-compose down           # Stop container
@@ -17,8 +17,8 @@ version: "3.8"
 
 services:
   plexcache:
-    # Use pre-built image from Docker Hub
-    image: brandonhaney/plexcache-r:latest
+    # Use pre-built image from GitHub Container Registry
+    image: ghcr.io/brandon-haney/plexcache-r:latest
     # Or build locally (uncomment for development):
     # build:
     #   context: ..

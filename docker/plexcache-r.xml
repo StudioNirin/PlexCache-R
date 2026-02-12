@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
     <Name>plexcache-r</Name>
-    <Repository>brandonhaney/plexcache-r:latest</Repository>
-    <Registry>https://hub.docker.com/r/brandonhaney/plexcache-r</Registry>
+    <Repository>ghcr.io/brandon-haney/plexcache-r:latest</Repository>
+    <Registry>https://github.com/Brandon-Haney/PlexCache-R/pkgs/container/plexcache-r</Registry>
     <Network>bridge</Network>
     <MyIP/>
     <Shell>sh</Shell>
@@ -26,8 +26,8 @@ If using CA Mover Tuning plugin, set the exclude file path to:
     </Overview>
     <Category>MediaServer:Other Tools:</Category>
     <WebUI>http://[IP]:[PORT:5757]</WebUI>
-    <TemplateURL>https://raw.githubusercontent.com/Brandon-Haney/PlexCache-R/refs/heads/v3.0-docker/docker/plexcache-r.xml</TemplateURL>
-    <Icon>https://raw.githubusercontent.com/Brandon-Haney/PlexCache-R/refs/heads/v3.0-docker/docker/icon.png</Icon>
+    <TemplateURL>https://raw.githubusercontent.com/Brandon-Haney/PlexCache-R/v3.0/docker/plexcache-r.xml</TemplateURL>
+    <Icon>https://raw.githubusercontent.com/Brandon-Haney/PlexCache-R/v3.0/docker/icon.png</Icon>
     <ExtraParams/>
     <PostArgs/>
     <CPUset/>
