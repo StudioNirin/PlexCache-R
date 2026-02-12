@@ -16,17 +16,26 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # Default tag
 VERSION="${1:-latest}"
 
+# Get git commit hash
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
 # Build from project root with docker/Dockerfile
 echo "Building PlexCache-R Docker image..."
 echo "  Image: ${IMAGE_NAME}:${VERSION}"
+echo "  Commit: ${GIT_COMMIT}"
 echo "  Context: ${PROJECT_ROOT}"
 echo ""
 
 cd "$PROJECT_ROOT"
 
-# Build the image
+# Fix line endings for Linux compatibility (Windows creates CRLF)
+sed -i 's/\r$//' docker/docker-entrypoint.sh
+
+# Build the image with version tracking build args
 docker build \
     -f docker/Dockerfile \
+    --build-arg GIT_COMMIT="${GIT_COMMIT}" \
+    --build-arg IMAGE_TAG="${VERSION}" \
     -t "${IMAGE_NAME}:${VERSION}" \
     .
 
