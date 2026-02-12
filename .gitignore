@@ -4,6 +4,10 @@
 # Python
 *.pyc
 __pycache__/
+.coverage
+
+# Runtime data
+/data/
 
 # Logs (root logs directory only, not web/templates/logs/)
 /logs/
