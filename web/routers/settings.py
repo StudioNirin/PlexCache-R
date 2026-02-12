@@ -524,6 +524,15 @@ async def settings_cache(request: Request):
         except Exception:
             pass
 
+    # Get tracked PlexCache files size for quota calculations
+    try:
+        from web.services import get_cache_service
+        cache_service = get_cache_service()
+        all_files = cache_service.get_all_cached_files()
+        drive_info["cached_files_bytes"] = sum(f.size for f in all_files)
+    except Exception:
+        drive_info["cached_files_bytes"] = 0
+
     return templates.TemplateResponse(
         "settings/cache.html",
         {

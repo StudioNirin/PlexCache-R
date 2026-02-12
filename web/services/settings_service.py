@@ -49,6 +49,7 @@ class CacheSettings:
     cache_drive_size: str = ""  # Manual override for drive size (for ZFS)
     cache_limit: str = "250GB"
     min_free_space: str = ""
+    plexcache_quota: str = ""
     cache_eviction_mode: str = "none"
     cache_eviction_threshold_percent: int = 95
     eviction_min_priority: int = 60
@@ -256,6 +257,7 @@ class SettingsService:
             "cache_drive_size": raw.get("cache_drive_size", ""),
             "cache_limit": raw.get("cache_limit", "250GB"),
             "min_free_space": raw.get("min_free_space", ""),
+            "plexcache_quota": raw.get("plexcache_quota", ""),
             "cache_eviction_mode": raw.get("cache_eviction_mode", "none"),
             "cache_eviction_threshold_percent": raw.get("cache_eviction_threshold_percent", 95),
             "eviction_min_priority": raw.get("eviction_min_priority", 60),
@@ -290,6 +292,7 @@ class SettingsService:
             "cache_drive_size": ("cache_drive_size", str),
             "cache_limit": ("cache_limit", str),
             "min_free_space": ("min_free_space", str),
+            "plexcache_quota": ("plexcache_quota", str),
             "cache_eviction_mode": ("cache_eviction_mode", str),
             "cache_eviction_threshold_percent": ("cache_eviction_threshold_percent", safe_int),
             "eviction_min_priority": ("eviction_min_priority", safe_int),
@@ -1011,7 +1014,7 @@ class SettingsService:
             "users_toggle", "skip_ondeck", "skip_watchlist", "watchlist_toggle",
             "watchlist_episodes", "watchlist_retention_days", "watched_move",
             "create_plexcached_backups", "hardlinked_files", "cache_retention_hours",
-            "cache_limit", "min_free_space", "cache_eviction_mode", "cache_eviction_threshold_percent",
+            "cache_limit", "min_free_space", "plexcache_quota", "cache_eviction_mode", "cache_eviction_threshold_percent",
             "eviction_min_priority", "remote_watchlist_toggle", "remote_watchlist_rss_url",
             "notification_type", "unraid_level", "unraid_levels", "webhook_url",
             "webhook_level", "webhook_levels", "max_log_files", "keep_error_logs_days",

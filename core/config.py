@@ -161,6 +161,13 @@ class CacheConfig:
     min_free_space: str = ""
     min_free_space_bytes: int = 0  # Parsed value in bytes (computed from min_free_space)
 
+    # PlexCache quota: maximum space for PlexCache-managed files only
+    # Unlike cache_limit (which counts all drive usage), this only counts tracked files
+    # Supports formats: "500GB", "250MB", "50%", or just "500" (defaults to GB)
+    # Empty string or "0" means disabled
+    plexcache_quota: str = ""
+    plexcache_quota_bytes: int = 0  # Parsed value in bytes
+
     # Smart cache eviction settings
     # cache_eviction_mode: "smart" (priority-based), "fifo" (oldest first), or "none" (disabled)
     cache_eviction_mode: str = "none"
@@ -397,6 +404,10 @@ class ConfigManager:
         # Load and parse min free space setting
         self.cache.min_free_space = self.settings_data.get('min_free_space', "")
         self.cache.min_free_space_bytes = self._parse_cache_limit(self.cache.min_free_space)
+
+        # Load and parse plexcache quota setting
+        self.cache.plexcache_quota = self.settings_data.get('plexcache_quota', "")
+        self.cache.plexcache_quota_bytes = self._parse_cache_limit(self.cache.plexcache_quota)
 
         # Load smart eviction settings (default: disabled)
         self.cache.cache_eviction_mode = self.settings_data.get('cache_eviction_mode', "none")

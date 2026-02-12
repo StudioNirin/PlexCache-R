@@ -162,6 +162,20 @@
                 </div>
             </div>
 
+            <div class="form-group" style="margin-top: 1rem;">
+                <label for="plexcache_quota">PlexCache Quota</label>
+                <input type="text" id="plexcache_quota" name="plexcache_quota"
+                       value="{{ settings.plexcache_quota | default('') }}"
+                       placeholder="500GB or 75%"
+                       oninput="updateCacheCalculations()">
+                <div class="form-hint">Maximum space for <strong>PlexCache-managed files only</strong> (excludes other apps on the drive). Unlike Cache Limit which counts all drive usage. Leave empty to disable.</div>
+                <div id="plexcache_quota_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                <div id="plexcache_quota_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
+                    <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                    <span id="plexcache_quota_warning_text"></span>
+                </div>
+            </div>
+
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
@@ -300,6 +314,7 @@ const autoDetectedDisplay = "{{ drive_info.total_display | default('Unknown') }}
 const currentDriveUsedBytes = {{ drive_info.used_bytes | default(0) }};
 const currentDriveUsedDisplay = "{{ drive_info.used_display | default('Unknown') }}";
 const currentDriveFreeBytes = {{ drive_info.free_bytes | default(0) }};
+const currentCachedFilesBytes = {{ drive_info.cached_files_bytes | default(0) }};
 
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -468,6 +483,42 @@ function updateCacheCalculations() {
             minFreeSpaceHint.style.display = 'block';
         } else {
             minFreeSpaceHint.style.display = 'none';
+        }
+    }
+
+    // Calculate PlexCache quota
+    const plexcacheQuotaInput = document.getElementById('plexcache_quota');
+    const plexcacheQuotaCalc = document.getElementById('plexcache_quota_calculated');
+    const plexcacheQuotaWarning = document.getElementById('plexcache_quota_warning');
+    const plexcacheQuotaWarningText = document.getElementById('plexcache_quota_warning_text');
+
+    if (plexcacheQuotaInput && plexcacheQuotaCalc) {
+        const quotaValue = plexcacheQuotaInput.value;
+        const quotaBytes = parseCacheLimit(quotaValue);
+
+        if (quotaBytes > 0) {
+            if (quotaValue.includes('%') && effectiveSize > 0) {
+                plexcacheQuotaCalc.textContent = `= ${formatBytes(quotaBytes)} of ${effectiveDisplay} drive (PlexCache files only)`;
+            } else if (effectiveSize > 0) {
+                const percent = (quotaBytes / effectiveSize * 100).toFixed(1);
+                plexcacheQuotaCalc.textContent = `= ${percent}% of ${effectiveDisplay} drive (PlexCache files only)`;
+            } else {
+                plexcacheQuotaCalc.textContent = `= ${formatBytes(quotaBytes)} (PlexCache files only)`;
+            }
+
+            // Show warning if tracked files already exceed quota
+            if (plexcacheQuotaWarning && currentCachedFilesBytes > 0) {
+                if (currentCachedFilesBytes >= quotaBytes) {
+                    plexcacheQuotaWarningText.textContent = `PlexCache is currently using ${formatBytes(currentCachedFilesBytes)} — already over this quota. No new files will be cached until tracked usage drops below ${formatBytes(quotaBytes)}.`;
+                    plexcacheQuotaWarning.style.display = 'block';
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                } else {
+                    plexcacheQuotaWarning.style.display = 'none';
+                }
+            }
+        } else {
+            plexcacheQuotaCalc.textContent = '';
+            if (plexcacheQuotaWarning) plexcacheQuotaWarning.style.display = 'none';
         }
     }
 }

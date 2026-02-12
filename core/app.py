@@ -1357,6 +1357,37 @@ class PlexCacheApp:
             readable = f"{min_free_bytes / (1024**3):.1f}GB"
             return (min_free_bytes, readable)
 
+    def _get_effective_plexcache_quota(self, cache_dir: str) -> tuple:
+        """Calculate effective plexcache quota in bytes, handling percentage-based values.
+
+        Args:
+            cache_dir: Path to the cache directory.
+
+        Returns:
+            Tuple of (quota_bytes, readable_str). Returns (0, None) if disabled.
+        """
+        quota_bytes = self.config_manager.cache.plexcache_quota_bytes
+
+        if quota_bytes == 0:
+            return (0, None)
+
+        if quota_bytes < 0:
+            # Negative value indicates percentage
+            percent = abs(quota_bytes)
+            try:
+                drive_size_override = self.config_manager.cache.cache_drive_size_bytes
+                disk_usage = get_disk_usage(cache_dir, drive_size_override)
+                total_drive_size = disk_usage.total
+                resolved_bytes = int(total_drive_size * percent / 100)
+                readable = f"{percent}% of {total_drive_size / (1024**3):.1f}GB = {resolved_bytes / (1024**3):.1f}GB"
+                return (resolved_bytes, readable)
+            except Exception as e:
+                logging.warning(f"Could not calculate cache drive size for plexcache_quota percentage: {e}")
+                return (0, None)
+        else:
+            readable = f"{quota_bytes / (1024**3):.1f}GB"
+            return (quota_bytes, readable)
+
     def _get_plexcache_tracked_size(self) -> tuple:
         """Calculate current PlexCache tracked size from exclude file.
 
@@ -1395,16 +1426,17 @@ class PlexCacheApp:
         return (plexcache_tracked, cached_files)
 
     def _apply_cache_limit(self, media_files: List[str], cache_dir: str) -> List[str]:
-        """Apply cache size limit and min free space, filtering out files that would exceed limits.
+        """Apply cache size limit, min free space, and plexcache quota, filtering out files that would exceed limits.
 
         Returns the list of files that fit within the most restrictive constraint.
         Files are prioritized in the order they appear (OnDeck items should come first).
         """
         cache_limit_bytes, limit_readable = self._get_effective_cache_limit(cache_dir)
         min_free_bytes, min_free_readable = self._get_effective_min_free_space(cache_dir)
+        plexcache_quota_bytes, quota_readable = self._get_effective_plexcache_quota(cache_dir)
 
         # No constraints set
-        if cache_limit_bytes == 0 and min_free_bytes == 0:
+        if cache_limit_bytes == 0 and min_free_bytes == 0 and plexcache_quota_bytes == 0:
             return media_files
 
         # Get total cache drive usage (use manual override if configured)
@@ -1421,6 +1453,8 @@ class PlexCacheApp:
             logging.info(f"Cache limit: {limit_readable}")
         if min_free_bytes > 0:
             logging.info(f"Min free space: {min_free_readable}")
+        if plexcache_quota_bytes > 0:
+            logging.info(f"PlexCache quota: {quota_readable}")
         logging.info(f"Cache drive usage: {drive_usage_gb:.2f}GB (free: {disk_usage.free / (1024**3):.2f}GB)")
 
         # Calculate available space from each constraint
@@ -1438,16 +1472,28 @@ class PlexCacheApp:
                 available_space = min_free_available
                 bottleneck = "min_free_space"
 
+        # PlexCache quota constraint (only counts tracked files, not all drive usage)
+        if plexcache_quota_bytes > 0:
+            plexcache_tracked, _ = self._get_plexcache_tracked_size()
+            quota_available = plexcache_quota_bytes - plexcache_tracked
+            logging.info(f"PlexCache quota: {plexcache_quota_bytes / (1024**3):.1f}GB (tracked: {plexcache_tracked / (1024**3):.2f}GB, available: {quota_available / (1024**3):.2f}GB)")
+            if available_space is None or quota_available < available_space:
+                available_space = quota_available
+                bottleneck = "plexcache_quota"
+
         if available_space is None:
             return media_files
 
-        # Log which constraint is the bottleneck when both are active
-        if cache_limit_bytes > 0 and min_free_bytes > 0:
+        # Log which constraint is the bottleneck when multiple are active
+        active_count = sum(1 for v in [cache_limit_bytes, min_free_bytes, plexcache_quota_bytes] if v > 0)
+        if active_count > 1:
             logging.info(f"Active constraint: {bottleneck.replace('_', ' ')} (available: {available_space / (1024**3):.2f}GB)")
 
         if available_space <= 0:
             if bottleneck == "min_free_space":
                 logging.warning(f"Drive free space ({disk_usage.free / (1024**3):.2f}GB) is at or below min free space floor ({min_free_readable})")
+            elif bottleneck == "plexcache_quota":
+                logging.warning(f"PlexCache quota reached ({plexcache_tracked / (1024**3):.2f}GB tracked, quota is {quota_readable})")
             else:
                 logging.warning(f"Cache drive already at or over limit ({drive_usage_gb:.2f}GB used, limit is {limit_readable})")
             return []
@@ -1477,7 +1523,8 @@ class PlexCacheApp:
 
         if skipped_count > 0:
             skipped_gb = skipped_size / (1024**3)
-            logging.warning(f"Cache limit reached: skipped {skipped_count} files ({skipped_gb:.2f}GB) that would exceed the {limit_readable} limit")
+            constraint_name = quota_readable if bottleneck == "plexcache_quota" else (min_free_readable if bottleneck == "min_free_space" else limit_readable)
+            logging.warning(f"Cache limit reached: skipped {skipped_count} files ({skipped_gb:.2f}GB) that would exceed the {constraint_name} limit")
 
         return files_to_cache
 

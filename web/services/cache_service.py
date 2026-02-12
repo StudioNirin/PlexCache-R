@@ -820,6 +820,33 @@ class CacheService:
             except (ValueError, TypeError):
                 pass
 
+        # Check plexcache quota
+        plexcache_quota_exceeded = False
+        plexcache_quota_setting = settings.get("plexcache_quota", "")
+        if plexcache_quota_setting and plexcache_quota_setting not in ["", "0"]:
+            try:
+                quota_str = str(plexcache_quota_setting).strip()
+                quota_bytes = 0
+                if quota_str.upper().endswith('%'):
+                    if disk_total > 0:
+                        percent_val = int(quota_str.rstrip('%'))
+                        quota_bytes = int(disk_total * percent_val / 100)
+                else:
+                    match = re.match(r'^([\d.]+)\s*(T|TB|G|GB|M|MB)?$', quota_str, re.IGNORECASE)
+                    if match:
+                        value = float(match.group(1))
+                        unit = (match.group(2) or "GB").upper()
+                        if unit in ("T", "TB"):
+                            quota_bytes = int(value * 1024**4)
+                        elif unit in ("G", "GB"):
+                            quota_bytes = int(value * 1024**3)
+                        elif unit in ("M", "MB"):
+                            quota_bytes = int(value * 1024**2)
+                if quota_bytes > 0 and cached_files_size >= quota_bytes:
+                    plexcache_quota_exceeded = True
+            except (ValueError, TypeError):
+                pass
+
         return {
             "cache_files": len(all_files),  # Grouped count (subtitles with videos)
             "cache_size": self._format_size(disk_used),  # Actual disk used
@@ -834,7 +861,8 @@ class CacheService:
             "eviction_over_threshold": eviction_over_threshold,
             "eviction_over_by_display": eviction_over_by_display,
             "cache_limit_exceeded": cache_limit_exceeded,
-            "min_free_space_warning": min_free_space_warning
+            "min_free_space_warning": min_free_space_warning,
+            "plexcache_quota_exceeded": plexcache_quota_exceeded
         }
 
     def get_drive_details(self, expiring_within_days: int = 3) -> Dict[str, Any]:
@@ -1014,6 +1042,47 @@ class CacheService:
             if disk_free < min_free_space_bytes:
                 min_free_space_warning = True
 
+        # Calculate plexcache_quota info (only counts PlexCache-managed files)
+        plexcache_quota_setting = settings.get("plexcache_quota", "")
+        plexcache_quota_bytes = 0
+        plexcache_quota_display = None
+        plexcache_quota_percent = None
+        plexcache_quota_warning = False
+        plexcache_quota_available = 0
+        plexcache_quota_used_percent = 0
+
+        if plexcache_quota_setting and plexcache_quota_setting not in ["", "0"]:
+            try:
+                quota_str = str(plexcache_quota_setting).strip()
+                if quota_str.upper().endswith('%'):
+                    if disk_total > 0:
+                        percent_val = int(quota_str.rstrip('%'))
+                        plexcache_quota_bytes = int(disk_total * percent_val / 100)
+                        plexcache_quota_display = f"{percent_val}% = {self._format_size(plexcache_quota_bytes)}"
+                        plexcache_quota_percent = percent_val
+                else:
+                    match = re.match(r"^(\d+(?:\.\d+)?)\s*(TB|GB|MB|T|G|M)?$", quota_str, re.IGNORECASE)
+                    if match:
+                        value = float(match.group(1))
+                        unit = (match.group(2) or "GB").upper()
+                        if unit in ("T", "TB"):
+                            plexcache_quota_bytes = int(value * 1024**4)
+                        elif unit in ("G", "GB"):
+                            plexcache_quota_bytes = int(value * 1024**3)
+                        elif unit in ("M", "MB"):
+                            plexcache_quota_bytes = int(value * 1024**2)
+                        plexcache_quota_display = self._format_size(plexcache_quota_bytes)
+                        if disk_total > 0:
+                            plexcache_quota_percent = round(plexcache_quota_bytes / disk_total * 100, 1)
+            except (ValueError, TypeError):
+                pass
+
+        if plexcache_quota_bytes > 0:
+            plexcache_quota_used_percent = round(total_cached_size / plexcache_quota_bytes * 100, 1) if plexcache_quota_bytes > 0 else 0
+            plexcache_quota_available = max(0, plexcache_quota_bytes - total_cached_size)
+            if total_cached_size >= plexcache_quota_bytes:
+                plexcache_quota_warning = True
+
         # Calculate eviction threshold (for visual display)
         eviction_threshold_setting = settings.get("cache_eviction_threshold_percent", 95)
         eviction_threshold_bytes = 0
@@ -1105,6 +1174,14 @@ class CacheService:
                 "min_free_space_warning": min_free_space_warning,
                 "min_free_space_available": min_free_space_available,
                 "min_free_space_available_display": self._format_size(min_free_space_available) if min_free_space_bytes > 0 else None,
+                # PlexCache quota info
+                "plexcache_quota_bytes": plexcache_quota_bytes,
+                "plexcache_quota_display": plexcache_quota_display,
+                "plexcache_quota_percent": plexcache_quota_percent,
+                "plexcache_quota_used_percent": plexcache_quota_used_percent,
+                "plexcache_quota_available": plexcache_quota_available,
+                "plexcache_quota_available_display": self._format_size(plexcache_quota_available) if plexcache_quota_bytes > 0 else None,
+                "plexcache_quota_warning": plexcache_quota_warning,
                 # Stacked bar data
                 "other_drive_size": other_drive_size,
                 "other_drive_size_display": self._format_size(other_drive_size),
