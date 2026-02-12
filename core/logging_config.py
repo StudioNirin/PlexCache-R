@@ -224,17 +224,13 @@ class UnraidHandler(logging.Handler):
             if "warning" in self.enabled_levels:
                 self.send_unraid_notification(record)
 
-    def _build_notify_cmd(self, event: str, subject: str, description: str, icon: str) -> str:
-        """Build the notify command, using PHP wrapper if needed for short open tags."""
-        # Escape double quotes in the description to prevent command injection
-        description = description.replace('"', '\\"')
-        subject = subject.replace('"', '\\"')
-
+    def _build_notify_args(self, event: str, subject: str, description: str, icon: str) -> list:
+        """Build the notify command as an argument list (no shell interpretation)."""
+        args = [self.notify_cmd_base, '-e', event, '-s', subject, '-d', description, '-i', icon]
         if self._use_php_wrapper:
             # Script uses <? short tag, need to run via php with short_open_tag enabled
-            return f'php -d short_open_tag=1 {self.notify_cmd_base} -e "{event}" -s "{subject}" -d "{description}" -i "{icon}"'
-        else:
-            return f'{self.notify_cmd_base} -e "{event}" -s "{subject}" -d "{description}" -i "{icon}"'
+            args = ['php', '-d', 'short_open_tag=1'] + args
+        return args
 
     def _format_bytes(self, bytes_value: int) -> str:
         """Format bytes into human-readable string."""
@@ -306,8 +302,8 @@ class UnraidHandler(logging.Handler):
         else:
             description = record.msg
 
-        notify_cmd = self._build_notify_cmd("PlexCache", "Summary", description, icon)
-        subprocess.call(notify_cmd, shell=True)
+        notify_args = self._build_notify_args("PlexCache", "Summary", description, icon)
+        subprocess.run(notify_args)
 
     def send_unraid_notification(self, record):
         # Map logging levels to icons
@@ -320,8 +316,8 @@ class UnraidHandler(logging.Handler):
         }
 
         icon = level_to_icon.get(record.levelname, 'normal')
-        notify_cmd = self._build_notify_cmd("PlexCache", record.levelname, record.msg, icon)
-        subprocess.call(notify_cmd, shell=True)
+        notify_args = self._build_notify_args("PlexCache", record.levelname, record.msg, icon)
+        subprocess.run(notify_args)
 
 
 class WebhookHandler(logging.Handler):

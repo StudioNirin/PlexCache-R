@@ -1,5 +1,5 @@
 # PlexCache-R V3.0: Automate Plex Media Management
-### Updated 1/20/26
+### Updated 2/11/26
 
 ## Current Bugs / Todo List
 
@@ -27,6 +27,12 @@ The original PlexCache app only worked for local users for most features, due to
 - (New v3) - **Enhanced Webhooks** - Discord and Slack rich message formatting with granular notification levels (Summary, Activity, Errors, Warnings).
 - (New v3) - **Stop Button** - Abort running operations gracefully from the Web UI.
 - (New v3) - **Smart Error Handling** - Migration stops early on critical errors (disk full, permissions).
+- (New v3) - **Async Maintenance** — Background thread execution for maintenance actions (restore, sync, protect, delete, fix) with real-time progress.
+- (New v3) - **Parallel File Operations** — Concurrent file moves/copies with configurable worker count.
+- (New v3) - **Cache Health Audit** — Detect unprotected files, orphaned backups, stale entries with one-click fixes.
+- (New v3) - **ZFS Support** — Automatic detection of ZFS pool-only shares with correct path resolution.
+- (New v3) - **Min Free Space** — Safety floor setting to prevent caching when cache drive space is low.
+- (New v3) - **Docker Support** — Official container with Unraid template, auto-setup, and path translation.
 - Move watched media present on the cache drive back to the array.
 - Move respective subtitles along with the media moved to or from the cache.
 - Filter media older than a specified number of days.
@@ -45,26 +51,37 @@ The original PlexCache app only worked for local users for most features, due to
 
 ```
 PlexCache-R/
-├── plexcache.py              # CLI entry point
-├── plexcache_web.py          # Web UI entry point
+├── plexcache.py              # Unified entry point (CLI, Web UI, setup wizard)
 ├── core/                     # Core application modules
 │   ├── app.py                # Main orchestrator (PlexCacheApp class)
 │   ├── setup.py              # Interactive setup wizard
-│   ├── config.py             # Configuration management (dataclasses)
-│   ├── logging_config.py     # Logging, rotation, notification handlers
-│   ├── system_utils.py       # OS detection, path conversions
-│   ├── plex_api.py           # Plex server interactions
-│   └── file_operations.py    # File moving, filtering, subtitles
+│   ├── config.py             # Configuration management (dataclasses, JSON settings)
+│   ├── logging_config.py     # Logging, rotation, Unraid/webhook notification handlers
+│   ├── system_utils.py       # OS detection, path conversions, file utilities
+│   ├── plex_api.py           # Plex server interactions (OnDeck, Watchlist, RSS feeds)
+│   └── file_operations.py    # File moving, filtering, subtitles, timestamp tracking
 ├── web/                      # Web UI (FastAPI + HTMX)
-│   ├── main.py               # FastAPI application
-│   ├── routers/              # Route handlers
-│   ├── services/             # Business logic
+│   ├── main.py               # FastAPI application (lifespan, middleware, error handlers)
+│   ├── config.py             # Web configuration + shared Jinja2 templates instance
+│   ├── dependencies.py       # Shared instances
+│   ├── routers/              # Route handlers (dashboard, cache, settings, logs, maintenance, operations, setup)
+│   ├── services/             # Business logic layer
+│   │   ├── maintenance_runner.py  # Background maintenance thread runner
+│   │   ├── operation_runner.py    # Background operation runner + activity feed
+│   │   ├── cache_service.py       # Cache analysis and storage stats
+│   │   └── ...                    # Scheduler, settings, import services
 │   ├── templates/            # Jinja2 templates (Plex theme)
 │   └── static/               # CSS, JS assets
+├── docker/                   # Docker support
+│   ├── Dockerfile            # Multi-stage container build
+│   ├── docker-entrypoint.sh  # Container startup script
+│   └── plexcache-r.xml       # Unraid Community Apps template
 ├── tools/                    # Diagnostic utilities
 │   └── audit_cache.py        # Cache diagnostic tool
-├── data/                     # Runtime tracking files (auto-created)
-└── logs/                     # Log files
+├── data/                     # Runtime tracking files (auto-created, JSON)
+├── logs/                     # plexcache.log (rotating, 10MB, 5 backups)
+├── plexcache_settings.json   # User configuration
+└── plexcache_cached_files.txt  # Tracked cache files (Unraid mover exclude list)
 ```
 
 ## Web UI (New in V3.0)
@@ -73,9 +90,9 @@ PlexCache-R now includes a browser-based dashboard for monitoring and configurat
 
 **Start the Web UI:**
 ```bash
-python3 plexcache_web.py                 # Start on localhost:5000
-python3 plexcache_web.py --host 0.0.0.0  # Listen on all interfaces
-python3 plexcache_web.py --port 8080     # Custom port
+python3 plexcache.py --web               # Start on localhost:5000
+python3 plexcache.py --web --host 0.0.0.0  # Listen on all interfaces
+python3 plexcache.py --web --port 8080     # Custom port
 ```
 
 **Features:**
@@ -88,8 +105,13 @@ python3 plexcache_web.py --port 8080     # Custom port
 - **Schedule** - Automatic runs with interval or cron expressions
 - **Logs** - Real-time log viewer with search, filters, and live streaming
 - **Stop Button** - Abort running operations gracefully (stops after current file completes)
+- **Operations** — Run Now with real-time progress banner, ETA, and stop button
+- **Activity Feed** — Recent file operations with persistent history
+- **Maintenance History** — Persistent log of past maintenance actions
 
 **Tech Stack:** FastAPI, HTMX, Jinja2, Plex-inspired dark theme
+
+> **Note:** When running via Docker, the default port is **5757**. When running via CLI, the default port is **5000**.
 
 ## Docker Installation (Recommended for Unraid)
 
