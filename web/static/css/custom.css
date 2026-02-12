@@ -329,6 +329,8 @@ footer {
     transform: translateX(-50%);
     z-index: 9999;
     pointer-events: none;
+    display: flex;
+    justify-content: center;
 }
 
 #global-operation-banner:empty {
@@ -339,84 +341,451 @@ footer {
     pointer-events: auto;
 }
 
-.global-op-banner {
-    background: #1a1d1f;
-    border: 2px solid #e5a00d;
-    border-radius: 12px;
-    padding: 0.75rem 1.25rem;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.05);
-    animation: toastSlideDown 0.3s ease-out;
-    min-width: 320px;
-    max-width: 600px;
+/* ── Banner Pill System ───────────────────────────────── */
+
+/* Color accent variables per operation type */
+.di-pill--caching  { --accent: #4CD964; --accent-dim: rgba(76,217,100,0.2);  --accent-glow: rgba(76,217,100,0.15); }
+.di-pill--evicting { --accent: #FF9500; --accent-dim: rgba(255,149,0,0.2);   --accent-glow: rgba(255,149,0,0.15); }
+.di-pill--maintenance { --accent: #5AC8FA; --accent-dim: rgba(90,200,250,0.2); --accent-glow: rgba(90,200,250,0.15); }
+.di-pill--error    { --accent: #FF3B30; --accent-dim: rgba(255,59,48,0.2);   --accent-glow: rgba(255,59,48,0.15); }
+.di-pill--dry-run  { --accent: #FFCC00; --accent-dim: rgba(255,204,0,0.2);   --accent-glow: rgba(255,204,0,0.15); }
+.di-pill--completed { --accent: #4CD964; --accent-dim: rgba(76,217,100,0.2); --accent-glow: rgba(76,217,100,0.15); }
+.di-pill--completed-errors { --accent: #FF9500; --accent-dim: rgba(255,149,0,0.2); --accent-glow: rgba(255,149,0,0.15); }
+.di-pill--idle     { --accent: #e5a00d; --accent-dim: rgba(229,160,13,0.15); --accent-glow: rgba(229,160,13,0.1); }
+
+/* Slide-down entrance */
+@keyframes diSlideDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
-.global-op-banner-success {
-    border-color: #2ecc71;
+/* Completion flash */
+@keyframes diCompleteFlash {
+    0%   { box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 0 0 var(--accent-glow); }
+    50%  { box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 12px 4px var(--accent-glow); }
+    100% { box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 0 0 var(--accent-glow); }
 }
 
-.global-op-banner-error {
-    border-color: #e74c3c;
-}
-
-@keyframes toastSlideDown {
-    from {
-        opacity: 0;
-        transform: translateY(-30px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.global-op-banner-content {
+/* Base compact pill */
+.di-pill {
+    background: #000;
+    border-radius: 28px;
+    padding: 0 1.25rem;
+    height: 44px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
+    min-width: 240px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    /* No entrance animation — HTMX replaces innerHTML every 2s and would
+       replay it each time, causing a visible bounce.  Entrance animation
+       is applied once via .di-pill--entrance in JS on state changes. */
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
+/* One-shot entrance animation — added by JS only on real state changes */
+.di-pill--entrance { animation: diSlideDown 0.3s ease-out; }
 
-.global-op-banner-left {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    color: #fff;
+.di-pill:hover { transform: scale(1.02); }
+
+/* Idle variant — smaller, dimmer */
+.di-pill--idle {
+    height: 38px;
+    border-radius: 20px;
+    padding: 0 1rem;
+    min-width: 200px;
+    opacity: 0.7;
 }
+.di-pill--idle:hover { opacity: 1; }
 
-.global-op-banner-left strong {
-    color: #fff;
-    font-size: 0.95rem;
-}
-
-.global-op-banner-left .text-muted {
-    color: rgba(255,255,255,0.6);
-}
-
-.global-op-banner-actions {
+/* ── Idle pill expanded actions ───────────────────────── */
+.di-idle-actions {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    width: 100%;
+}
+.di-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s, transform 0.1s;
+}
+.di-btn:active { transform: scale(0.96); }
+.di-btn--primary {
+    background: var(--plex-orange, #e5a00d);
+    color: #000;
+}
+.di-btn--primary:hover { background: #f0b020; }
+.di-btn--secondary {
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.7);
+    border: 1px solid rgba(255,255,255,0.12);
+}
+.di-btn--secondary:hover { background: rgba(255,255,255,0.14); color: #fff; }
+.di-verbose-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.5);
+    margin-right: auto;
+}
+.di-verbose-toggle input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--plex-orange, #e5a00d);
+    cursor: pointer;
+    margin: 0;
+}
+
+/* Dry run — dashed border */
+.di-pill--dry-run { border: 1.5px dashed rgba(255,204,0,0.3); }
+
+/* Completed — subtle glow border */
+.di-pill--completed {
+    border: 1.5px solid rgba(76,217,100,0.3);
+    animation: diCompleteFlash 0.6s ease-out;
+}
+.di-pill--completed-errors {
+    border: 1.5px solid rgba(255,149,0,0.3);
+    animation: diCompleteFlash 0.6s ease-out;
+}
+
+/* Error — red glow border */
+.di-pill--error { border: 1.5px solid rgba(255,59,48,0.3); }
+
+/* Running pills use a fixed width in compact mode to prevent jumpiness
+   as content changes (phase labels, counts, durations) every 2s poll */
+.di-glow { width: 360px; min-width: 360px; }
+
+/* Subtle animated glow behind running pills — compact state only */
+.di-glow::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 28px;
+    background: linear-gradient(90deg, transparent, var(--accent-glow, transparent), transparent);
+    opacity: 0.6;
+    pointer-events: none;
+    z-index: 0;
+    transition: opacity 0.3s ease;
+}
+/* Hide glow when expanded */
+#global-operation-banner[data-di-expanded="tier2"] .di-glow::after,
+#global-operation-banner[data-di-expanded="tier3"] .di-glow::after,
+.di-pill.di-expanded.di-glow::after { opacity: 0; }
+/* Hide border glow + flash animation when expanded */
+#global-operation-banner[data-di-expanded="tier2"] .di-pill,
+#global-operation-banner[data-di-expanded="tier3"] .di-pill,
+.di-pill.di-expanded { border-color: rgba(255,255,255,0.06) !important; animation: none !important; }
+
+/* Compact view layout */
+.di-pill__compact {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+/* Pill layout sections */
+.di-pill__left, .di-pill__right {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    position: relative;
+    z-index: 1;
+}
+
+/* Icon circle */
+.di-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: var(--accent-dim);
+    color: var(--accent);
+}
+
+/* Label text */
+.di-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+}
+
+/* Metric (count, duration, etc.) */
+.di-metric {
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--accent);
+}
+
+/* Muted metric variant for idle/secondary info */
+.di-metric--muted {
+    color: rgba(255,255,255,0.5);
+    font-weight: 400;
+    font-size: 0.78rem;
+}
+
+/* Accent-colored spinner */
+.di-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid transparent;
+    border-top-color: var(--accent);
+    border-right-color: var(--accent-dim);
+    border-radius: 50%;
+    animation: diSpin 0.8s linear infinite;
     flex-shrink: 0;
 }
+@keyframes diSpin { to { transform: rotate(360deg); } }
 
-.global-op-banner-actions .btn {
-    padding: 0.4rem 0.75rem;
-    font-size: 0.85rem;
+/* 3px progress bar at pill bottom */
+.di-pill__progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    border-radius: 0 0 28px 28px;
+    background: linear-gradient(90deg, var(--accent), var(--accent));
+    transition: width 0.5s ease;
+    z-index: 1;
 }
 
-.global-op-dismiss {
-    padding: 0.25rem;
-    opacity: 0.7;
-    transition: opacity 0.2s;
+/* Error badge */
+.di-error-badge {
+    background: #e74c3c;
+    color: #fff;
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 8px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* ── Expanded state ──────────────────────────────────── */
+/* Driven by data-di-expanded on the OUTER #global-operation-banner div
+   (which is NOT replaced by HTMX swaps). This avoids flicker — no JS
+   class reapplication needed after each 2s poll. */
+
+/* Default: expanded content hidden */
+.di-pill .di-pill__expanded { display: none; }
+
+/* Tier 2+: hide compact, show expanded */
+#global-operation-banner[data-di-expanded="tier2"] .di-pill__compact,
+#global-operation-banner[data-di-expanded="tier3"] .di-pill__compact { display: none !important; }
+#global-operation-banner[data-di-expanded="tier2"] .di-pill__expanded,
+#global-operation-banner[data-di-expanded="tier3"] .di-pill__expanded {
+    display: flex !important;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+/* Hide the compact 3px progress bar when expanded (expanded has its own 4px bar) */
+#global-operation-banner[data-di-expanded="tier2"] .di-pill__progress,
+#global-operation-banner[data-di-expanded="tier3"] .di-pill__progress { display: none; }
+
+/* Pill shape when expanded */
+#global-operation-banner[data-di-expanded="tier2"] .di-pill,
+#global-operation-banner[data-di-expanded="tier3"] .di-pill {
+    border-radius: 22px;
+    height: auto;
+    padding: 0.85rem 1.25rem;
+    max-width: 620px;
+    min-width: 420px;
+    cursor: default;
+    overflow: visible;
+    flex-direction: column;
+}
+#global-operation-banner[data-di-expanded="tier2"] .di-pill:hover,
+#global-operation-banner[data-di-expanded="tier3"] .di-pill:hover { transform: none; }
+
+/* Legacy class support (for JS-generated pills like completion banners) */
+.di-pill.di-expanded .di-pill__compact { display: none !important; }
+.di-pill.di-expanded .di-pill__expanded {
+    display: flex !important;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+}
+.di-pill.di-expanded .di-pill__progress { display: none; }
+.di-pill.di-expanded {
+    border-radius: 22px;
+    height: auto;
+    padding: 0.85rem 1.25rem;
+    max-width: 620px;
+    min-width: 420px;
+    cursor: default;
+    overflow: visible;
+    flex-direction: column;
+}
+.di-pill.di-expanded:hover { transform: none; }
+
+/* Expanded header row */
+.di-expanded__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+}
+.di-expanded__header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+.di-expanded__header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/* Expanded progress bar */
+.di-progress-track {
+    height: 4px;
+    background: #1a1a1a;
+    border-radius: 2px;
+    overflow: hidden;
+    width: 100%;
+}
+.di-progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent));
+    transition: width 0.5s ease;
+}
+
+/* Progress meta row */
+.di-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.4);
+}
+.di-progress-meta .di-progress-meta__right {
+    color: rgba(255,255,255,0.7);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Detail panel (Tier 3) ───────────────────────────── */
+
+.di-pill .di-pill__detail { display: none; }
+#global-operation-banner[data-di-expanded="tier3"] .di-pill__detail,
+.di-pill.di-detail .di-pill__detail {
+    display: block;
+    width: 100%;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+/* File row in detail panel */
+.di-file-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    color: rgba(255,255,255,0.45);
+    padding: 2px 0;
+}
+.di-file-row .di-action-tag {
+    font-size: 0.65rem;
+    padding: 1px 6px;
     border-radius: 4px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.di-action-tag--active {
+    background: rgba(90,200,250,0.15);
+    color: #5AC8FA;
+    animation: diPulseTag 1.5s ease-in-out infinite;
+}
+@keyframes diPulseTag { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.di-file-row--active .di-file-row__name { color: rgba(255,255,255,0.7); }
+.di-action-tag--cached {
+    background: rgba(76,217,100,0.12);
+    color: #4CD964;
+}
+.di-action-tag--restored {
+    background: rgba(255,149,0,0.12);
+    color: #FF9500;
+}
+.di-file-row__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+.di-file-row__size {
+    color: rgba(255,255,255,0.25);
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
-.global-op-dismiss:hover {
-    opacity: 1;
-    background: rgba(255, 255, 255, 0.1);
+/* ── Buttons ─────────────────────────────────────────── */
+
+/* Circular stop button */
+.di-stop {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(255,59,48,0.15);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    flex-shrink: 0;
+}
+.di-stop:hover { background: rgba(255,59,48,0.3); }
+.di-stop__inner {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: #FF3B30;
 }
 
-/* Ghost button style for dismiss */
+/* Circular dismiss/minimize button */
+.di-dismiss {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.4);
+    font-size: 1rem;
+    transition: background 0.2s, color 0.2s;
+    flex-shrink: 0;
+    line-height: 1;
+}
+.di-dismiss:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+/* Ghost button (legacy compat) */
 .btn-ghost {
     background: transparent;
     border: none;
@@ -424,7 +793,52 @@ footer {
     cursor: pointer;
 }
 
-/* Mobile adjustments */
+/* ── Warning row (reused from old banner) ────────────── */
+.di-warning {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    max-height: 0;
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding-top: 0;
+    margin-top: 0;
+    border-top: 1px solid transparent;
+    transition: max-height 0.35s ease-out, max-width 0.4s ease-out,
+                opacity 0.3s ease-out, padding-top 0.35s ease-out,
+                margin-top 0.35s ease-out, border-color 0.3s ease-out;
+}
+
+/* ── Summary stats row (completion expanded) ─────────── */
+.di-summary-stats {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.8rem;
+    margin: 0.15rem 0;
+}
+.di-summary-stats__cached { color: #4CD964; }
+.di-summary-stats__restored { color: #FF9500; }
+.di-summary-stats__muted { color: rgba(255,255,255,0.25); }
+
+/* Divider line */
+.di-divider {
+    height: 1px;
+    background: #1a1a1a;
+    margin: 0.15rem 0;
+    width: 100%;
+}
+
+/* More files link */
+.di-more-files {
+    text-align: center;
+    font-size: 0.7rem;
+    color: rgba(255,255,255,0.25);
+    margin-top: 0.15rem;
+}
+
+/* ── Mobile responsive ───────────────────────────────── */
 @media (max-width: 768px) {
     #global-operation-banner {
         top: 70px;
@@ -433,19 +847,18 @@ footer {
         transform: none;
     }
 
-    .global-op-banner {
+    .di-pill {
         min-width: auto;
         max-width: none;
         width: 100%;
     }
 
-    .global-op-banner-content {
-        flex-wrap: wrap;
+    .di-pill.di-expanded {
+        max-width: none;
+        min-width: auto;
     }
 
-    .global-op-banner-actions {
-        width: 100%;
-        justify-content: flex-end;
-        margin-top: 0.5rem;
+    .di-pill__detail {
+        max-height: 150px;
     }
 }

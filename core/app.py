@@ -926,6 +926,10 @@ class PlexCacheApp:
         for item in self.ondeck_items:
             self.source_map[item] = "ondeck"
 
+        if self.should_stop:
+            logging.info("Operation stopped during media processing")
+            return
+
         # Fetch subtitles for OnDeck media (already using real paths)
         logging.debug("Finding subtitles for OnDeck media...")
         ondeck_with_subtitles = self.subtitle_finder.get_media_subtitles(list(self.ondeck_items), files_to_skip=set(self.files_to_skip))
@@ -937,6 +941,10 @@ class PlexCacheApp:
         for item in ondeck_with_subtitles:
             if item not in self.source_map:
                 self.source_map[item] = "ondeck"
+
+        if self.should_stop:
+            logging.info("Operation stopped during media processing")
+            return
 
         # Process watchlist (returns already-modified paths)
         if self.config_manager.cache.watchlist_toggle:
@@ -952,6 +960,10 @@ class PlexCacheApp:
                     if item not in self.source_map:
                         self.source_map[item] = "watchlist"
 
+        if self.should_stop:
+            logging.info("Operation stopped during media processing")
+            return
+
         # Run modify_file_paths on all collected paths to ensure consistent path format
         logging.debug("Finalizing media to cache list...")
         self.media_to_cache = self.file_path_modifier.modify_file_paths(list(modified_paths_set))
@@ -961,6 +973,10 @@ class PlexCacheApp:
 
         # Log total media to cache
         logging.info(f"Total media to cache: {len(self.media_to_cache)} files")
+
+        if self.should_stop:
+            logging.info("Operation stopped during media processing")
+            return
 
         # Check for files that should be moved back to array (no longer needed in cache)
         # Only check if watched_move is enabled - otherwise files stay on cache indefinitely

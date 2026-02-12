@@ -1,35 +1,18 @@
-<!-- Global Operation Banner - centered toast on all pages when operation or maintenance is running -->
-<style>
-/* Expand active-files/mini-log on banner hover — instant expand (no transition)
-   so it doesn't flicker when HTMX replaces the DOM every 2s while cursor is over */
-#active-op-banner:hover .maint-active-files {
-    max-height: 200px !important;
-    opacity: 1 !important;
-    margin-top: 0.3rem !important;
-    transition: none !important;
-}
-/* Also expand on the completion banner hover */
-#global-operation-alert:hover .maint-active-files {
-    max-height: 200px !important;
-    opacity: 1 !important;
-    margin-top: 0.3rem !important;
-    transition: none !important;
-}
-</style>
-<!-- Banner warning helper - expands a warning row inside the active banner -->
+<!-- Global Operation Banner — compact pill style -->
+<!-- Compact pill by default, expands on hover/click. Color-coded by operation type. -->
+
+<!-- Banner warning helper — expands a warning row inside the active pill -->
 <script>
 function showBannerWarning(message) {
-    var warning = document.getElementById('banner-warning');
-    var banner = document.getElementById('active-op-banner');
-    var textEl = document.getElementById('banner-warning-text');
-    if (!warning || !banner || !textEl) return;
+    var warning = document.getElementById('di-warning');
+    var pill = document.querySelector('.di-pill');
+    var textEl = document.getElementById('di-warning-text');
+    if (!warning || !pill || !textEl) return;
     textEl.textContent = message;
-    // Pause HTMX polling so it doesn't replace the warning before it's seen
+    // Slow HTMX polling so warning isn't replaced before user sees it
     var pollEl = document.querySelector('#global-operation-banner [hx-trigger]');
     if (pollEl) { pollEl.setAttribute('hx-trigger', 'every 8s'); htmx.process(pollEl); }
-    // Expand with animation (double rAF ensures browser paints collapsed state first)
     requestAnimationFrame(function() { requestAnimationFrame(function() {
-        banner.style.borderColor = '#e67e22';
         warning.style.maxHeight = '2.5rem';
         warning.style.maxWidth = '40rem';
         warning.style.opacity = '1';
@@ -37,7 +20,6 @@ function showBannerWarning(message) {
         warning.style.marginTop = '0.6rem';
         warning.style.borderColor = 'rgba(230, 126, 34, 0.3)';
     }); });
-    // Auto-collapse after 4 seconds
     setTimeout(function() {
         if (!warning) return;
         warning.style.maxHeight = '0';
@@ -46,119 +28,248 @@ function showBannerWarning(message) {
         warning.style.paddingTop = '0';
         warning.style.marginTop = '0';
         warning.style.borderColor = 'transparent';
-        banner.style.borderColor = '#e5a00d';
     }, 4000);
 }
+
+/* ── Expand/Collapse interaction ───────────────────────────────────────
+   Expansion state is stored as data-di-expanded on the OUTER
+   #global-operation-banner div (NOT replaced by HTMX innerHTML swaps).
+   CSS reads this attribute directly — no JS class reapplication needed,
+   so there's zero flicker when HTMX polls replace the inner content. */
+
+function diGetExpandState() {
+    var outer = document.getElementById('global-operation-banner');
+    return outer ? (outer.getAttribute('data-di-expanded') || 'false') : 'false';
+}
+function diSetExpandState(state) {
+    var outer = document.getElementById('global-operation-banner');
+    if (outer) outer.setAttribute('data-di-expanded', state);
+    // Also apply classes for JS-generated pills (completion banners)
+    var pill = document.querySelector('#global-operation-banner .di-pill');
+    if (pill) {
+        pill.classList.remove('di-expanded', 'di-detail');
+        if (state === 'tier2') pill.classList.add('di-expanded');
+        if (state === 'tier3') { pill.classList.add('di-expanded'); pill.classList.add('di-detail'); }
+    }
+}
+function diMinimize() { diSetExpandState('false'); }
+
+var _diHoverTimer = null;
+var _diLeaveTimer = null;
+function diHoverIn() {
+    clearTimeout(_diLeaveTimer);
+    if (diGetExpandState() === 'false') {
+        _diHoverTimer = setTimeout(function() { diSetExpandState('tier2'); }, 200);
+    }
+}
+function diHoverOut() {
+    clearTimeout(_diHoverTimer);
+    if (diGetExpandState() === 'tier2') {
+        _diLeaveTimer = setTimeout(function() {
+            if (diGetExpandState() === 'tier2') diSetExpandState('false');
+        }, 300);
+    }
+}
+function diPillClick() {
+    var state = diGetExpandState();
+    if (state === 'false') diSetExpandState('tier2');
+    else if (state === 'tier2') diSetExpandState('tier3');
+    else diSetExpandState('false');  /* tier3 → collapse back to compact */
+}
+
+// After every HTMX swap: re-render icons, sync animations, one-shot entrance
+document.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target && evt.detail.target.id === 'global-operation-banner') {
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+
+        // Sync looping animations to wall clock so they don't visibly reset on 2s swap.
+        // A negative animation-delay makes the new element start mid-cycle at the
+        // exact phase the old element was at before it was replaced.
+        var now = Date.now();
+        document.querySelectorAll('#global-operation-banner .di-spinner').forEach(function(el) {
+            el.style.animationDelay = -(now % 800) + 'ms';   // 800ms spin cycle
+        });
+        document.querySelectorAll('#global-operation-banner .di-action-tag--active').forEach(function(el) {
+            el.style.animationDelay = -(now % 1500) + 'ms';  // 1500ms pulse cycle
+        });
+
+        // Detect state changes — only animate entrance when the banner state actually changes
+        var outer = document.getElementById('global-operation-banner');
+        var pill = outer ? outer.querySelector('.di-pill') : null;
+        if (pill && outer) {
+            var newState = pill.getAttribute('data-state') || pill.className;
+            var prevState = outer.getAttribute('data-di-prev-state') || '';
+            if (newState !== prevState) {
+                outer.setAttribute('data-di-prev-state', newState);
+                pill.classList.add('di-pill--entrance');
+                pill.addEventListener('animationend', function() { pill.classList.remove('di-pill--entrance'); }, { once: true });
+            }
+        }
+    }
+});
 </script>
+
 {% if maint_status is defined and maint_status.state == 'running' %}
-<!-- Maintenance action running -->
-<div id="active-op-banner" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e5a00d; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; transition: border-color 0.3s ease-out; width: 520px;"
-     hx-get="/api/operation-banner" hx-trigger="every {{ '8s' if (blocked_message is defined and blocked_message) else '2s' }}" hx-swap="innerHTML" hx-target="#global-operation-banner">
-    <div style="display: flex; align-items: center; justify-content: center; gap: 1rem;">
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <span class="spinner" style="width: 18px; height: 18px;"></span>
-            <strong style="color: #fff; font-size: 0.95rem;">{{ maint_status.action_display }}</strong>
+{# ═══════════════════════════════════════════════════════════
+   MAINTENANCE RUNNING — Cyan pill
+   ═══════════════════════════════════════════════════════════ #}
+{% set color_mod = 'maintenance' %}
+{% set poll_interval = '8s' if (blocked_message is defined and blocked_message) else '2s' %}
+<div class="di-pill di-pill--{{ color_mod }} di-glow" data-state="maint-running"
+     hx-get="/api/operation-banner" hx-trigger="every {{ poll_interval }}" hx-swap="innerHTML" hx-target="#global-operation-banner"
+     onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+
+    <!-- Compact view -->
+    <div class="di-pill__compact">
+        <div class="di-pill__left">
+            <div class="di-icon"><i data-lucide="wrench" style="width: 14px; height: 14px;"></i></div>
+            <span class="di-label">{{ maint_status.action_display|truncate(32, True, '...') }}</span>
+            <div class="di-spinner"></div>
         </div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <button type="button" class="btn btn-sm btn-danger" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;"
-                    hx-post="/maintenance/stop-action"
-                    hx-target="#global-operation-banner"
-                    hx-swap="innerHTML">
-                <i data-lucide="square" style="width: 14px; height: 14px;"></i>
-                Stop
-            </button>
-            <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
-                    onclick="document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">
-                <i data-lucide="x" style="width: 18px; height: 18px;"></i>
-            </button>
+        <div class="di-pill__right">
+            {% if maint_status.file_count and maint_status.file_count > 0 %}
+            <span class="di-metric">{{ maint_status.files_processed }}/{{ maint_status.file_count }}</span>
+            {% else %}
+            <span class="di-metric">{{ maint_status.elapsed_display }}</span>
+            {% endif %}
         </div>
     </div>
-    {% if maint_status.file_count and maint_status.file_count > 0 %}
-    <div style="width: 100%; margin-top: 0.5rem;">
-        <!-- Progress bar -->
-        <div style="height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
-            <div style="height: 100%; width: {{ maint_status.progress_percent }}%;
-                 background: linear-gradient(90deg, #e5a00d, #cc8a00);
-                 border-radius: 2px; transition: width 0.5s ease;"></div>
+
+    <!-- Expanded view (Tier 2) -->
+    <div class="di-pill__expanded">
+        <div class="di-expanded__header">
+            <div class="di-expanded__header-left">
+                <div class="di-icon"><i data-lucide="wrench" style="width: 14px; height: 14px;"></i></div>
+                <span class="di-label">{{ maint_status.action_display }}</span>
+                <div class="di-spinner"></div>
+            </div>
+            <div class="di-expanded__header-right">
+                <button class="di-stop" title="Stop"
+                        hx-post="/maintenance/stop-action" hx-target="#global-operation-banner" hx-swap="innerHTML"
+                        onclick="event.stopPropagation()">
+                    <div class="di-stop__inner"></div>
+                </button>
+                <button class="di-dismiss" title="Minimize" onclick="event.stopPropagation(); diMinimize();">&minus;</button>
+            </div>
         </div>
-        <!-- Progress text -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.35rem;
-             font-size: 0.8rem; color: rgba(255,255,255,0.5);">
+        {% if maint_status.file_count and maint_status.file_count > 0 %}
+        <div class="di-progress-track"><div class="di-progress-fill" style="width: {{ maint_status.progress_percent }}%;"></div></div>
+        <div class="di-progress-meta">
             <span>{{ maint_status.files_processed }}/{{ maint_status.file_count }} files
-                {%- if maint_status.parallel %} <span style="color: rgba(255,255,255,0.35);">({{ maint_status.parallel }}&times;)</span>{% endif %}
-                {%- if not maint_status.parallel and maint_status.current_file %} &mdash; {{ maint_status.current_file|truncate(40, True, '...') }}{% endif %}</span>
-            <span style="color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums;">
-                {%- if maint_status.bytes_display %}{{ maint_status.bytes_display }} <span style="color: rgba(255,255,255,0.3);">&middot;</span> {% endif %}
+                {%- if maint_status.parallel %} <span style="color: rgba(255,255,255,0.25);">({{ maint_status.parallel }}&times;)</span>{% endif %}
+                {%- if not maint_status.parallel and maint_status.current_file %} &mdash; {{ maint_status.current_file|truncate(50, True, '...') }}{% endif %}</span>
+            <span class="di-progress-meta__right">
+                {%- if maint_status.bytes_display %}{{ maint_status.bytes_display }} &middot; {% endif %}
                 {{- maint_status.elapsed_display }}
-                {%- if maint_status.eta_display %} <span style="color: rgba(255,255,255,0.45);">|</span> ~{{ maint_status.eta_display }} left{% endif %}</span>
+                {%- if maint_status.eta_display %} | ~{{ maint_status.eta_display }} left{% endif %}</span>
         </div>
+        {% endif %}
         {%- if maint_status.active_files %}
-        <!-- Active files - collapsed, expands on hover -->
-        <div class="maint-active-files" style="max-height: 0; opacity: 0; overflow: hidden;
-             transition: max-height 0.25s ease, opacity 0.2s ease; margin-top: 0;
-             width: 100%; text-align: left;">
+        <!-- Detail: active files (Tier 3) -->
+        <div class="di-pill__detail">
+            <div class="di-divider"></div>
             {%- for f in maint_status.active_files %}
-            <div style="font-size: 0.75rem; color: rgba(255,255,255,0.4); padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                <span style="color: rgba(255,255,255,0.2);">&#8627;</span> {{ f|truncate(55, True, '...') }}</div>
+            <div class="di-file-row">
+                <span style="color: rgba(255,255,255,0.2);">&#8627;</span>
+                <span class="di-file-row__name">{{ f|truncate(65, True, '...') }}</span>
+            </div>
             {%- endfor %}
         </div>
         {%- endif %}
+        <!-- Warning row -->
+        <div id="di-warning" class="di-warning">
+            <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
+            <span id="di-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
+        </div>
     </div>
+
+    {% if maint_status.file_count and maint_status.file_count > 0 %}
+    <div class="di-pill__progress" style="width: {{ maint_status.progress_percent }}%;"></div>
     {% endif %}
-    <!-- Warning row - collapsed by default, expanded by showBannerWarning() -->
-    <div id="banner-warning" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; max-height: 0; max-width: 0; opacity: 0; overflow: hidden; padding-top: 0; margin-top: 0; border-top: 1px solid transparent; transition: max-height 0.35s ease-out, max-width 0.4s ease-out, opacity 0.3s ease-out, padding-top 0.35s ease-out, margin-top 0.35s ease-out, border-color 0.3s ease-out;">
-        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
-        <span id="banner-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
-    </div>
 </div>
 <script>
     lucide.createIcons();
     {% if blocked_message is defined and blocked_message %}showBannerWarning('{{ blocked_message }}');{% endif %}
 </script>
+
 {% elif maint_status is defined and maint_status.state == 'completed' %}
-<!-- Maintenance action completed -->
+{# ═══════════════════════════════════════════════════════════
+   MAINTENANCE COMPLETED — Green or orange pill
+   ═══════════════════════════════════════════════════════════ #}
 <script>
 (function() {
     var completionKey = 'plexcache_last_maint_completion_shown';
     var completionId = '{{ maint_status.completed_at or maint_status.duration_seconds }}';
-    var lastShown = sessionStorage.getItem(completionKey);
-
-    if (lastShown === completionId) {
-        // Already showed this completion, dismiss and go idle
+    if (sessionStorage.getItem(completionKey) === completionId) {
+        diSetExpandState('false');
         fetch('/maintenance/dismiss-action', { method: 'POST' });
         document.getElementById('global-operation-banner').innerHTML =
             '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
         htmx.process(document.getElementById('global-operation-banner'));
         return;
     }
-
-    // Mark as shown
     sessionStorage.setItem(completionKey, completionId);
 
+    var maintErrors = {{ maint_status.errors|length if maint_status.errors is defined else 0 }};
+    var colorMod = maintErrors > 0 ? 'completed-errors' : 'completed';
+    var iconName = maintErrors > 0 ? 'alert-triangle' : 'check';
     var resultMsg = '{{ maint_status.result_message | default("Action completed") }}';
     var duration = '{{ maint_status.elapsed_display|default(maint_status.duration_seconds ~ "s") }}';
-    var maintErrors = {{ maint_status.errors|length if maint_status.errors is defined else 0 }};
-    var borderColor = maintErrors > 0 ? '#e67e22' : '{{ "#2ecc71" if maint_status.result_success is not defined or maint_status.result_success else "#2ecc71" }}';
-    var iconColor = borderColor;
-    var maintErrorBadge = maintErrors > 0 ? '<span style="background: #e74c3c; color: #fff; font-size: 0.7rem; padding: 0.15rem 0.45rem; border-radius: 9px; font-weight: 600; margin-left: 0.25rem;">' + maintErrors + ' error' + (maintErrors !== 1 ? 's' : '') + '</span>' : '';
+    var affectedCount = {{ maint_status.affected_count|default(0) }};
+    var errorBadge = maintErrors > 0 ? '<span class="di-error-badge">' + maintErrors + ' error' + (maintErrors !== 1 ? 's' : '') + '</span>' : '';
+
+    // Build file list for detail panel
+    var affectedFiles = [
+        {% for f in maint_status.affected_files|default([]) %}
+        '{{ f|truncate(60, True, "...")|e }}',
+        {% endfor %}
+    ];
+    var detailHtml = '';
+    if (affectedFiles.length > 0) {
+        detailHtml = '<div class="di-pill__detail"><div class="di-divider"></div>';
+        affectedFiles.forEach(function(f) {
+            detailHtml += '<div class="di-file-row"><span style="color: rgba(255,255,255,0.2);">&#8627;</span><span class="di-file-row__name">' + f + '</span></div>';
+        });
+        if (affectedCount > affectedFiles.length) {
+            detailHtml += '<div class="di-more-files">+ ' + (affectedCount - affectedFiles.length) + ' more files</div>';
+        }
+        detailHtml += '</div>';
+    }
 
     document.getElementById('global-operation-banner').innerHTML = `
-        <div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid ${borderColor}; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 1rem;">
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <i data-lucide="check-circle" style="width: 20px; height: 20px; color: ${iconColor};"></i>
-                <strong style="color: #fff; font-size: 0.95rem;">Maintenance Complete</strong>
-                ${maintErrorBadge}
-                <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">
-                    ${resultMsg} | ${duration}
-                </span>
+        <div class="di-pill di-pill--${colorMod}"
+             onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+            <div class="di-pill__compact">
+                <div class="di-pill__left">
+                    <div class="di-icon"><i data-lucide="${iconName}" style="width: 14px; height: 14px;"></i></div>
+                    <span class="di-label">Maintenance Complete</span>
+                    ${errorBadge}
+                </div>
+                <div class="di-pill__right">
+                    <span class="di-metric--muted">${resultMsg}</span>
+                    <span class="di-metric" style="font-size: 0.78rem;">${duration}</span>
+                </div>
             </div>
-            <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
-                    onclick="dismissMaintCompletionBanner()" title="Dismiss">
-                <i data-lucide="x" style="width: 18px; height: 18px;"></i>
-            </button>
-        </div>
-    `;
+            <div class="di-pill__expanded">
+                <div class="di-expanded__header">
+                    <div class="di-expanded__header-left">
+                        <div class="di-icon"><i data-lucide="${iconName}" style="width: 14px; height: 14px;"></i></div>
+                        <span class="di-label">Maintenance Complete</span>
+                        ${errorBadge}
+                        <span class="di-metric--muted">${duration}</span>
+                    </div>
+                    <div class="di-expanded__header-right">
+                        <button class="di-dismiss" title="Dismiss" onclick="event.stopPropagation(); dismissMaintCompletionBanner();">&times;</button>
+                    </div>
+                </div>
+                <div style="font-size: 0.78rem; color: rgba(255,255,255,0.5);">${resultMsg}</div>
+                ${detailHtml}
+            </div>
+        </div>`;
     lucide.createIcons();
+    // Apply expansion class to JS-generated pill (CSS attribute selectors also apply)
+    var _st = diGetExpandState(), _p = document.querySelector('#global-operation-banner .di-pill');
+    if (_p) { if (_st === 'tier2') _p.classList.add('di-expanded'); if (_st === 'tier3') { _p.classList.add('di-expanded','di-detail'); } }
 
     // Auto-refresh audit content if on maintenance page
     var auditContent = document.getElementById('audit-content');
@@ -166,18 +277,23 @@ function showBannerWarning(message) {
         htmx.ajax('GET', '/maintenance/audit?refresh=true', {target: '#audit-content', swap: 'innerHTML'});
     }
 
-    // Auto-dismiss after 6 seconds
-    setTimeout(dismissMaintCompletionBanner, 6000);
+    // Auto-dismiss after 6s, pause on hover
+    var autoDismissTimer = setTimeout(dismissMaintCompletionBanner, 6000);
+    var pill = document.querySelector('#global-operation-banner .di-pill');
+    if (pill) {
+        pill.addEventListener('mouseenter', function() { clearTimeout(autoDismissTimer); });
+        pill.addEventListener('mouseleave', function() { autoDismissTimer = setTimeout(dismissMaintCompletionBanner, 3000); });
+    }
 })();
 
 function dismissMaintCompletionBanner() {
-    var alert = document.getElementById('global-operation-alert');
-    if (alert && alert.style.opacity !== '0') {
-        alert.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
-        alert.style.opacity = '0';
-        alert.style.transform = 'translateY(-20px)';
+    var pill = document.querySelector('#global-operation-banner .di-pill');
+    diSetExpandState('false');  /* Reset so idle pill doesn't inherit expanded layout */
+    if (pill && pill.style.opacity !== '0') {
+        pill.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
+        pill.style.opacity = '0';
+        pill.style.transform = 'translateY(-20px)';
         setTimeout(function() {
-            // Dismiss the runner state and resume idle polling
             fetch('/maintenance/dismiss-action', { method: 'POST' });
             document.getElementById('global-operation-banner').innerHTML =
                 '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
@@ -186,117 +302,187 @@ function dismissMaintCompletionBanner() {
     }
 }
 </script>
+
 {% elif maint_status is defined and maint_status.state == 'failed' %}
-<!-- Maintenance action failed -->
-<div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e74c3c; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 1rem;">
-    <div style="display: flex; align-items: center; gap: 0.75rem;">
-        <i data-lucide="alert-circle" style="width: 20px; height: 20px; color: #e74c3c;"></i>
-        <strong style="color: #fff; font-size: 0.95rem;">Maintenance Failed</strong>
+{# ═══════════════════════════════════════════════════════════
+   MAINTENANCE FAILED — Red pill
+   ═══════════════════════════════════════════════════════════ #}
+<div class="di-pill di-pill--error" data-state="maint-failed"
+     onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+    <div class="di-pill__compact">
+        <div class="di-pill__left">
+            <div class="di-icon"><i data-lucide="x-circle" style="width: 14px; height: 14px;"></i></div>
+            <span class="di-label">Maintenance Failed</span>
+        </div>
+        <div class="di-pill__right">
+            {% if maint_status.error_message %}
+            <span class="di-metric--muted" style="max-width: 180px; overflow: hidden; text-overflow: ellipsis;">{{ maint_status.error_message|truncate(30, True, '...') }}</span>
+            {% endif %}
+            <button class="di-dismiss" title="Dismiss"
+                    onclick="event.stopPropagation(); fetch('/maintenance/dismiss-action',{method:'POST'}); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">&times;</button>
+        </div>
+    </div>
+    <div class="di-pill__expanded">
+        <div class="di-expanded__header">
+            <div class="di-expanded__header-left">
+                <div class="di-icon"><i data-lucide="x-circle" style="width: 14px; height: 14px;"></i></div>
+                <span class="di-label">Maintenance Failed</span>
+            </div>
+            <div class="di-expanded__header-right">
+                <button class="di-dismiss" title="Dismiss"
+                        onclick="event.stopPropagation(); fetch('/maintenance/dismiss-action',{method:'POST'}); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">&times;</button>
+            </div>
+        </div>
         {% if maint_status.error_message %}
-        <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">{{ maint_status.error_message }}</span>
+        <div style="font-size: 0.78rem; color: rgba(255,255,255,0.5);">{{ maint_status.error_message }}</div>
         {% endif %}
     </div>
-    <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
-            onclick="fetch('/maintenance/dismiss-action',{method:'POST'}); this.parentElement.style.display='none'; document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));"
-            title="Dismiss">
-        <i data-lucide="x" style="width: 18px; height: 18px;"></i>
-    </button>
 </div>
 <script>lucide.createIcons();</script>
+
 {% elif status.state == 'running' %}
-<div id="active-op-banner" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e5a00d; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; transition: border-color 0.3s ease-out; width: 520px;"
-     hx-get="/api/operation-banner" hx-trigger="every {{ '8s' if (blocked_message is defined and blocked_message) else '2s' }}" hx-swap="innerHTML" hx-target="#global-operation-banner">
-    <div style="display: flex; align-items: center; justify-content: center; gap: 1rem;">
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <span class="spinner" style="width: 18px; height: 18px;"></span>
-            <strong style="color: #fff; font-size: 0.95rem;">{{ status.current_phase_display|default('Operation in progress...') }}</strong>
+{# ═══════════════════════════════════════════════════════════
+   OPERATION RUNNING — Green (caching) or Orange (evicting) pill
+   ═══════════════════════════════════════════════════════════ #}
+{% set phase = status.phase|default(status.current_phase|default('starting')) %}
+{% if status.dry_run %}
+  {% set color_mod = 'dry-run' %}
+  {% set icon_name = 'eye' %}
+  {% set phase_label = 'Dry Run' %}
+{% elif phase in ('restoring', 'evicting') %}
+  {% set color_mod = 'evicting' %}
+  {% set icon_name = 'cloud-upload' %}
+  {% set phase_label = status.current_phase_display|default('Restoring...') %}
+{% else %}
+  {% set color_mod = 'caching' %}
+  {% set icon_name = 'cloud-download' %}
+  {% set phase_label = status.current_phase_display|default('Caching...') %}
+{% endif %}
+{% set poll_interval = '8s' if (blocked_message is defined and blocked_message) else '2s' %}
+
+<div class="di-pill di-pill--{{ color_mod }} di-glow" data-state="op-running-{{ color_mod }}"
+     hx-get="/api/operation-banner" hx-trigger="every {{ poll_interval }}" hx-swap="innerHTML" hx-target="#global-operation-banner"
+     onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+
+    <!-- Compact view -->
+    <div class="di-pill__compact">
+        <div class="di-pill__left">
+            <div class="di-icon"><i data-lucide="{{ icon_name }}" style="width: 14px; height: 14px;"></i></div>
+            <span class="di-label">{{ phase_label|truncate(20, True, '...') }}</span>
+            <div class="di-spinner"></div>
             {% if status.error_count is defined and status.error_count > 0 %}
-            <span style="background: #e74c3c; color: #fff; font-size: 0.7rem; padding: 0.15rem 0.45rem; border-radius: 9px; font-weight: 600;">{{ status.error_count }} error{{ 's' if status.error_count != 1 }}</span>
+            <span class="di-error-badge">{{ status.error_count }}</span>
             {% endif %}
         </div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <a href="/logs?live=true" class="btn btn-sm btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;">
-                <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
-                Logs
-            </a>
-            <button type="button" class="btn btn-sm btn-danger" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;"
-                    hx-post="/operations/stop"
-                    hx-target="#global-operation-banner"
-                    hx-swap="innerHTML">
-                <i data-lucide="square" style="width: 14px; height: 14px;"></i>
-                Stop
-            </button>
-            <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
-                    onclick="document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">
-                <i data-lucide="x" style="width: 18px; height: 18px;"></i>
-            </button>
+        <div class="di-pill__right">
+            {% if status.total_files is defined and status.total_files > 0 %}
+            <span class="di-metric">{{ status.completed_files }}/{{ status.total_files }}</span>
+            {% elif status.elapsed_display is defined %}
+            <span class="di-metric">{{ status.elapsed_display }}</span>
+            {% endif %}
         </div>
     </div>
-    {% if status.total_files is defined and status.total_files > 0 %}
-    <!-- Progress section (shown when file totals are known) -->
-    <div style="width: 100%; margin-top: 0.5rem;">
-        <!-- Progress bar -->
-        <div style="height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
-            <div style="height: 100%; width: {{ status.progress_percent }}%;
-                 background: linear-gradient(90deg, #e5a00d, #cc8a00);
-                 border-radius: 2px; transition: width 0.5s ease;"></div>
+
+    <!-- Expanded view (Tier 2) -->
+    <div class="di-pill__expanded">
+        <div class="di-expanded__header">
+            <div class="di-expanded__header-left">
+                <div class="di-icon"><i data-lucide="{{ icon_name }}" style="width: 14px; height: 14px;"></i></div>
+                <span class="di-label">{{ phase_label }}</span>
+                <div class="di-spinner"></div>
+                {% if status.error_count is defined and status.error_count > 0 %}
+                <span class="di-error-badge">{{ status.error_count }} error{{ 's' if status.error_count != 1 }}</span>
+                {% endif %}
+            </div>
+            <div class="di-expanded__header-right">
+                <a href="/logs?live=true" class="di-dismiss" title="View logs" onclick="event.stopPropagation();" style="text-decoration: none;">
+                    <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
+                </a>
+                <button class="di-stop" title="Stop"
+                        hx-post="/operations/stop" hx-target="#global-operation-banner" hx-swap="innerHTML"
+                        onclick="event.stopPropagation()">
+                    <div class="di-stop__inner"></div>
+                </button>
+                <button class="di-dismiss" title="Minimize" onclick="event.stopPropagation(); diMinimize();">&minus;</button>
+            </div>
         </div>
-        <!-- Progress text -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.35rem;
-             font-size: 0.8rem; color: rgba(255,255,255,0.5);">
+        {% if status.total_files is defined and status.total_files > 0 %}
+        <div class="di-progress-track"><div class="di-progress-fill" style="width: {{ status.progress_percent }}%;"></div></div>
+        <div class="di-progress-meta">
             <span>{{ status.completed_files }}/{{ status.total_files }} file{{ 's' if status.total_files != 1 }}
-                {%- if status.last_completed_file %} &mdash; {{ status.last_completed_file|truncate(40, True, '...') }}{% endif %}</span>
-            <span style="color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums;">
-                {%- if status.bytes_display %}{{ status.bytes_display }} <span style="color: rgba(255,255,255,0.3);">&middot;</span> {% endif %}
+                {%- if status.last_completed_file %} &mdash; {{ status.last_completed_file|truncate(35, True, '...') }}{% endif %}</span>
+            <span class="di-progress-meta__right">
+                {%- if status.bytes_display %}{{ status.bytes_display }} &middot; {% endif %}
                 {{- status.elapsed_display }}
-                {%- if status.eta_display %} <span style="color: rgba(255,255,255,0.45);">|</span> ~{{ status.eta_display }} left{% endif %}</span>
+                {%- if status.eta_display %} | ~{{ status.eta_display }} left{% endif %}</span>
+        </div>
+        {% elif status.elapsed_display is defined %}
+        <div style="font-size: 0.78rem; color: rgba(255,255,255,0.5); text-align: center;">{{ status.elapsed_display }}</div>
+        {% endif %}
+        {%- if status.active_files is defined and status.active_files or status.recent_files is defined and status.recent_files or status.recent_logs is defined and status.recent_logs %}
+        <!-- Detail: active files + completed files + log lines (Tier 3) -->
+        <div class="di-pill__detail">
+            {%- if status.active_files is defined and status.active_files %}
+            <div class="di-divider"></div>
+            {%- for name, size in status.active_files %}
+            <div class="di-file-row di-file-row--active">
+                <span class="di-action-tag di-action-tag--active">COPYING</span>
+                <span class="di-file-row__name">{{ name|truncate(55, True, '...') }}</span>
+            </div>
+            {%- endfor %}
+            {%- endif %}
+            {%- if status.recent_files is defined and status.recent_files %}
+            <div class="di-divider"></div>
+            {%- for f in status.recent_files %}
+            <div class="di-file-row">
+                <span class="di-action-tag {{ 'di-action-tag--cached' if f.action == 'Cached' else 'di-action-tag--restored' }}">{{ f.action|upper }}</span>
+                <span class="di-file-row__name">{{ f.filename|truncate(55, True, '...') }}</span>
+                {% if f.size and f.size != '-' %}<span class="di-file-row__size">{{ f.size }}</span>{% endif %}
+            </div>
+            {%- endfor %}
+            {%- endif %}
+            {%- if status.recent_logs is defined and status.recent_logs %}
+            <div class="di-divider"></div>
+            {%- for log_line in status.recent_logs %}
+            <div class="di-file-row" style="font-family: monospace; font-size: 0.7rem;">
+                <span class="di-file-row__name">{{ log_line|truncate(90, True, '...') }}</span>
+            </div>
+            {%- endfor %}
+            {%- endif %}
+        </div>
+        {%- endif %}
+        <!-- Warning row -->
+        <div id="di-warning" class="di-warning">
+            <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
+            <span id="di-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
         </div>
     </div>
-    {% elif status.elapsed_display is defined %}
-    <!-- Pre-move phases: just show elapsed time -->
-    <div style="width: 100%; margin-top: 0.35rem; text-align: center;">
-        <span style="font-size: 0.8rem; color: rgba(255,255,255,0.5); font-variant-numeric: tabular-nums;">{{ status.elapsed_display }}</span>
-    </div>
+
+    {% if status.total_files is defined and status.total_files > 0 %}
+    <div class="di-pill__progress" style="width: {{ status.progress_percent }}%;"></div>
     {% endif %}
-    {%- if status.recent_logs is defined and status.recent_logs %}
-    <!-- Hover mini-log (last 5 messages) -->
-    <div class="maint-active-files" style="max-height: 0; opacity: 0; overflow: hidden;
-         transition: max-height 0.25s ease, opacity 0.2s ease; margin-top: 0;
-         width: 100%; text-align: left;">
-        {%- for log_line in status.recent_logs %}
-        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.4); padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: monospace;">
-            {{ log_line|truncate(80, True, '...') }}</div>
-        {%- endfor %}
-    </div>
-    {%- endif %}
-    <!-- Warning row - collapsed by default, expanded by showBannerWarning() -->
-    <div id="banner-warning" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; max-height: 0; max-width: 0; opacity: 0; overflow: hidden; padding-top: 0; margin-top: 0; border-top: 1px solid transparent; transition: max-height 0.35s ease-out, max-width 0.4s ease-out, opacity 0.3s ease-out, padding-top 0.35s ease-out, margin-top 0.35s ease-out, border-color 0.3s ease-out;">
-        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
-        <span id="banner-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
-    </div>
 </div>
 <script>
     lucide.createIcons();
-    // Clear "next run" dismiss flag so the countdown reappears after this run finishes
     sessionStorage.removeItem('plexcache_nextrun_dismissed');
     {% if blocked_message is defined and blocked_message %}showBannerWarning('{{ blocked_message }}');{% endif %}
 </script>
+
 {% elif status.state == 'completed' %}
-<!-- Check if we already showed this completion (prevent repeated flashing) -->
+{# ═══════════════════════════════════════════════════════════
+   OPERATION COMPLETED — Green pill (or orange if errors)
+   ═══════════════════════════════════════════════════════════ #}
 <script>
 (function() {
     var completionKey = 'plexcache_last_completion_shown';
     var completionId = '{{ status.completed_at or status.duration_seconds }}';
-    var lastShown = sessionStorage.getItem(completionKey);
-
-    if (lastShown === completionId) {
-        // Already showed this completion, don't show again
+    if (sessionStorage.getItem(completionKey) === completionId) {
+        diSetExpandState('false');
         document.getElementById('global-operation-banner').innerHTML =
             '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
+        htmx.process(document.getElementById('global-operation-banner'));
         return;
     }
-
-    // Mark as shown
     sessionStorage.setItem(completionKey, completionId);
 
     var filesCached = {{ status.files_cached|default(0) }};
@@ -307,91 +493,112 @@ function dismissMaintCompletionBanner() {
     var errorCount = {{ status.error_count|default(0) }};
     var isDryRun = {{ 'true' if status.dry_run else 'false' }};
 
-    // Build summary parts
-    var parts = [];
+    // Compact summary
+    var summaryParts = [];
+    if (filesCached > 0) summaryParts.push(filesCached + ' cached');
+    if (filesRestored > 0) summaryParts.push(filesRestored + ' restored');
+    if (filesCached === 0 && filesRestored === 0) summaryParts.push('No files processed');
+    var compactSummary = summaryParts.join(' · ');
+
+    var colorMod = errorCount > 0 ? 'completed-errors' : 'completed';
+    var iconName = errorCount > 0 ? 'alert-triangle' : 'check';
+    var labelText = isDryRun ? 'Dry Run Complete' : 'Completed';
+    var errorBadge = errorCount > 0 ? '<span class="di-error-badge">' + errorCount + ' error' + (errorCount !== 1 ? 's' : '') + '</span>' : '';
+
+    // Expanded summary stats
+    var statsHtml = '<div class="di-summary-stats">';
     if (filesCached > 0) {
-        var s = 'Cached ' + filesCached + ' file' + (filesCached !== 1 ? 's' : '');
-        if (bytesCachedDisplay) s += ' (' + bytesCachedDisplay + ')';
-        parts.push(s);
+        statsHtml += '<span class="di-summary-stats__cached">' + filesCached + ' cached';
+        if (bytesCachedDisplay) statsHtml += ' <span class="di-summary-stats__muted">(' + bytesCachedDisplay + ')</span>';
+        statsHtml += '</span>';
     }
     if (filesRestored > 0) {
-        var s = 'Restored ' + filesRestored + ' file' + (filesRestored !== 1 ? 's' : '');
-        if (bytesRestoredDisplay) s += ' (' + bytesRestoredDisplay + ')';
-        parts.push(s);
+        statsHtml += '<span class="di-summary-stats__restored">' + filesRestored + ' restored';
+        if (bytesRestoredDisplay) statsHtml += ' <span class="di-summary-stats__muted">(' + bytesRestoredDisplay + ')</span>';
+        statsHtml += '</span>';
     }
-    if (filesCached === 0 && filesRestored === 0) parts.push('No files needed processing');
-    parts.push(durationDisplay);
-    var summaryText = parts.join(' | ');
-
-    var errorBadge = '';
-    if (errorCount > 0) {
-        errorBadge = '<span style="background: #e74c3c; color: #fff; font-size: 0.7rem; padding: 0.15rem 0.45rem; border-radius: 9px; font-weight: 600; margin-left: 0.25rem;">' + errorCount + ' error' + (errorCount !== 1 ? 's' : '') + '</span>';
+    if (filesCached === 0 && filesRestored === 0) {
+        statsHtml += '<span style="color: rgba(255,255,255,0.5);">No files needed processing</span>';
     }
+    statsHtml += '</div>';
 
-    // Build hover detail rows from recent files
+    // File detail rows
     var recentFiles = [
         {% for f in status.recent_files|default([]) %}
-        { action: '{{ f.action }}', filename: '{{ f.filename|truncate(50, True, "...")|e }}', size: '{{ f.size }}' },
+        { action: '{{ f.action }}', filename: '{{ f.filename|truncate(45, True, "...")|e }}', size: '{{ f.size }}' },
         {% endfor %}
     ];
-    var detailRows = '';
+    var detailHtml = '';
     if (recentFiles.length > 0) {
-        var rows = recentFiles.map(function(f) {
-            var color = f.action === 'Cached' ? 'rgba(229,160,13,0.6)' : 'rgba(46,204,113,0.6)';
-            return '<div style="font-size: 0.7rem; color: rgba(255,255,255,0.45); padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' +
-                '<span style="color: ' + color + ';">[' + f.action + ']</span> ' + f.filename +
-                (f.size !== '-' ? ' <span style="color: rgba(255,255,255,0.25);">(' + f.size + ')</span>' : '') + '</div>';
-        }).join('');
-        detailRows = '<div class="maint-active-files" style="max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s ease; margin-top: 0; width: 100%; text-align: left;">' + rows + '</div>';
+        detailHtml = '<div class="di-pill__detail"><div class="di-divider"></div>';
+        recentFiles.forEach(function(f) {
+            var tagClass = f.action === 'Cached' ? 'di-action-tag--cached' : 'di-action-tag--restored';
+            detailHtml += '<div class="di-file-row">' +
+                '<span class="di-action-tag ' + tagClass + '">' + f.action.toUpperCase() + '</span>' +
+                '<span class="di-file-row__name">' + f.filename + '</span>' +
+                (f.size !== '-' ? '<span class="di-file-row__size">' + f.size + '</span>' : '') +
+                '</div>';
+        });
+        var totalFiles = filesCached + filesRestored;
+        if (totalFiles > recentFiles.length) {
+            detailHtml += '<div class="di-more-files">+ ' + (totalFiles - recentFiles.length) + ' more files</div>';
+        }
+        detailHtml += '</div>';
     }
 
-    // Show the completion banner with inline styles (same as running state but green border)
-    var borderColor = errorCount > 0 ? '#e67e22' : '#2ecc71';
-    var iconColor = errorCount > 0 ? '#e67e22' : '#2ecc71';
     document.getElementById('global-operation-banner').innerHTML = `
-        <style>
-        #global-operation-alert:hover .maint-active-files {
-            max-height: 200px !important;
-            opacity: 1 !important;
-            margin-top: 0.3rem !important;
-            transition: none !important;
-        }
-        </style>
-        <div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid ${borderColor}; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center;">
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <i data-lucide="check-circle" style="width: 20px; height: 20px; color: ${iconColor};"></i>
-                <strong style="color: #fff; font-size: 0.95rem;">${isDryRun ? 'Dry Run' : 'Operation'} Completed</strong>
-                ${errorBadge}
-                <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">${summaryText}</span>
-                <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
-                        onclick="dismissCompletionBanner()" title="Dismiss">
-                    <i data-lucide="x" style="width: 18px; height: 18px;"></i>
-                </button>
+        <div class="di-pill di-pill--${colorMod}"
+             onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+            <div class="di-pill__compact">
+                <div class="di-pill__left">
+                    <div class="di-icon"><i data-lucide="${iconName}" style="width: 14px; height: 14px;"></i></div>
+                    <span class="di-label">${labelText}</span>
+                    ${errorBadge}
+                </div>
+                <div class="di-pill__right">
+                    <span class="di-metric--muted">${compactSummary}</span>
+                    <span class="di-metric" style="font-size: 0.78rem;">${durationDisplay}</span>
+                </div>
             </div>
-            ${detailRows}
-        </div>
-    `;
+            <div class="di-pill__expanded">
+                <div class="di-expanded__header">
+                    <div class="di-expanded__header-left">
+                        <div class="di-icon"><i data-lucide="${iconName}" style="width: 14px; height: 14px;"></i></div>
+                        <span class="di-label">${isDryRun ? 'Dry Run' : 'Operation'} Completed</span>
+                        ${errorBadge}
+                        <span class="di-metric--muted">${durationDisplay}</span>
+                    </div>
+                    <div class="di-expanded__header-right">
+                        <button class="di-dismiss" title="Dismiss" onclick="event.stopPropagation(); dismissCompletionBanner();">&times;</button>
+                    </div>
+                </div>
+                ${statsHtml}
+                ${detailHtml}
+            </div>
+        </div>`;
     lucide.createIcons();
+    // Apply expansion class to JS-generated pill (CSS attribute selectors also apply)
+    var _st = diGetExpandState(), _p = document.querySelector('#global-operation-banner .di-pill');
+    if (_p) { if (_st === 'tier2') _p.classList.add('di-expanded'); if (_st === 'tier3') { _p.classList.add('di-expanded','di-detail'); } }
 
-    // Auto-dismiss after 6 seconds (paused while hovering)
+    // Auto-dismiss after 6s, pause on hover
     var autoDismissTimer = setTimeout(dismissCompletionBanner, 6000);
-    var alertEl = document.getElementById('global-operation-alert');
-    if (alertEl) {
-        alertEl.addEventListener('mouseenter', function() { clearTimeout(autoDismissTimer); });
-        alertEl.addEventListener('mouseleave', function() { autoDismissTimer = setTimeout(dismissCompletionBanner, 3000); });
+    var pill = document.querySelector('#global-operation-banner .di-pill');
+    if (pill) {
+        pill.addEventListener('mouseenter', function() { clearTimeout(autoDismissTimer); });
+        pill.addEventListener('mouseleave', function() { autoDismissTimer = setTimeout(dismissCompletionBanner, 3000); });
     }
 })();
 
 function dismissCompletionBanner() {
-    var alert = document.getElementById('global-operation-alert');
-    if (alert && alert.style.opacity !== '0') {
-        alert.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
-        alert.style.opacity = '0';
-        alert.style.transform = 'translateY(-20px)';
+    var pill = document.querySelector('#global-operation-banner .di-pill');
+    diSetExpandState('false');  /* Reset so idle pill doesn't inherit expanded layout */
+    if (pill && pill.style.opacity !== '0') {
+        pill.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
+        pill.style.opacity = '0';
+        pill.style.transform = 'translateY(-20px)';
         setTimeout(function() {
-            // Reset backend state to IDLE so next poll returns scheduler info
             fetch('/api/dismiss-operation', { method: 'POST' });
-            // Replace with idle polling div
             document.getElementById('global-operation-banner').innerHTML =
                 '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
             htmx.process(document.getElementById('global-operation-banner'));
@@ -399,50 +606,129 @@ function dismissCompletionBanner() {
     }
 }
 </script>
+
 {% elif status.state == 'failed' %}
-<div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e74c3c; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 1rem;">
-    <div style="display: flex; align-items: center; gap: 0.75rem;">
-        <i data-lucide="alert-circle" style="width: 20px; height: 20px; color: #e74c3c;"></i>
-        <strong style="color: #fff; font-size: 0.95rem;">Operation Failed</strong>
+{# ═══════════════════════════════════════════════════════════
+   OPERATION FAILED — Red pill
+   ═══════════════════════════════════════════════════════════ #}
+<div class="di-pill di-pill--error" data-state="op-failed"
+     onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+    <div class="di-pill__compact">
+        <div class="di-pill__left">
+            <div class="di-icon"><i data-lucide="x-circle" style="width: 14px; height: 14px;"></i></div>
+            <span class="di-label">Failed</span>
+        </div>
+        <div class="di-pill__right">
+            {% if status.error_message %}
+            <span class="di-metric--muted" style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ status.error_message|truncate(30, True, '...') }}</span>
+            {% endif %}
+            <button class="di-dismiss" title="Dismiss"
+                    onclick="event.stopPropagation(); fetch('/api/dismiss-operation',{method:'POST'}); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">&times;</button>
+        </div>
+    </div>
+    <div class="di-pill__expanded">
+        <div class="di-expanded__header">
+            <div class="di-expanded__header-left">
+                <div class="di-icon"><i data-lucide="x-circle" style="width: 14px; height: 14px;"></i></div>
+                <span class="di-label">Operation Failed</span>
+            </div>
+            <div class="di-expanded__header-right">
+                <button class="di-dismiss" title="Dismiss"
+                        onclick="event.stopPropagation(); fetch('/api/dismiss-operation',{method:'POST'}); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">&times;</button>
+            </div>
+        </div>
         {% if status.error_message %}
-        <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">{{ status.error_message }}</span>
+        <div style="font-size: 0.78rem; color: rgba(255,255,255,0.5);">{{ status.error_message }}</div>
         {% endif %}
     </div>
-    <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
-            onclick="fetch('/api/dismiss-operation',{method:'POST'}); this.parentElement.style.display='none'; document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));"
-            title="Dismiss">
-        <i data-lucide="x" style="width: 18px; height: 18px;"></i>
-    </button>
 </div>
 <script>lucide.createIcons();</script>
+
 {% else %}
-<!-- Not running - poll slowly for next operation -->
+{# ═══════════════════════════════════════════════════════════
+   IDLE — Dim gold countdown pill or silent poller
+   ═══════════════════════════════════════════════════════════ #}
 {% if scheduler_status is defined and scheduler_status and scheduler_status.next_run_relative %}
+<div class="di-pill di-pill--idle" id="idle-countdown-pill" data-state="idle"
+     hx-get="/api/operation-banner" hx-trigger="every 30s" hx-swap="innerHTML" hx-target="#global-operation-banner"
+     onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+
+    <!-- Compact view -->
+    <div class="di-pill__compact">
+        <div class="di-pill__left">
+            <i data-lucide="clock" style="width: 13px; height: 13px; color: #e5a00d; opacity: 0.6;"></i>
+            <span style="font-size: 0.78rem; color: rgba(255,255,255,0.5);">Next run</span>
+        </div>
+        <div class="di-pill__right">
+            <span class="di-metric" style="color: rgba(229,160,13,0.7); font-weight: 400; font-size: 0.8rem;">{{ scheduler_status.next_run_relative }}</span>
+            <button class="di-dismiss" style="width: 22px; height: 22px; font-size: 0.8rem;" title="Dismiss"
+                    onclick="event.stopPropagation(); sessionStorage.setItem('plexcache_nextrun_dismissed','1'); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\\ 30s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">&times;</button>
+        </div>
+    </div>
+
+    <!-- Expanded view — quick actions -->
+    <div class="di-pill__expanded">
+        <div class="di-expanded__header">
+            <div class="di-expanded__header-left">
+                <div class="di-icon" style="background: rgba(229,160,13,0.15); color: #e5a00d;"><i data-lucide="clock" style="width: 14px; height: 14px;"></i></div>
+                <span class="di-label">Next run in {{ scheduler_status.next_run_relative }}</span>
+            </div>
+            <div class="di-expanded__header-right">
+                <button class="di-dismiss" style="width: 22px; height: 22px; font-size: 0.8rem;" title="Dismiss"
+                        onclick="event.stopPropagation(); sessionStorage.setItem('plexcache_nextrun_dismissed','1'); diSetExpandState('false'); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\\ 30s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">&times;</button>
+            </div>
+        </div>
+        <div class="di-idle-actions">
+            <label class="di-verbose-toggle" onclick="event.stopPropagation();">
+                <input type="checkbox" id="di-verbose-cb"
+                       onchange="localStorage.setItem('verbose_mode', this.checked);">
+                <span>Verbose</span>
+            </label>
+            <button class="di-btn di-btn--primary" title="Run Now"
+                    onclick="event.stopPropagation(); diTriggerRun(false);">
+                <i data-lucide="play" style="width: 14px; height: 14px;"></i>
+                Run Now
+            </button>
+            <button class="di-btn di-btn--secondary" title="Dry Run"
+                    onclick="event.stopPropagation(); diTriggerRun(true);">
+                <i data-lucide="eye" style="width: 14px; height: 14px;"></i>
+                Dry Run
+            </button>
+        </div>
+    </div>
+</div>
 <script>
 (function() {
-    // Sticky dismiss: if user dismissed the "Next run" banner this session, keep it hidden
+    // If user dismissed the countdown this session, remove the pill and fall back to silent polling
     if (sessionStorage.getItem('plexcache_nextrun_dismissed')) {
+        diSetExpandState('false');
         document.getElementById('global-operation-banner').innerHTML =
             '<div hx-get="/api/operation-banner" hx-trigger="every 30s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
         htmx.process(document.getElementById('global-operation-banner'));
         return;
     }
-
-    document.getElementById('global-operation-banner').innerHTML = `
-    <div id="idle-countdown-banner" style="position: fixed; top: 0.75rem; left: 50%; transform: translateX(-50%); z-index: 9998; display: flex; align-items: center; gap: 0.5rem; background: rgba(26,29,31,0.85); border: 1px solid rgba(229,160,13,0.25); border-radius: 20px; padding: 0.35rem 0.85rem; opacity: 0.7; transition: opacity 0.2s ease;"
-         onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.7'"
-         hx-get="/api/operation-banner" hx-trigger="every 30s" hx-swap="innerHTML" hx-target="#global-operation-banner">
-        <i data-lucide="clock" style="width: 13px; height: 13px; color: #e5a00d; opacity: 0.7;"></i>
-        <span style="font-size: 0.78rem; color: rgba(255,255,255,0.6);">Next run {{ scheduler_status.next_run_relative }}</span>
-        <button type="button" style="background: transparent; border: none; color: rgba(255,255,255,0.4); cursor: pointer; padding: 0.1rem; margin-left: 0.15rem; line-height: 1;"
-                onclick="event.stopPropagation(); sessionStorage.setItem('plexcache_nextrun_dismissed','1'); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\\ 30s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));"
-                title="Dismiss">
-            <i data-lucide="x" style="width: 13px; height: 13px;"></i>
-        </button>
-    </div>`;
-    htmx.process(document.getElementById('global-operation-banner'));
+    // Restore verbose preference
+    var vcb = document.getElementById('di-verbose-cb');
+    if (vcb && localStorage.getItem('verbose_mode') === 'true') vcb.checked = true;
     lucide.createIcons();
 })();
+
+function diTriggerRun(dryRun) {
+    var verbose = document.getElementById('di-verbose-cb');
+    var formData = new FormData();
+    if (verbose && verbose.checked) formData.append('verbose', 'true');
+    if (dryRun) formData.append('dry_run', 'true');
+    // Clear dismissed state so running pill shows
+    sessionStorage.removeItem('plexcache_nextrun_dismissed');
+    diSetExpandState('false');
+    fetch('/operations/run', { method: 'POST', body: formData })
+        .then(function(resp) { return resp.text(); })
+        .then(function(html) {
+            document.getElementById('global-operation-banner').innerHTML = html;
+            htmx.process(document.getElementById('global-operation-banner'));
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        });
+}
 </script>
 {% else %}
 <div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>

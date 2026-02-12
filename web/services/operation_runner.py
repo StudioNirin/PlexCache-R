@@ -792,6 +792,7 @@ class OperationRunner:
 
         if result.state == OperationState.RUNNING:
             # Phase and progress fields
+            status["phase"] = result.current_phase
             status["current_phase"] = result.current_phase
             status["current_phase_display"] = result.current_phase_display
             status["files_to_cache_total"] = result.files_to_cache_total
@@ -852,8 +853,25 @@ class OperationRunner:
                             status["eta_display"] = self._format_duration(remaining / rate)
 
             # Recent log messages (last 5) for hover mini-log
+            # Files completed so far in this run for detail panel
             with self._lock:
                 status["recent_logs"] = list(self._log_messages[-5:])
+                status["recent_files"] = list(self._current_run_files[:8])
+
+            # Active files currently being copied (read from FileMover)
+            active_files = []
+            try:
+                app = self._app_instance
+                if app and getattr(app, 'file_mover', None):
+                    mover = app.file_mover
+                    lock = getattr(mover, '_progress_lock', None)
+                    af = getattr(mover, '_active_files', None)
+                    if lock and af:
+                        with lock:
+                            active_files = [(name, size) for name, size in af.values()]
+            except Exception:
+                pass
+            status["active_files"] = active_files
 
             status["message"] = result.current_phase_display
 

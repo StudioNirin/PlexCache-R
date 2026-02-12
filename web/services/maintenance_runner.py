@@ -669,6 +669,10 @@ class MaintenanceRunner:
             status["result_success"] = result.action_result.success
             status["affected_count"] = result.action_result.affected_count
             status["errors"] = result.action_result.errors
+            # Basenames of affected files for completion summary
+            status["affected_files"] = [
+                os.path.basename(p) for p in (result.action_result.affected_paths or [])[:8]
+            ]
 
         return status
 

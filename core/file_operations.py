@@ -3411,9 +3411,14 @@ class FileMover:
 
         (src, dest), cache_file_name, file_size, original_path = move_cmd_with_cache
         filename = os.path.basename(src)
+        thread_id = threading.get_ident()
 
         # Get per-worker byte progress callback
         worker_byte_cb = self._byte_aggregator.make_worker_callback() if self._byte_aggregator else None
+
+        # Register as active before starting
+        with self._progress_lock:
+            self._active_files[thread_id] = (filename, file_size)
 
         try:
             if destination == 'cache':
@@ -3431,9 +3436,10 @@ class FileMover:
             if worker_byte_cb and result in (0, 2) and file_size > 0:
                 worker_byte_cb(file_size, file_size)
 
-            # Update tqdm progress bar
+            # Update tqdm progress bar + remove from active
             with self._progress_lock:
                 self._completed_bytes += file_size
+                self._active_files.pop(thread_id, None)
                 if self._tqdm_pbar:
                     # Update description to show data progress
                     completed_str = format_bytes(self._completed_bytes)
@@ -3444,8 +3450,9 @@ class FileMover:
 
             return result
         except Exception as e:
-            # Still update progress on error
+            # Still update progress on error + remove from active
             with self._progress_lock:
+                self._active_files.pop(thread_id, None)
                 if self._tqdm_pbar:
                     self._tqdm_pbar.update(1)
             with get_console_lock():
