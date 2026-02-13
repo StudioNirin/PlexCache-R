@@ -939,7 +939,7 @@ class PlexManager:
         """Fetch watchlist media for a user, yielding file paths with metadata.
 
         Uses separate MyPlexAccount instances per user to avoid session state contamination.
-        See: https://github.com/StudioNirin/PlexCache-R/issues/20
+        See: https://github.com/StudioNirin/PlexCache-D/issues/20
         """
         current_username = user.title if user else "main"
 
