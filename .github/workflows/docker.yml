@@ -59,8 +59,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ vars.DOCKERHUB_ENABLED == 'true' && format('{0}/plexcache-r', secrets.DOCKERHUB_USERNAME) || '' }}
-            ghcr.io/${{ github.repository_owner }}/plexcache-r
+            ${{ vars.DOCKERHUB_ENABLED == 'true' && format('{0}/plexcache-d', secrets.DOCKERHUB_USERNAME) || '' }}
+            ghcr.io/${{ github.repository_owner }}/plexcache-d
           tags: |
             # dev tag for v3.0-dev branch
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/v3.0-dev' }}
