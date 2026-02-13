@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""PlexCache-R - Plex media caching automation for Unraid.
+"""PlexCache-D - Plex media caching automation for Unraid.
 
-This is the unified entry point for PlexCache-R. It provides:
+This is the unified entry point for PlexCache-D. It provides:
 - Automatic first-run setup when no configuration exists
 - Manual setup access via --setup flag
 - Web UI via --web flag
@@ -25,7 +25,7 @@ def get_help_text():
     python_cmd = os.path.basename(sys.executable)
 
     return f"""
-PlexCache-R - Plex media caching automation for Unraid
+PlexCache-D - Plex media caching automation for Unraid
 
 Usage: {python_cmd} plexcache.py [OPTIONS]
 
@@ -52,7 +52,7 @@ Examples:
   {python_cmd} plexcache.py --dry-run --verbose Test run with full debug output
   {python_cmd} plexcache.py --show-priorities   See which files would be evicted first
 
-Documentation: https://github.com/StudioNirin/PlexCache-R
+Documentation: https://github.com/StudioNirin/PlexCache-D
 """
 
 
@@ -100,11 +100,11 @@ def run_web_ui():
     except ImportError as e:
         print(f"Error: Failed to import web application: {e}")
         print("")
-        print("Make sure you're running from the PlexCache-R directory.")
+        print("Make sure you're running from the PlexCache-D directory.")
         return 1
 
     print("=" * 60)
-    print("  PlexCache-R Web UI")
+    print("  PlexCache-D Web UI")
     print("=" * 60)
     print(f"  URL: http://{host}:{port}")
     print(f"  Reload: {'Enabled' if reload_enabled else 'Disabled'}")
@@ -124,7 +124,7 @@ def run_web_ui():
 
 
 def main():
-    """Main entry point for PlexCache-R."""
+    """Main entry point for PlexCache-D."""
     # Check for help flags
     if "--help" in sys.argv or "-h" in sys.argv or "--h" in sys.argv:
         print(get_help_text())
