@@ -2037,7 +2037,17 @@ class PlexCacheApp:
             media_files_filtered = self._apply_cache_limit(media_files_filtered, cache_dir)
 
         total_size, total_size_unit = self.file_utils.get_total_size_of_files(media_files_filtered)
-        
+
+        # Fallback for array moves: on non-FUSE setups (e.g., ZFS with direct pool paths),
+        # array paths don't exist because originals were renamed to .plexcached.
+        # Standard Unraid masks this because /mnt/user/ FUSE shows cache copies at array paths.
+        # Use pre-computed sizes from _log_restore_and_move_summary() which correctly
+        # sizes from .plexcached files and cache copies — paths that actually exist.
+        if destination == 'array' and total_size == 0 and media_files_filtered:
+            fallback_bytes = getattr(self, 'restored_bytes', 0) + getattr(self, 'moved_to_array_bytes', 0)
+            if fallback_bytes > 0:
+                total_size, total_size_unit = self.file_utils._convert_bytes_to_readable_size(fallback_bytes)
+
         if total_size > 0:
             logging.debug(f"Moving {total_size:.2f} {total_size_unit} to {destination}")
             # Generate summary message with restore vs move separation for array moves
