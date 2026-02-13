@@ -231,6 +231,71 @@
             }
         })();
     </script>
+    <!-- Banner live log stream — persists outside HTMX-swapped banner area -->
+    <script>
+    window.BannerLogStream = (function() {
+        var buffer = [];
+        var socket = null;
+        var reconnectTimer = null;
+        var MAX_LINES = 5;
+
+        function esc(text) {
+            var d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        function connect() {
+            if (socket) return;
+            var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            socket = new WebSocket(proto + '//' + location.host + '/logs/ws?source=live');
+
+            socket.onmessage = function(e) {
+                try {
+                    var data = JSON.parse(e.data);
+                    if (data.type === 'initial') {
+                        buffer = (data.lines || []).slice(-MAX_LINES);
+                    } else if (data.type === 'append') {
+                        (data.lines || []).forEach(function(l) { buffer.push(l); });
+                        while (buffer.length > MAX_LINES) buffer.shift();
+                    } else { return; } // heartbeat/error — skip render
+                    renderIfVisible();
+                } catch (err) {}
+            };
+
+            socket.onclose = function() {
+                socket = null;
+                // Auto-reconnect if a running pill still exists
+                if (document.querySelector('.di-pill.di-glow')) {
+                    reconnectTimer = setTimeout(connect, 3000);
+                }
+            };
+            socket.onerror = function() {};
+        }
+
+        function disconnect() {
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            if (socket) { socket.close(); socket = null; }
+            buffer = [];
+        }
+
+        function renderIfVisible() {
+            var container = document.getElementById('di-log-lines');
+            if (!container || buffer.length === 0) return;
+
+            var html = '';
+            buffer.forEach(function(line) {
+                var text = typeof line === 'string' ? line : (line.raw || '');
+                if (text.length > 120) text = text.substring(0, 117) + '...';
+                html += '<div class="di-file-row" style="font-family: monospace; font-size: 0.7rem;">' +
+                        '<span class="di-file-row__name">' + esc(text) + '</span></div>';
+            });
+            container.innerHTML = html;
+        }
+
+        return { connect: connect, disconnect: disconnect, renderIfVisible: renderIfVisible };
+    })();
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -288,6 +288,9 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 pill.addEventListener('animationend', function() { pill.classList.remove('di-pill--entrance'); }, { once: true });
             }
         }
+
+        // Re-inject live log lines from WebSocket buffer (overwrites stale server data)
+        if (window.BannerLogStream) BannerLogStream.renderIfVisible();
     }
 });
 </script>
@@ -377,6 +380,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 </div>
 <script>
     lucide.createIcons();
+    if (window.BannerLogStream) BannerLogStream.disconnect();
     {% if blocked_message is defined and blocked_message %}showBannerWarning('{{ blocked_message }}');{% endif %}
 </script>
 
@@ -610,13 +614,12 @@ function dismissMaintCompletionBanner() {
         {% elif status.elapsed_display is defined %}
         <div style="font-size: 0.78rem; color: rgba(255,255,255,0.5); text-align: center;">{{ status.elapsed_display }}</div>
         {% endif %}
-        {%- if status.active_files is defined and status.active_files or status.recent_files is defined and status.recent_files or status.recent_logs is defined and status.recent_logs %}
         <!-- Tier 2 hint: click to expand detail panel -->
         <div class="di-expand-hint">
             <span>Click for details</span>
             <i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i>
         </div>
-        <!-- Detail: active files + completed files + log lines (Tier 3) -->
+        <!-- Detail: active files + completed files + live log lines (Tier 3) -->
         <div class="di-pill__detail">
             {%- if status.active_files is defined and status.active_files %}
             <div class="di-divider"></div>
@@ -637,16 +640,17 @@ function dismissMaintCompletionBanner() {
             </div>
             {%- endfor %}
             {%- endif %}
-            {%- if status.recent_logs is defined and status.recent_logs %}
             <div class="di-divider"></div>
-            {%- for log_line in status.recent_logs %}
-            <div class="di-file-row" style="font-family: monospace; font-size: 0.7rem;">
-                <span class="di-file-row__name">{{ log_line|truncate(90, True, '...') }}</span>
+            <div id="di-log-lines">
+                {%- if status.recent_logs is defined and status.recent_logs %}
+                {%- for log_line in status.recent_logs %}
+                <div class="di-file-row" style="font-family: monospace; font-size: 0.7rem;">
+                    <span class="di-file-row__name">{{ log_line|truncate(90, True, '...') }}</span>
+                </div>
+                {%- endfor %}
+                {%- endif %}
             </div>
-            {%- endfor %}
-            {%- endif %}
         </div>
-        {%- endif %}
         <!-- Warning row -->
         <div id="di-warning" class="di-warning">
             <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
@@ -661,6 +665,7 @@ function dismissMaintCompletionBanner() {
 <script>
     lucide.createIcons();
     sessionStorage.removeItem('plexcache_nextrun_dismissed');
+    if (window.BannerLogStream) BannerLogStream.connect();
     {% if blocked_message is defined and blocked_message %}showBannerWarning('{{ blocked_message }}');{% endif %}
 </script>
 
@@ -670,6 +675,7 @@ function dismissMaintCompletionBanner() {
    ═══════════════════════════════════════════════════════════ #}
 <script>
 (function() {
+    if (window.BannerLogStream) BannerLogStream.disconnect();
     var completionKey = 'plexcache_last_completion_shown';
     var completionId = '{{ status.completed_at or status.duration_seconds }}';
     if (sessionStorage.getItem(completionKey) === completionId) {
@@ -841,7 +847,7 @@ function dismissCompletionBanner() {
         {% endif %}
     </div>
 </div>
-<script>lucide.createIcons();</script>
+<script>lucide.createIcons(); if (window.BannerLogStream) BannerLogStream.disconnect();</script>
 
 {% else %}
 {# ═══════════════════════════════════════════════════════════
@@ -898,6 +904,7 @@ function dismissCompletionBanner() {
 </div>
 <script>
 (function() {
+    if (window.BannerLogStream) BannerLogStream.disconnect();
     // If user dismissed the countdown this session, remove the pill and fall back to silent polling
     if (sessionStorage.getItem('plexcache_nextrun_dismissed')) {
         diSetExpandState('false');
