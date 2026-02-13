@@ -46,7 +46,7 @@ def load_settings():
 
     if not os.path.exists(SETTINGS_FILE):
         print(f"⚠️  Settings file not found: {SETTINGS_FILE}")
-        print("   Run this script from the PlexCache-R project root:")
+        print("   Run this script from the PlexCache-D project root:")
         print("   python3 tools/audit_cache.py")
         sys.exit(1)
 
