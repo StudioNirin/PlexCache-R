@@ -1,5 +1,5 @@
 #!/bin/bash
-# PlexCache-R Docker Build Script
+# PlexCache-D Docker Build Script
 #
 # Usage:
 #   ./docker/build.sh              # Build with default tag
@@ -20,7 +20,7 @@ VERSION="${1:-latest}"
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # Build from project root with docker/Dockerfile
-echo "Building PlexCache-R Docker image..."
+echo "Building PlexCache-D Docker image..."
 echo "  Image: ${IMAGE_NAME}:${VERSION}"
 echo "  Commit: ${GIT_COMMIT}"
 echo "  Context: ${PROJECT_ROOT}"
