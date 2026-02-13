@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-# PlexCache-R Docker Entrypoint
+# PlexCache-D Docker Entrypoint
 # Runs as root to handle files with any ownership
 
 echo "----------------------------------------"
-echo "  PlexCache-R Docker Container"
+echo "  PlexCache-D Docker Container"
 echo "----------------------------------------"
 
 # Ensure config directory structure exists
@@ -76,7 +76,7 @@ else
 fi
 
 echo ""
-echo "Starting PlexCache-R Web UI..."
+echo "Starting PlexCache-D Web UI..."
 echo "----------------------------------------"
 
 # Start the web application
