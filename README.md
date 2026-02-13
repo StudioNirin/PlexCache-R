@@ -1,7 +1,7 @@
 # PlexCache-D V3.0: Automate Plex Media Management
 ### Updated 13/2/26
 
-# Notice - Updating to new Dockerised version, so while this notice is visible there may be issues with this repo. 
+# Notice - Update to new Dockerised version. For instructions and discussion - https://github.com/StudioNirin/PlexCache-D/discussions/81 
 
 ## Current Bugs / Todo List
 
