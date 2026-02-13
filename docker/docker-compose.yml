@@ -18,12 +18,12 @@ version: "3.8"
 services:
   plexcache:
     # Use pre-built image from GitHub Container Registry
-    image: ghcr.io/brandon-haney/plexcache-r:latest
+    image: ghcr.io/studionirin/plexcache-d:latest
     # Or build locally (uncomment for development):
     # build:
     #   context: ..
     #   dockerfile: docker/Dockerfile
-    container_name: plexcache-r
+    container_name: plexcache-d
     restart: unless-stopped
 
     environment:
@@ -33,7 +33,7 @@ services:
       - PGID=100
 
       # Timezone
-      - TZ=America/Los_Angeles
+      - TZ=Europe/London
 
       # Logging level (DEBUG, INFO, WARNING, ERROR)
       - LOG_LEVEL=INFO
