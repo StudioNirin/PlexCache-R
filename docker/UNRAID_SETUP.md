@@ -1,12 +1,12 @@
 # PlexCache-D Unraid Setup Guide
 
-This guide covers installing and configuring PlexCache-R on Unraid.
+This guide covers installing and configuring PlexCache-D on Unraid.
 
 > **IMPORTANT:** If you're currently running the CLI version of PlexCache via User Scripts or cron, **disable those scheduled runs first** to avoid conflicts. Running both the Docker scheduler and CLI scripts simultaneously can cause race conditions and duplicate file operations.
 
 ## Overview
 
-PlexCache-R automatically caches your frequently-accessed Plex media (OnDeck and Watchlist items) to your cache drive. This reduces array spinups and improves playback performance by keeping actively-watched content on fast storage.
+PlexCache-D automatically caches your frequently-accessed Plex media (OnDeck and Watchlist items) to your cache drive. This reduces array spinups and improves playback performance by keeping actively-watched content on fast storage.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ PlexCache-R automatically caches your frequently-accessed Plex media (OnDeck and
 ### Option 1: Community Apps (Recommended)
 
 1. Open the **Apps** tab in Unraid
-2. Search for "PlexCache-R"
+2. Search for "PlexCache-D"
 3. Click **Install**
 4. Configure the paths (see below)
 5. Click **Apply**
@@ -55,7 +55,7 @@ PlexCache-R automatically caches your frequently-accessed Plex media (OnDeck and
 | `/mnt/user` | `/mnt/user` | rw | Merged share (source for caching operations) |
 
 **Important**:
-- All media paths (`/mnt/cache`, `/mnt/user0`, `/mnt/user`) must be **read-write** for PlexCache-R to move files between cache and array
+- All media paths (`/mnt/cache`, `/mnt/user0`, `/mnt/user`) must be **read-write** for PlexCache-D to move files between cache and array
 - These paths **must match exactly** between container and host for Plex path resolution to work correctly
 
 ### Docker Path Translation (Host Cache Path)
@@ -100,7 +100,7 @@ To enable native Unraid notifications from the Docker container, add these optio
 
 | Port | Default | Description |
 |------|---------|-------------|
-| Web UI | 5757 | PlexCache-R web interface |
+| Web UI | 5757 | PlexCache-D web interface |
 
 ## First Run Setup
 
@@ -109,7 +109,7 @@ To enable native Unraid notifications from the Docker container, add these optio
 3. Follow the 6-step wizard:
 
 ### Step 1: Welcome
-Introduction to PlexCache-R features.
+Introduction to PlexCache-D features.
 
 ### Step 2: Plex Connection
 - Click **Sign in with Plex** for OAuth (recommended) - automatically discovers your server
@@ -140,7 +140,7 @@ Review your configuration and click **Complete Setup**.
 
 ## Mover Integration (Optional but Recommended)
 
-PlexCache-R writes a list of cached files to prevent the Unraid mover from moving them back to the array. To enable this:
+PlexCache-D writes a list of cached files to prevent the Unraid mover from moving them back to the array. To enable this:
 
 ### Using CA Mover Tuning Plugin
 
@@ -152,12 +152,12 @@ PlexCache-R writes a list of cached files to prevent the Unraid mover from movin
    ```
 4. Click **Apply**
 
-Now the Unraid mover will skip files that PlexCache-R has cached.
+Now the Unraid mover will skip files that PlexCache-D has cached.
 
 ### How It Works
 
 ```
-PlexCache-R writes: /config/plexcache_cached_files.txt
+PlexCache-D writes: /config/plexcache_cached_files.txt
     ↓ (mapped to host)
 Host path: /mnt/user/appdata/plexcache/plexcache_cached_files.txt
     ↓ (CA Mover Tuning reads)
@@ -166,7 +166,7 @@ Mover skips listed files
 
 ## Scheduling
 
-PlexCache-R includes a built-in scheduler. Configure it via the Web UI:
+PlexCache-D includes a built-in scheduler. Configure it via the Web UI:
 
 1. Go to **Settings** → **Schedule**
 2. Enable the scheduler
@@ -190,7 +190,7 @@ Configure cache behavior via **Settings** → **Cache**:
 
 ## Notifications
 
-PlexCache-R supports multiple notification methods. Configure via **Settings** → **Notifications**.
+PlexCache-D supports multiple notification methods. Configure via **Settings** → **Notifications**.
 
 ### Notification Types
 
@@ -211,7 +211,7 @@ You can select multiple levels for fine-grained control:
 | **Errors** | Notify when errors occur |
 | **Warnings** | Notify when warnings occur |
 
-**Recommended:** Use **Activity** to only get notified when PlexCache-R actually does something.
+**Recommended:** Use **Activity** to only get notified when PlexCache-D actually does something.
 
 ### Webhook Setup (Discord/Slack)
 
@@ -229,7 +229,7 @@ By default, Docker containers cannot access Unraid's notification system. To ena
 3. In **Settings** → **Notifications**, select **Both** or **Unraid**
 4. Select your notification levels
 
-If the mounts are not configured, PlexCache-R will gracefully fall back to webhook-only notifications.
+If the mounts are not configured, PlexCache-D will gracefully fall back to webhook-only notifications.
 
 ## Manual Operations
 
@@ -239,13 +239,13 @@ Click the **Run Now** button in the Web UI to trigger an immediate cache operati
 ### CLI Access
 ```bash
 # Dry run (preview without moving files)
-docker exec plexcache-r python3 plexcache.py --dry-run
+docker exec plexcache-d python3 plexcache.py --dry-run
 
 # Verbose output
-docker exec plexcache-r python3 plexcache.py --verbose
+docker exec plexcache-d python3 plexcache.py --verbose
 
 # Show cache priorities
-docker exec plexcache-r python3 plexcache.py --show-priorities
+docker exec plexcache-d python3 plexcache.py --show-priorities
 ```
 
 ## Web UI Features
@@ -261,7 +261,7 @@ docker exec plexcache-r python3 plexcache.py --show-priorities
 
 ### Container Won't Start
 
-1. Check Docker logs: `docker logs plexcache-r`
+1. Check Docker logs: `docker logs plexcache-d`
 2. Verify all paths exist on the host
 3. Ensure PUID/PGID have proper permissions
 
@@ -301,7 +301,7 @@ If you see "Path /mnt/user/... is not writable", check your Docker container con
 
 ## Migrating from CLI/User Scripts
 
-If you were running PlexCache-R via User Scripts or the CLI version:
+If you were running PlexCache-D via User Scripts or the CLI version:
 
 ### Option A: Import Folder (Recommended)
 
@@ -354,12 +354,12 @@ After installation, your `/mnt/user/appdata/plexcache` folder will contain:
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/StudioNirin/PlexCache-R/issues)
-- **Documentation**: [GitHub Repository](https://github.com/StudioNirin/PlexCache-R)
+- **Issues**: [GitHub Issues](https://github.com/StudioNirin/PlexCache-D/issues)
+- **Documentation**: [GitHub Repository](https://github.com/StudioNirin/PlexCache-D)
 
 ## Version Info
 
 To check the running version:
 ```bash
-docker exec plexcache-r python3 -c "from core import __version__; print(__version__)"
+docker exec plexcache-d python3 -c "from core import __version__; print(__version__)"
 ```
