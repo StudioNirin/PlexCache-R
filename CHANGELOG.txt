@@ -1,6 +1,9 @@
 ## Changelog
 
-### v2.1 Updates (Jan 2025)
+### V3.0 Updates (Feb 2026)
+- Full update to a Dockerised version!
+
+### v2.1 Updates (Jan 2026)
 - Fix dry-run mode modifying tracking files #47
 - Add optional .plexcached backups + fix subtitle suffix stripping #49 
 - Fix skip_watchlist not working for remote users (RSS) #57   - Fixes Fixes https://github.com/StudioNirin/PlexCache-R/issues/51
