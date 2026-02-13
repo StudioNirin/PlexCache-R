@@ -1399,6 +1399,7 @@ textarea {
 }
 
 .log-line {
+    display: block;
     padding: 0.125rem 0;
 }
 
@@ -1418,8 +1419,112 @@ textarea {
     color: var(--plex-text-muted);
 }
 
-.log-other {
+.log-summary {
+    color: var(--plex-success);
+}
+
+.log-critical {
+    color: var(--plex-error);
+    font-weight: 600;
+}
+
+.log-other,
+.log- {
     color: var(--plex-text);
+}
+
+/* Wrap mode */
+.log-viewer.log-wrapped pre,
+pre.log-output-wrapped {
+    white-space: pre-wrap;
+    word-break: break-all;
+    width: 100%;
+}
+
+/* Capped notice */
+.log-capped-notice {
+    text-align: center;
+    padding: 0.75rem;
+    color: var(--plex-text-muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--plex-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+/* Search toggles (regex, case-sensitive) */
+.search-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--plex-text-muted);
+    background: var(--plex-bg-input);
+    border: 1px solid var(--plex-border);
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    margin: 0;
+}
+
+.search-toggle:hover {
+    border-color: var(--plex-border-light);
+    color: var(--plex-text);
+}
+
+.search-toggle input {
+    display: none;
+}
+
+.search-toggle:has(input:checked) {
+    background: rgba(229, 160, 13, 0.15);
+    border-color: var(--plex-orange);
+    color: var(--plex-orange);
+}
+
+.search-toggle span {
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
+/* Time range inputs */
+.time-range-inputs {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.time-range-inputs input[type="time"] {
+    width: 110px;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
+    background: var(--plex-bg-input);
+    border: 1px solid var(--plex-border);
+    border-radius: 4px;
+    color: var(--plex-text);
+}
+
+.time-range-inputs input[type="time"]:focus {
+    outline: none;
+    border-color: var(--plex-orange);
+}
+
+/* Log level badges in card header */
+#log-level-badges {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+}
+
+#log-level-badges .badge {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
 }
 
 .log-toolbar {
@@ -1436,7 +1541,7 @@ textarea {
     gap: 0.5rem;
     flex: 1;
     min-width: 250px;
-    max-width: 500px;
+    max-width: 600px;
 }
 
 .search-input {
@@ -1515,8 +1620,7 @@ textarea {
     min-width: 0; /* Allow shrinking */
 }
 
-.log-filters select,
-.log-filters button {
+.log-filters select {
     width: 100%;
 }
 
