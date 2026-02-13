@@ -461,11 +461,27 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     var _st = diGetExpandState(), _p = document.querySelector('#global-operation-banner .di-pill');
     if (_p) { if (_st === 'tier2') _p.classList.add('di-expanded'); if (_st === 'tier3') { _p.classList.add('di-expanded','di-detail'); } }
 
-    // Auto-dismiss after 10s only if user never expanded the pill
-    if (!isRepoll) {
-        setTimeout(function() {
-            if (diGetExpandState() === 'false') dismissMaintCompletionBanner();
-        }, 10000);
+    // Auto-dismiss after 10s in compact; collapse back to compact restarts the timer
+    var _ob = document.getElementById('global-operation-banner');
+    if (_ob) {
+        if (_ob._compObs) _ob._compObs.disconnect();
+        if (!isRepoll) {
+            clearTimeout(_ob._compTimer);
+            if (diGetExpandState() === 'false') {
+                _ob._compTimer = setTimeout(function() {
+                    if (diGetExpandState() === 'false') dismissMaintCompletionBanner();
+                }, 10000);
+            }
+        }
+        _ob._compObs = new MutationObserver(function() {
+            clearTimeout(_ob._compTimer);
+            if (diGetExpandState() === 'false') {
+                _ob._compTimer = setTimeout(function() {
+                    if (diGetExpandState() === 'false') dismissMaintCompletionBanner();
+                }, 10000);
+            }
+        });
+        _ob._compObs.observe(_ob, { attributes: true, attributeFilter: ['data-di-expanded'] });
     }
 
     // Auto-refresh audit content if on maintenance page
@@ -778,11 +794,27 @@ function dismissMaintCompletionBanner() {
     var _st = diGetExpandState(), _p = document.querySelector('#global-operation-banner .di-pill');
     if (_p) { if (_st === 'tier2') _p.classList.add('di-expanded'); if (_st === 'tier3') { _p.classList.add('di-expanded','di-detail'); } }
 
-    // Auto-dismiss after 10s only if user never expanded the pill
-    if (!isRepoll) {
-        setTimeout(function() {
-            if (diGetExpandState() === 'false') dismissCompletionBanner();
-        }, 10000);
+    // Auto-dismiss after 10s in compact; collapse back to compact restarts the timer
+    var _ob = document.getElementById('global-operation-banner');
+    if (_ob) {
+        if (_ob._compObs) _ob._compObs.disconnect();
+        if (!isRepoll) {
+            clearTimeout(_ob._compTimer);
+            if (diGetExpandState() === 'false') {
+                _ob._compTimer = setTimeout(function() {
+                    if (diGetExpandState() === 'false') dismissCompletionBanner();
+                }, 10000);
+            }
+        }
+        _ob._compObs = new MutationObserver(function() {
+            clearTimeout(_ob._compTimer);
+            if (diGetExpandState() === 'false') {
+                _ob._compTimer = setTimeout(function() {
+                    if (diGetExpandState() === 'false') dismissCompletionBanner();
+                }, 10000);
+            }
+        });
+        _ob._compObs.observe(_ob, { attributes: true, attributeFilter: ['data-di-expanded'] });
     }
 })();
 
