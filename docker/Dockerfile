@@ -1,13 +1,13 @@
-# PlexCache-R Dockerfile
+# PlexCache-D Dockerfile
 # Intelligent Plex media caching for Unraid
 FROM python:3.11-slim
 
 # Labels for Unraid/OCI
 LABEL maintainer="Brandon Haney"
-LABEL org.opencontainers.image.title="PlexCache-R"
+LABEL org.opencontainers.image.title="PlexCache-D"
 LABEL org.opencontainers.image.description="Intelligent Plex media caching for Unraid"
-LABEL org.opencontainers.image.url="https://github.com/StudioNirin/PlexCache-R"
-LABEL org.opencontainers.image.source="https://github.com/StudioNirin/PlexCache-R"
+LABEL org.opencontainers.image.url="https://github.com/StudioNirin/PlexCache-D"
+LABEL org.opencontainers.image.source="https://github.com/StudioNirin/PlexCache-D"
 LABEL org.opencontainers.image.vendor="Brandon Haney"
 
 # Build args for version tracking
