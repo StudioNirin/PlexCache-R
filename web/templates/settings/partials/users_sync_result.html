@@ -1,0 +1,22 @@
+<!-- Success alert that will auto-dismiss -->
+{% if success %}
+<div class="alert alert-success alert-auto-dismiss mb-2" role="alert" style="display: flex; align-items: center; gap: 0.5rem;">
+    <i data-lucide="check-circle" style="flex-shrink: 0; width: 18px; height: 18px;"></i>
+    <span>{{ message }}</span>
+</div>
+{% endif %}
+
+<!-- Include the updated users table -->
+{% include "settings/partials/users_table.html" %}
+
+<script>
+lucide.createIcons();
+// Auto-dismiss success alert after 4 seconds
+document.querySelectorAll('.alert-auto-dismiss').forEach(function(alert) {
+    setTimeout(function() {
+        alert.style.transition = 'opacity 0.3s ease-out';
+        alert.style.opacity = '0';
+        setTimeout(function() { alert.remove(); }, 300);
+    }, 4000);
+});
+</script>

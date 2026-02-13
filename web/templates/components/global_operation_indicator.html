@@ -1,0 +1,10 @@
+<!-- Global operation indicator - polls every 3s, shown in header across all pages -->
+{% if is_running %}
+<a href="/logs?live=true" class="global-op-indicator" title="Operation in progress - click to view logs"
+   hx-get="/api/operation-indicator" hx-trigger="every 3s" hx-swap="outerHTML">
+    <span class="global-op-dot"></span>
+    <span class="global-op-text">Running</span>
+</a>
+{% else %}
+<div id="global-op-check" hx-get="/api/operation-indicator" hx-trigger="every 10s" hx-swap="outerHTML"></div>
+{% endif %}

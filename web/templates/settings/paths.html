@@ -1,0 +1,102 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="folder"></i>
+        <h2>Path Mappings</h2>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-2">Configure how Plex paths map to your filesystem and cache drive.</p>
+
+        <div id="path-mappings">
+            {% include "settings/partials/path_mappings_list.html" %}
+        </div>
+
+        <script>
+            function toggleEditMode(index) {
+                const view = document.getElementById('mapping-view-' + index);
+                const edit = document.getElementById('mapping-edit-' + index);
+                if (view.style.display === 'none') {
+                    view.style.display = 'block';
+                    edit.style.display = 'none';
+                } else {
+                    view.style.display = 'none';
+                    edit.style.display = 'block';
+                }
+                lucide.createIcons();
+            }
+        </script>
+
+        <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+        <details>
+            <summary style="cursor: pointer; color: var(--plex-orange);">
+                <i data-lucide="plus"></i> Add New Path Mapping
+            </summary>
+
+            <form hx-post="/settings/paths" hx-target="#path-mappings" hx-swap="beforeend" style="margin-top: 1rem;">
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="new_name">Name</label>
+                        <input type="text" id="new_name" name="name" placeholder="TV Shows" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="new_plex_path">Plex Path</label>
+                        <input type="text" id="new_plex_path" name="plex_path" placeholder="/media/tv" required>
+                        <div class="form-hint">Path as Plex sees it. Find this in Plex under Settings &gt; Libraries.</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="new_real_path">Real Path</label>
+                        <input type="text" id="new_real_path" name="real_path"
+                               placeholder="{% if is_unraid %}/mnt/user/TV Shows/{% else %}/media/tv{% endif %}" required>
+                        <div class="form-hint">
+                            {% if is_unraid %}Where files live on your Unraid share (e.g., <code>/mnt/user/Movies/</code>). Works with both array and ZFS pool shares.
+                            {% else %}Actual filesystem path where your media files are stored.{% endif %}
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="new_cache_path">Cache Path</label>
+                        <input type="text" id="new_cache_path" name="cache_path"
+                               placeholder="{% if is_unraid %}/mnt/cache/TV Shows/{% else %}/mnt/ssd/tv{% endif %}">
+                        <div class="form-hint">
+                            {% if is_unraid %}Fast drive path to cache files to (e.g., <code>/mnt/cache/Movies/</code>).
+                            {% else %}Fast drive path where cached copies are stored (optional).{% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                {% if is_docker %}
+                <div class="form-group">
+                    <label for="new_host_cache_path" style="color: var(--plex-orange);">Host Cache Path (Docker)</label>
+                    <input type="text" id="new_host_cache_path" name="host_cache_path" placeholder="/mnt/cache_downloads/media/tv">
+                    <div class="form-hint">
+                        The actual host path {% if is_unraid %}Unraid{% else %}the host{% endif %} sees. Only needed if Docker remaps your cache path
+                        (e.g., <code>/mnt/cache_downloads:/mnt/cache</code>).
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="flex gap-2 mb-2">
+                    <label class="switch">
+                        <input type="checkbox" name="cacheable" checked>
+                        <span>Cacheable</span>
+                    </label>
+                    <label class="switch">
+                        <input type="checkbox" name="enabled" checked>
+                        <span>Enabled</span>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary">
+                    <i data-lucide="plus"></i>
+                    Add Path Mapping
+                </button>
+            </form>
+        </details>
+    </div>
+</div>
+{% endblock %}

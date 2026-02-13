@@ -1,0 +1,48 @@
+{% if users %}
+    <div class="user-list">
+        <div class="user-list-header">
+            <span class="user-col">User</span>
+            <span class="toggle-col">OnDeck</span>
+            <span class="toggle-col">Watchlist</span>
+        </div>
+        {% for user in users %}
+        <div class="user-row {% if user.is_admin %}user-admin{% endif %}">
+            <span class="user-col">
+                <span class="user-name">{{ user.title }}</span>
+                {% if user.is_admin %}
+                    <span class="badge badge-muted">Admin</span>
+                {% elif user.is_home %}
+                    <span class="badge badge-info">Home</span>
+                {% endif %}
+            </span>
+            <span class="toggle-col">
+                <label class="toggle-switch">
+                    <input type="checkbox" name="include_ondeck" value="{{ user.username }}"
+                           {% if user.username not in settings.skip_ondeck %}checked{% endif %}
+                           {% if user.is_admin %}disabled checked{% endif %}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </span>
+            <span class="toggle-col">
+                <label class="toggle-switch">
+                    <input type="checkbox" name="include_watchlist" value="{{ user.username }}"
+                           {% if user.username not in settings.skip_watchlist %}checked{% endif %}
+                           {% if user.is_admin %}disabled checked{% endif %}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="form-hint mt-1">Toggle OFF to exclude a user's OnDeck or Watchlist data from caching</div>
+{% else %}
+    <div class="no-libraries">
+        <i data-lucide="alert-circle"></i>
+        {% if plex_error %}
+            <span>{{ plex_error }}</span>
+        {% else %}
+            <span>Unable to fetch users. Check Plex URL and token above.</span>
+        {% endif %}
+    </div>
+{% endif %}
+<script>lucide.createIcons();</script>

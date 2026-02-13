@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ page_title | default('PlexCache-R') }}{% endblock %} - PlexCache-R</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Custom Plex Theme -->
+    <link rel="stylesheet" href="/static/css/plex-theme.css">
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/ws.js"></script>
+
+    <!-- Apply saved theme and sidebar state immediately to prevent flash -->
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+
+            // Apply saved sidebar collapsed state
+            const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (sidebarCollapsed) {
+                document.documentElement.classList.add('sidebar-collapsed-init');
+            }
+        })();
+    </script>
+
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Mobile Header -->
+    <header class="mobile-header">
+        <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Toggle menu">
+            <i data-lucide="menu"></i>
+        </button>
+        <div class="mobile-brand">
+            <i data-lucide="hard-drive"></i>
+            <span>PlexCache-R</span>
+        </div>
+        <div class="mobile-actions">
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                <i data-lucide="sun" class="icon-sun"></i>
+                <i data-lucide="moon" class="icon-moon"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <!-- Global Operation Status Banner - floating overlay on all pages -->
+    <div id="global-operation-banner"
+         hx-get="/api/operation-banner"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+    </div>
+
+    <div class="app-container">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-brand">
+                <i data-lucide="hard-drive"></i>
+                <span>PlexCache-R</span>
+                {% if image_tag is defined and image_tag != 'latest' %}
+                <span class="dev-badge">{{ image_tag | upper }}</span>
+                {% endif %}
+            </div>
+            <ul class="sidebar-nav">
+                <li>
+                    <a href="/" data-tooltip="Dashboard" {% if page_title == 'Dashboard' %}class="active"{% endif %}>
+                        <i data-lucide="layout-dashboard"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/cache" data-tooltip="Cached Files" {% if page_title == 'Cached Files' %}class="active"{% endif %}>
+                        <i data-lucide="database"></i>
+                        <span>Cached Files</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/cache/drive" data-tooltip="Storage" {% if page_title == 'Storage' %}class="active"{% endif %}>
+                        <i data-lucide="hard-drive"></i>
+                        <span>Storage</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/settings" data-tooltip="Settings" {% if 'Settings' in page_title|default('') %}class="active"{% endif %}>
+                        <i data-lucide="settings"></i>
+                        <span>Settings</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/logs" data-tooltip="Logs" {% if page_title == 'Logs' %}class="active"{% endif %}>
+                        <i data-lucide="file-text"></i>
+                        <span>Logs</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/maintenance" data-tooltip="Maintenance" {% if page_title == 'Maintenance' %}class="active"{% endif %}>
+                        <i data-lucide="wrench"></i>
+                        <span>Maintenance</span>
+                    </a>
+                </li>
+            </ul>
+            <div class="sidebar-footer">
+                <button class="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse sidebar">
+                    <i data-lucide="panel-left-close"></i>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="content-wrapper">
+                <!-- Theme toggle - positioned top-right of content area -->
+                <div class="top-controls">
+                    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                        <i data-lucide="sun" class="icon-sun"></i>
+                        <i data-lucide="moon" class="icon-moon"></i>
+                    </button>
+                </div>
+
+                <!-- Alert container for toast notifications -->
+                <div id="alert-container"></div>
+
+                {% block content %}{% endblock %}
+
+                <footer>
+                    PlexCache-R Web UI <span class="version">v0.1.0</span>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <!-- Custom JavaScript -->
+    <script src="/static/js/app.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Re-initialize icons after HTMX swaps
+        document.addEventListener('htmx:afterSwap', function() {
+            lucide.createIcons();
+        });
+
+        // Theme toggle
+        function toggleTheme() {
+            const html = document.documentElement;
+            const current = html.getAttribute('data-theme');
+            const next = current === 'light' ? 'dark' : 'light';
+
+            if (next === 'dark') {
+                html.removeAttribute('data-theme');
+                localStorage.removeItem('theme');
+            } else {
+                html.setAttribute('data-theme', next);
+                localStorage.setItem('theme', next);
+            }
+
+            // Re-init icons to update theme toggle icons
+            lucide.createIcons();
+        }
+
+        // Mobile sidebar toggle
+        function toggleSidebar() {
+            document.querySelector('.sidebar').classList.toggle('open');
+            document.querySelector('.sidebar-overlay').classList.toggle('active');
+        }
+
+        function closeSidebar() {
+            document.querySelector('.sidebar').classList.remove('open');
+            document.querySelector('.sidebar-overlay').classList.remove('active');
+        }
+
+        // Close sidebar on nav link click (mobile)
+        document.querySelectorAll('.sidebar-nav a').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    closeSidebar();
+                }
+            });
+        });
+
+        // Close sidebar on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeSidebar();
+            }
+        });
+
+        // Sidebar collapse toggle (desktop)
+        function toggleSidebarCollapse() {
+            const sidebar = document.querySelector('.sidebar');
+            const appContainer = document.querySelector('.app-container');
+            const isCollapsed = sidebar.classList.toggle('collapsed');
+            appContainer.classList.toggle('sidebar-collapsed', isCollapsed);
+            document.body.classList.toggle('sidebar-collapsed', isCollapsed);
+
+            // Persist state
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+
+            // Remove init class if present (no longer needed after first toggle)
+            document.documentElement.classList.remove('sidebar-collapsed-init');
+
+            // Re-init icons
+            lucide.createIcons();
+        }
+
+        // Initialize sidebar collapsed state on page load
+        (function initSidebarState() {
+            const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (sidebarCollapsed) {
+                const sidebar = document.querySelector('.sidebar');
+                const appContainer = document.querySelector('.app-container');
+                if (sidebar && appContainer) {
+                    sidebar.classList.add('collapsed');
+                    appContainer.classList.add('sidebar-collapsed');
+                    document.body.classList.add('sidebar-collapsed');
+                }
+                // Remove the init class since we've applied the proper classes
+                document.documentElement.classList.remove('sidebar-collapsed-init');
+            }
+        })();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

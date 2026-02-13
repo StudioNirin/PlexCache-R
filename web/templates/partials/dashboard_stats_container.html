@@ -1,0 +1,23 @@
+<div class="stats-header">
+    <span class="text-muted" style="font-size: 0.85rem;">
+        {% if cache_age %}Updated {{ cache_age }}{% else %}Loading...{% endif %}
+    </span>
+    <button class="btn btn-sm btn-secondary"
+            hx-post="/refresh-stats"
+            hx-target="#stats-container"
+            hx-swap="innerHTML"
+            hx-indicator="#refresh-spinner">
+        <span id="refresh-spinner" class="htmx-indicator spinner" style="width: 14px; height: 14px;"></span>
+        <i data-lucide="refresh-cw" class="htmx-hide-on-request" style="width: 14px; height: 14px;"></i>
+        <span class="htmx-hide-on-request">Refresh</span>
+    </button>
+</div>
+<div class="stats-row" hx-get="/api/dashboard/stats" hx-trigger="every 60s" hx-swap="innerHTML">
+    {% include "partials/dashboard_stats.html" %}
+</div>
+<script>
+    // Re-initialize Lucide icons after HTMX swap
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+    }
+</script>

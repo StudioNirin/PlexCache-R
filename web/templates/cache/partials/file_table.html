@@ -1,0 +1,104 @@
+<!-- Cache files table body - HTMX partial -->
+{% if files %}
+    {% for file in files %}
+    <tr>
+        <td>
+            <input type="checkbox" class="file-checkbox" value="{{ file.path }}" onchange="updateBulkActions()">
+        </td>
+        <td title="{{ file.path }}">
+            {{ file.filename }}
+            {% if file.subtitle_count > 0 %}
+            <span class="subtitle-indicator" title="{{ file.subtitle_count }} subtitle{{ 's' if file.subtitle_count > 1 else '' }}">
+                <i data-lucide="subtitles" style="width: 14px; height: 14px; vertical-align: middle; margin-left: 0.25rem; opacity: 0.6;"></i>
+                <span style="font-size: 0.75rem; opacity: 0.6;">{{ file.subtitle_count }}</span>
+            </span>
+            {% endif %}
+        </td>
+        <td class="text-muted">{{ file.size_display }}</td>
+        {% if eviction_enabled %}
+        <td>
+            <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                {{ file.priority_score }}
+            </span>
+        </td>
+        {% endif %}
+        <td class="source-badges">
+            {% if file.is_ondeck %}
+            <span class="badge badge-info">OnDeck</span>
+            {% endif %}
+            {% if file.is_watchlist %}
+            <span class="badge badge-muted">Watchlist</span>
+            {% endif %}
+            {% if not file.is_ondeck and not file.is_watchlist %}
+                {% if file.source == 'ondeck' %}
+                <span class="badge badge-warning">Stale OnDeck</span>
+                {% elif file.source == 'watchlist' %}
+                <span class="badge badge-warning">Stale Watchlist</span>
+                {% else %}
+                <span class="badge badge-warning">Other</span>
+                {% endif %}
+            {% endif %}
+        </td>
+        <td>
+            {% if file.users %}
+                {% for user in file.users %}
+                <span class="badge badge-success" style="margin-right: 0.25rem;">{{ user }}</span>
+                {% endfor %}
+            {% else %}
+            <span class="text-muted">-</span>
+            {% endif %}
+        </td>
+        <td class="text-muted">{{ file.cache_age_hours|round(1) }}h</td>
+        <td>
+            <button class="btn btn-sm btn-secondary"
+                    onclick="showEvictConfirm('{{ file.path|replace("'", "\\'") }}', '{{ file.filename|replace("'", "\\'") }}', '{{ file.size_display }}')"
+                    title="Evict from cache">
+                <i data-lucide="x"></i>
+            </button>
+        </td>
+    </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="{{ 8 if eviction_enabled else 7 }}" class="text-muted" style="text-align: center; padding: 2rem;">
+            <i data-lucide="inbox" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
+            No cached files{% if source_filter != 'all' or search %} matching filters{% endif %}
+        </td>
+    </tr>
+{% endif %}
+
+<!-- Out-of-band swap for footer totals -->
+<tfoot id="cache-table-footer" hx-swap-oob="innerHTML">
+    {% if files %}
+    <tr class="totals-row">
+        <td colspan="{{ 8 if eviction_enabled else 7 }}">
+            <div class="totals-summary">
+                <span class="totals-item">
+                    <i data-lucide="files"></i>
+                    <strong>{{ totals.total_files }}</strong> files
+                </span>
+                <span class="totals-divider"></span>
+                <span class="totals-item">
+                    <i data-lucide="hard-drive"></i>
+                    <strong>{{ totals.total_size_display }}</strong> total
+                </span>
+                <span class="totals-divider"></span>
+                <span class="totals-item">
+                    <span class="badge badge-info">OnDeck</span>
+                    <strong>{{ totals.ondeck_count }}</strong>
+                </span>
+                <span class="totals-item">
+                    <span class="badge badge-muted">Watchlist</span>
+                    <strong>{{ totals.watchlist_count }}</strong>
+                </span>
+                {% if totals.other_count > 0 %}
+                <span class="totals-item">
+                    <span class="badge badge-warning">Other</span>
+                    <strong>{{ totals.other_count }}</strong>
+                </span>
+                {% endif %}
+            </div>
+        </td>
+    </tr>
+    {% endif %}
+</tfoot>

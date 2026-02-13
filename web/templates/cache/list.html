@@ -1,0 +1,569 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="database"></i>
+        </div>
+        <div>
+            <h1>Cached Files</h1>
+            <p>Files currently cached for fast access</p>
+        </div>
+    </div>
+    <div class="action-buttons">
+        <a href="/cache/priorities" class="btn btn-secondary">
+            <i data-lucide="bar-chart-2"></i>
+            Priority Report
+        </a>
+    </div>
+</header>
+
+<!-- Filters -->
+<div class="card mb-2">
+    <div class="card-body">
+        <div class="grid grid-3">
+            <div class="form-group mb-0">
+                <label for="source-filter">Filter by Source</label>
+                <select id="source-filter" name="source" class="cache-filter"
+                        hx-get="/api/cache/files"
+                        hx-target="#cache-table-body"
+                        hx-include=".cache-filter">
+                    <option value="all" {% if source_filter == 'all' %}selected{% endif %}>All Sources</option>
+                    <option value="ondeck" {% if source_filter == 'ondeck' %}selected{% endif %}>OnDeck Only</option>
+                    <option value="watchlist" {% if source_filter == 'watchlist' %}selected{% endif %}>Watchlist Only</option>
+                    <option value="other" {% if source_filter == 'other' %}selected{% endif %}>Other Only</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label for="search-input">Search</label>
+                <input type="search" id="search-input" name="search" placeholder="Search files..." class="cache-filter"
+                       hx-get="/api/cache/files"
+                       hx-trigger="keyup changed delay:500ms"
+                       hx-target="#cache-table-body"
+                       hx-include=".cache-filter">
+            </div>
+            <div class="form-group mb-0">
+                <label>&nbsp;</label>
+                <div class="flex gap-1">
+                    <button class="btn btn-secondary" hx-get="/api/cache/files" hx-target="#cache-table-body" hx-include=".cache-filter">
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh
+                    </button>
+                    <button id="bulk-evict-btn" class="btn btn-danger" style="display: none;"
+                            onclick="bulkEvict()">
+                        <i data-lucide="trash-2"></i>
+                        <span id="bulk-evict-count">Evict (0)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- Hidden inputs for sort state -->
+        <input type="hidden" id="sort-input" name="sort" value="{{ sort_by|default('priority') }}" class="cache-filter">
+        <input type="hidden" id="dir-input" name="dir" value="{{ sort_dir|default('desc') }}" class="cache-filter">
+    </div>
+</div>
+
+<!-- Alert container for eviction messages -->
+<div id="alert-container"></div>
+
+<!-- Cache Table -->
+<div class="card">
+    <div class="card-body" style="padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 40px;">
+                        <input type="checkbox" id="select-all" onclick="toggleSelectAll(this)" title="Select all">
+                    </th>
+                    <th class="sortable" data-sort="filename" onclick="sortTable('filename')">
+                        File
+                        <span class="sort-icon">
+                            {% if sort_by == 'filename' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="size" onclick="sortTable('size')">
+                        Size
+                        <span class="sort-icon">
+                            {% if sort_by == 'size' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    {% if eviction_enabled %}
+                    <th class="sortable" data-sort="priority" onclick="sortTable('priority')">
+                        Priority
+                        <span class="sort-icon">
+                            {% if sort_by == 'priority' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    {% endif %}
+                    <th class="sortable" data-sort="source" onclick="sortTable('source')">
+                        Source
+                        <span class="sort-icon">
+                            {% if sort_by == 'source' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="users" onclick="sortTable('users')">
+                        Users
+                        <span class="sort-icon">
+                            {% if sort_by == 'users' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th class="sortable" data-sort="age" onclick="sortTable('age')">
+                        Age
+                        <span class="sort-icon">
+                            {% if sort_by == 'age' %}
+                                <i data-lucide="{{ 'chevron-up' if sort_dir == 'asc' else 'chevron-down' }}"></i>
+                            {% endif %}
+                        </span>
+                    </th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="cache-table-body"
+                   hx-get="/api/cache/files"
+                   hx-trigger="load, refresh, every 30s"
+                   hx-include=".cache-filter">
+                {% if files %}
+                    {% for file in files %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" class="file-checkbox" value="{{ file.path }}" onchange="updateBulkActions()">
+                        </td>
+                        <td title="{{ file.path }}">
+                            {{ file.filename }}
+                            {% if file.subtitle_count > 0 %}
+                            <span class="subtitle-indicator" title="{{ file.subtitle_count }} subtitle{{ 's' if file.subtitle_count > 1 else '' }}">
+                                <i data-lucide="subtitles" style="width: 14px; height: 14px; vertical-align: middle; margin-left: 0.25rem; opacity: 0.6;"></i>
+                                <span style="font-size: 0.75rem; opacity: 0.6;">{{ file.subtitle_count }}</span>
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted">{{ file.size_display }}</td>
+                        {% if eviction_enabled %}
+                        <td>
+                            <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                                {{ file.priority_score }}
+                            </span>
+                        </td>
+                        {% endif %}
+                        <td class="source-badges">
+                            {% if file.is_ondeck %}
+                            <span class="badge badge-info">OnDeck</span>
+                            {% endif %}
+                            {% if file.is_watchlist %}
+                            <span class="badge badge-muted">Watchlist</span>
+                            {% endif %}
+                            {% if not file.is_ondeck and not file.is_watchlist %}
+                                {% if file.source == 'ondeck' %}
+                                <span class="badge badge-warning">Stale OnDeck</span>
+                                {% elif file.source == 'watchlist' %}
+                                <span class="badge badge-warning">Stale Watchlist</span>
+                                {% else %}
+                                <span class="badge badge-warning">Other</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if file.users %}
+                                {% for user in file.users %}
+                                <span class="badge badge-success" style="margin-right: 0.25rem;">{{ user }}</span>
+                                {% endfor %}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted">{{ file.cache_age_hours|round(1) }}h</td>
+                        <td>
+                            <button class="btn btn-sm btn-secondary"
+                                    onclick="showEvictConfirm('{{ file.path|replace("'", "\\'") }}', '{{ file.filename|replace("'", "\\'") }}', '{{ file.size_display }}')"
+                                    title="Evict from cache">
+                                <i data-lucide="x"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">
+                            <i data-lucide="inbox" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
+                            No cached files
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+            <tfoot id="cache-table-footer">
+                {% if files %}
+                <tr class="totals-row">
+                    <td colspan="8">
+                        <div class="totals-summary">
+                            <span class="totals-item">
+                                <i data-lucide="files"></i>
+                                <strong>{{ totals.total_files }}</strong> files
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <i data-lucide="hard-drive"></i>
+                                <strong>{{ totals.total_size_display }}</strong> total
+                            </span>
+                            <span class="totals-divider"></span>
+                            <span class="totals-item">
+                                <span class="badge badge-info">OnDeck</span>
+                                <strong>{{ totals.ondeck_count }}</strong>
+                            </span>
+                            <span class="totals-item">
+                                <span class="badge badge-muted">Watchlist</span>
+                                <strong>{{ totals.watchlist_count }}</strong>
+                            </span>
+                            {% if totals.other_count > 0 %}
+                            <span class="totals-item">
+                                <span class="badge badge-warning">Other</span>
+                                <strong>{{ totals.other_count }}</strong>
+                            </span>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Evict Confirmation Modal -->
+<div id="evict-modal" class="modal" style="display: none;">
+    <div class="modal-backdrop" onclick="closeEvictModal()"></div>
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3 id="evict-modal-title">Evict from Cache</h3>
+            <button class="modal-close" onclick="closeEvictModal()">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="modal-body" id="evict-modal-body">
+            <!-- Content will be set by JavaScript -->
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeEvictModal()">Cancel</button>
+            <button id="evict-modal-action" class="btn btn-danger">Evict</button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Evict modal styling */
+#evict-modal .modal-content {
+    background: var(--plex-bg-card);
+    border: 1px solid var(--plex-border);
+}
+
+#evict-modal .modal-body {
+    padding: 1.5rem;
+}
+
+#evict-modal .evict-file-info {
+    background: var(--plex-bg);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+#evict-modal .evict-file-info .filename {
+    font-weight: 500;
+    word-break: break-word;
+    margin-bottom: 0.5rem;
+}
+
+#evict-modal .evict-file-info .file-meta {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+#evict-modal .evict-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: rgba(var(--warning-rgb), 0.1);
+    border-radius: 6px;
+    font-size: 0.875rem;
+}
+
+#evict-modal .evict-warning i {
+    color: var(--warning);
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+#evict-modal .modal-footer {
+    border-top: 1px solid var(--plex-border);
+    padding: 1rem 1.5rem;
+    gap: 0.5rem;
+}
+
+#evict-modal .file-list {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+}
+
+#evict-modal .file-list ul {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+#evict-modal .file-list li {
+    padding: 0.25rem 0;
+    word-break: break-word;
+}
+
+#evict-modal .file-list .more-files {
+    color: var(--text-muted);
+    font-style: italic;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function sortTable(column) {
+    const sortInput = document.getElementById('sort-input');
+    const dirInput = document.getElementById('dir-input');
+    const currentSort = sortInput.value;
+    const currentDir = dirInput.value;
+
+    // Toggle direction if same column, otherwise default to desc (except filename which defaults to asc)
+    if (currentSort === column) {
+        dirInput.value = currentDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortInput.value = column;
+        dirInput.value = column === 'filename' ? 'asc' : 'desc';
+    }
+
+    // Trigger HTMX request
+    htmx.ajax('GET', '/api/cache/files', {
+        target: '#cache-table-body',
+        values: {
+            source: document.getElementById('source-filter').value,
+            search: document.getElementById('search-input').value,
+            sort: sortInput.value,
+            dir: dirInput.value
+        }
+    }).then(() => {
+        // Update header icons after content loads
+        updateSortIcons(sortInput.value, dirInput.value);
+        // Reset selection state after refresh
+        updateBulkActions();
+        document.getElementById('select-all').checked = false;
+    });
+}
+
+function updateSortIcons(sortBy, sortDir) {
+    // Remove all existing sort icons
+    document.querySelectorAll('th.sortable .sort-icon').forEach(icon => {
+        icon.innerHTML = '';
+    });
+
+    // Add icon to current sort column
+    const activeHeader = document.querySelector(`th.sortable[data-sort="${sortBy}"] .sort-icon`);
+    if (activeHeader) {
+        const iconName = sortDir === 'asc' ? 'chevron-up' : 'chevron-down';
+        activeHeader.innerHTML = `<i data-lucide="${iconName}"></i>`;
+        lucide.createIcons();
+    }
+}
+
+// Bulk selection functions
+function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateBulkActions();
+}
+
+function updateBulkActions() {
+    const checked = document.querySelectorAll('.file-checkbox:checked');
+    const bulkBtn = document.getElementById('bulk-evict-btn');
+    const countSpan = document.getElementById('bulk-evict-count');
+
+    if (checked.length > 0) {
+        bulkBtn.style.display = 'inline-flex';
+        countSpan.textContent = `Evict (${checked.length})`;
+    } else {
+        bulkBtn.style.display = 'none';
+    }
+}
+
+// Evict modal state
+let pendingEvictPaths = [];
+
+function showEvictConfirm(path, filename, size) {
+    pendingEvictPaths = [path];
+
+    const modal = document.getElementById('evict-modal');
+    const modalTitle = document.getElementById('evict-modal-title');
+    const modalBody = document.getElementById('evict-modal-body');
+    const actionBtn = document.getElementById('evict-modal-action');
+
+    modalTitle.textContent = 'Evict from Cache';
+    modalBody.innerHTML = `
+        <div class="evict-file-info">
+            <div class="filename">${escapeHtml(filename)}</div>
+            <div class="file-meta">${size}</div>
+        </div>
+        <div class="evict-warning">
+            <i data-lucide="alert-triangle"></i>
+            <div>
+                This will move the file back to the array and remove it from cache tracking.
+                If a backup exists, it will be restored.
+            </div>
+        </div>
+    `;
+
+    actionBtn.textContent = 'Evict';
+    actionBtn.onclick = executeEvict;
+
+    modal.style.display = 'flex';
+    lucide.createIcons();
+}
+
+function bulkEvict() {
+    const checked = document.querySelectorAll('.file-checkbox:checked');
+    if (checked.length === 0) return;
+
+    pendingEvictPaths = Array.from(checked).map(cb => cb.value);
+    const count = pendingEvictPaths.length;
+
+    const modal = document.getElementById('evict-modal');
+    const modalTitle = document.getElementById('evict-modal-title');
+    const modalBody = document.getElementById('evict-modal-body');
+    const actionBtn = document.getElementById('evict-modal-action');
+
+    modalTitle.textContent = `Evict ${count} File${count > 1 ? 's' : ''}`;
+
+    // Build file list preview (show first 5)
+    const fileNames = pendingEvictPaths.map(path => path.split('/').pop());
+    const previewCount = Math.min(5, fileNames.length);
+    const fileListHtml = fileNames.slice(0, previewCount)
+        .map(name => `<li>${escapeHtml(name)}</li>`)
+        .join('');
+    const moreHtml = count > previewCount
+        ? `<li class="more-files">...and ${count - previewCount} more</li>`
+        : '';
+
+    modalBody.innerHTML = `
+        <p>You are about to evict <strong>${count}</strong> file${count > 1 ? 's' : ''} from the cache:</p>
+        <div class="file-list">
+            <ul>
+                ${fileListHtml}
+                ${moreHtml}
+            </ul>
+        </div>
+        <div class="evict-warning">
+            <i data-lucide="alert-triangle"></i>
+            <div>
+                These files will be moved back to the array and removed from cache tracking.
+                Any existing backups will be restored.
+            </div>
+        </div>
+    `;
+
+    actionBtn.textContent = `Evict ${count} File${count > 1 ? 's' : ''}`;
+    actionBtn.onclick = executeEvict;
+
+    modal.style.display = 'flex';
+    lucide.createIcons();
+}
+
+function executeEvict() {
+    const actionBtn = document.getElementById('evict-modal-action');
+    const cancelBtn = document.querySelector('#evict-modal .btn-secondary');
+    const originalBtnText = actionBtn.textContent;
+
+    // Show loading state
+    actionBtn.disabled = true;
+    actionBtn.innerHTML = '<span class="spinner" style="width: 16px; height: 16px; margin-right: 8px;"></span>Evicting...';
+    cancelBtn.disabled = true;
+
+    // Determine endpoint based on single vs bulk
+    const isBulk = pendingEvictPaths.length > 1;
+    let fetchPromise;
+
+    if (isBulk) {
+        const formData = new FormData();
+        pendingEvictPaths.forEach(path => formData.append('paths', path));
+        fetchPromise = fetch('/api/cache/evict-bulk', {
+            method: 'POST',
+            body: formData
+        });
+    } else {
+        fetchPromise = fetch(`/api/cache/evict/${encodeURIComponent(pendingEvictPaths[0])}`, {
+            method: 'POST'
+        });
+    }
+
+    fetchPromise
+        .then(response => response.text())
+        .then(html => {
+            closeEvictModal();
+            document.getElementById('alert-container').innerHTML = html;
+            lucide.createIcons();
+
+            // Refresh the table
+            htmx.trigger('#cache-table-body', 'refresh');
+        })
+        .catch(err => {
+            closeEvictModal();
+            document.getElementById('alert-container').innerHTML = `
+                <div class="alert alert-error">
+                    <i data-lucide="alert-circle"></i>
+                    <span>Error: ${err.message}</span>
+                </div>
+            `;
+            lucide.createIcons();
+        })
+        .finally(() => {
+            // Reset button state
+            actionBtn.disabled = false;
+            actionBtn.textContent = originalBtnText;
+            cancelBtn.disabled = false;
+            pendingEvictPaths = [];
+        });
+}
+
+function closeEvictModal() {
+    document.getElementById('evict-modal').style.display = 'none';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Close modal on escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeEvictModal();
+    }
+});
+
+// Reset selection after HTMX swaps
+document.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target.id === 'cache-table-body') {
+        updateBulkActions();
+        const selectAll = document.getElementById('select-all');
+        if (selectAll) selectAll.checked = false;
+    }
+});
+</script>
+{% endblock %}

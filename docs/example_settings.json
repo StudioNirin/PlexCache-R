@@ -1,0 +1,91 @@
+{
+    "PLEX_URL": "http://192.168.1.100:32400/",
+    "PLEX_TOKEN": "your-plex-token-here",
+
+    "path_mappings": [
+        {
+            "name": "Movies",
+            "plex_path": "/media/movies/",
+            "real_path": "/mnt/user/media/movies/",
+            "cache_path": "/mnt/cache/media/movies/",
+            "cacheable": true,
+            "enabled": true
+        },
+        {
+            "name": "TV Shows",
+            "plex_path": "/media/tv/",
+            "real_path": "/mnt/user/media/tv/",
+            "cache_path": "/mnt/cache/media/tv/",
+            "cacheable": true,
+            "enabled": true
+        },
+        {
+            "name": "4K Movies",
+            "plex_path": "/media/movies-4k/",
+            "real_path": "/mnt/user/media/movies-4k/",
+            "cache_path": "/mnt/cache/media/movies-4k/",
+            "cacheable": true,
+            "enabled": true
+        },
+        {
+            "name": "Remote NAS",
+            "plex_path": "/media/remote-nas/",
+            "real_path": "/mnt/remotes/nas-share/",
+            "cache_path": null,
+            "cacheable": false,
+            "enabled": true
+        }
+    ],
+
+    "cache_dir": "/mnt/cache/media/",
+
+    "valid_sections": [1, 2, 3, 4],
+
+    "number_episodes": 5,
+    "days_to_monitor": 183,
+
+    "watchlist_toggle": true,
+    "watchlist_episodes": 3,
+
+    "users_toggle": true,
+    "users": [
+        {
+            "title": "MainUser",
+            "token": "main-user-token",
+            "is_local": true,
+            "skip_ondeck": false,
+            "skip_watchlist": false
+        },
+        {
+            "title": "FamilyMember",
+            "token": "family-member-token",
+            "is_local": false,
+            "skip_ondeck": false,
+            "skip_watchlist": false
+        }
+    ],
+
+    "skip_ondeck": [],
+    "skip_watchlist": [],
+
+    "remote_watchlist_toggle": false,
+    "remote_watchlist_rss_url": "",
+
+    "watched_move": true,
+    "cache_retention_hours": 12,
+    "watchlist_retention_days": 0,
+
+    "cache_eviction_mode": "none",
+    "cache_eviction_threshold_percent": 90,
+    "eviction_min_priority": 60,
+
+    "exit_if_active_session": false,
+
+    "max_concurrent_moves_cache": 5,
+    "max_concurrent_moves_array": 2,
+
+    "notification_type": "both",
+    "unraid_level": "summary",
+    "webhook_url": "https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN",
+    "webhook_level": "summary"
+}

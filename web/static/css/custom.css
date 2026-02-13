@@ -1,0 +1,451 @@
+/* PlexCache-R Web UI Custom Styles */
+
+/* Status indicators */
+.status-ok {
+    color: var(--pico-ins-color, #2ecc71);
+}
+
+.status-warn {
+    color: var(--pico-mark-background-color, #f39c12);
+}
+
+.status-error {
+    color: var(--pico-del-color, #e74c3c);
+}
+
+.status-running {
+    color: var(--pico-primary);
+}
+
+/* Priority score colors */
+.priority-score {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+.priority-high {
+    background-color: rgba(46, 204, 113, 0.2);
+    color: #2ecc71;
+}
+
+.priority-medium {
+    background-color: rgba(243, 156, 18, 0.2);
+    color: #f39c12;
+}
+
+.priority-low {
+    background-color: rgba(231, 76, 60, 0.2);
+    color: #e74c3c;
+}
+
+/* Log viewer - single scroll context for both axes */
+.log-viewer {
+    height: 500px;
+    overflow: auto;
+    background-color: var(--pico-code-background-color);
+    padding: 1rem;
+    font-family: var(--pico-font-family-monospace);
+    font-size: 0.85em;
+    line-height: 1.4;
+}
+
+.log-viewer code,
+.log-viewer pre {
+    background: none;
+    padding: 0;
+    white-space: pre;
+    width: max-content;
+    min-width: 100%;
+}
+
+/* Log level highlighting */
+.log-error {
+    color: #e74c3c;
+}
+
+.log-warning {
+    color: #f39c12;
+}
+
+.log-info {
+    color: #3498db;
+}
+
+.log-debug {
+    color: #95a5a6;
+}
+
+/* Alert styles */
+.alert {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: var(--pico-border-radius);
+    position: relative;
+}
+
+.alert-success {
+    background-color: rgba(46, 204, 113, 0.1);
+    border-left: 4px solid #2ecc71;
+}
+
+.alert-error {
+    background-color: rgba(231, 76, 60, 0.1);
+    border-left: 4px solid #e74c3c;
+}
+
+.alert-warning {
+    background-color: rgba(243, 156, 18, 0.1);
+    border-left: 4px solid #f39c12;
+}
+
+.alert-info {
+    background-color: rgba(52, 152, 219, 0.1);
+    border-left: 4px solid #3498db;
+}
+
+.alert .close {
+    position: absolute;
+    right: 0.5rem;
+    top: 0.5rem;
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    opacity: 0.5;
+}
+
+.alert .close:hover {
+    opacity: 1;
+}
+
+/* HTMX loading indicator */
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline;
+}
+
+.htmx-request .button-text {
+    display: none;
+}
+
+/* Path mapping cards */
+.path-mapping {
+    margin-bottom: 1rem;
+}
+
+.path-mapping dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem;
+}
+
+.path-mapping dt {
+    font-weight: bold;
+}
+
+.path-mapping dd {
+    margin: 0;
+}
+
+/* Small buttons */
+button.small, .button.small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85em;
+}
+
+/* Navigation current page indicator */
+nav a[aria-current="page"] {
+    font-weight: bold;
+    border-bottom: 2px solid var(--pico-primary);
+}
+
+/* Settings tabs navigation */
+article nav ul {
+    display: flex;
+    gap: 1rem;
+    list-style: none;
+    padding: 0;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+article nav ul li {
+    margin: 0;
+}
+
+article nav ul li a {
+    display: block;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+}
+
+article nav ul li a[aria-current="page"] {
+    border-bottom: 2px solid var(--pico-primary);
+    margin-bottom: -1px;
+}
+
+/* Operation status cards */
+.status-success {
+    border-left: 4px solid #2ecc71;
+}
+
+.status-error {
+    border-left: 4px solid #e74c3c;
+}
+
+/* Footer styling */
+footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--pico-muted-border-color);
+    text-align: center;
+    opacity: 0.7;
+}
+
+/* Recent Activity scrollable container */
+.recent-activity-scroll {
+    max-height: 400px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Thin subtle scrollbar for Chrome/Safari/Edge */
+.recent-activity-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+.recent-activity-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.recent-activity-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+}
+
+.recent-activity-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* Thin scrollbar for Firefox */
+.recent-activity-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+/* Keep table header sticky while scrolling */
+.recent-activity-scroll table thead {
+    position: sticky;
+    top: 0;
+    background: var(--plex-card-bg, #1f2326);
+    z-index: 1;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+
+    .path-mapping dl {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Global Operation Indicator - visible in header across all pages */
+.global-op-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    background-color: rgba(230, 126, 34, 0.15);
+    border: 1px solid rgba(230, 126, 34, 0.5);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--plex-orange, #e5a00d);
+    margin-right: 0.75rem;
+    animation: indicator-pulse 1.5s ease-in-out infinite;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.global-op-indicator:hover {
+    background-color: rgba(230, 126, 34, 0.25);
+    border-color: rgba(230, 126, 34, 0.7);
+    text-decoration: none;
+}
+
+.global-op-dot {
+    width: 10px;
+    height: 10px;
+    background-color: var(--plex-orange, #e5a00d);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--plex-orange, #e5a00d);
+    animation: dot-glow 1s ease-in-out infinite;
+}
+
+.global-op-text {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+@keyframes indicator-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+@keyframes dot-glow {
+    0%, 100% {
+        box-shadow: 0 0 8px var(--plex-orange, #e5a00d), 0 0 16px var(--plex-orange, #e5a00d);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 4px var(--plex-orange, #e5a00d);
+        transform: scale(0.85);
+    }
+}
+
+/* Hidden placeholder when no operation running */
+#global-op-check {
+    display: none;
+}
+
+/* Global Operation Banner - centered toast notification */
+#global-operation-banner {
+    position: fixed;
+    top: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    pointer-events: none;
+}
+
+#global-operation-banner:empty {
+    display: none;
+}
+
+#global-operation-banner > * {
+    pointer-events: auto;
+}
+
+.global-op-banner {
+    background: #1a1d1f;
+    border: 2px solid #e5a00d;
+    border-radius: 12px;
+    padding: 0.75rem 1.25rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.05);
+    animation: toastSlideDown 0.3s ease-out;
+    min-width: 320px;
+    max-width: 600px;
+}
+
+.global-op-banner-success {
+    border-color: #2ecc71;
+}
+
+.global-op-banner-error {
+    border-color: #e74c3c;
+}
+
+@keyframes toastSlideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.global-op-banner-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.global-op-banner-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: #fff;
+}
+
+.global-op-banner-left strong {
+    color: #fff;
+    font-size: 0.95rem;
+}
+
+.global-op-banner-left .text-muted {
+    color: rgba(255,255,255,0.6);
+}
+
+.global-op-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.global-op-banner-actions .btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+.global-op-dismiss {
+    padding: 0.25rem;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    border-radius: 4px;
+}
+
+.global-op-dismiss:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Ghost button style for dismiss */
+.btn-ghost {
+    background: transparent;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+    #global-operation-banner {
+        top: 70px;
+        left: 0.5rem;
+        right: 0.5rem;
+        transform: none;
+    }
+
+    .global-op-banner {
+        min-width: auto;
+        max-width: none;
+        width: 100%;
+    }
+
+    .global-op-banner-content {
+        flex-wrap: wrap;
+    }
+
+    .global-op-banner-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 0.5rem;
+    }
+}

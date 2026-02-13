@@ -1,0 +1,17 @@
+{% if libraries %}
+    {% for lib in libraries %}
+    <label class="checkbox-card">
+        <input type="checkbox" name="valid_sections" value="{{ lib.id }}"
+               {% if lib.id in selected_sections %}checked{% endif %}>
+        <span class="checkbox-content">
+            <span class="library-name">{{ lib.title }}</span>
+            <span class="library-meta">{{ lib.type_label }} &middot; Section {{ lib.id }}</span>
+        </span>
+    </label>
+    {% endfor %}
+{% else %}
+    <div class="no-libraries">
+        <i data-lucide="alert-circle"></i>
+        <span>Unable to fetch libraries. Check Plex URL and token above.</span>
+    </div>
+{% endif %}

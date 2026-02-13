@@ -1,0 +1,275 @@
+{% extends "setup/base_setup.html" %}
+
+{% block content %}
+<form action="/setup/step1" method="post">
+    <div class="setup-content" style="text-align: center;">
+        <div class="welcome-icon">
+            <i data-lucide="hard-drive"></i>
+        </div>
+
+        <h2>Welcome to PlexCache-R</h2>
+        <p class="description">
+            {% if is_unraid %}
+            Intelligent media caching for Plex on Unraid. Cache your frequently-accessed
+            media to a fast SSD while keeping the rest on your array.
+            {% else %}
+            Intelligent media caching for Plex. Cache your frequently-accessed
+            media to a fast drive while keeping the rest on your storage pool.
+            {% endif %}
+        </p>
+
+        <ul class="feature-list" style="text-align: left;">
+            <li>
+                <i data-lucide="check-circle"></i>
+                <span>Automatically cache OnDeck and Watchlist media</span>
+            </li>
+            <li>
+                <i data-lucide="check-circle"></i>
+                <span>{% if is_unraid %}Move watched content back to the array{% else %}Move watched content back to main storage{% endif %}</span>
+            </li>
+            <li>
+                <i data-lucide="check-circle"></i>
+                <span>Reduce array spinups and save energy</span>
+            </li>
+            <li>
+                <i data-lucide="check-circle"></i>
+                <span>Support for multiple users and libraries</span>
+            </li>
+        </ul>
+
+        <p class="description" style="font-size: 0.9rem; margin-bottom: 0;">
+            This wizard will guide you through the initial setup. You can always
+            change these settings later.
+        </p>
+    </div>
+
+    <!-- Import Section -->
+    <div id="import-section" style="display: none; margin-top: 1.5rem; border-top: 1px solid var(--plex-border); padding-top: 1.5rem;">
+        <div style="background: var(--surface-secondary); padding: 1.25rem; border-radius: 8px;">
+            <h3 style="margin: 0 0 0.75rem 0; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                <i data-lucide="package" style="width: 20px; height: 20px; color: var(--plex-orange);"></i>
+                Migrating from CLI Version?
+            </h3>
+            <p style="margin: 0 0 1rem 0; font-size: 0.9rem; color: var(--plex-text-muted);">
+                Import your existing configuration and tracking data to skip manual setup.
+            </p>
+
+            <!-- No import files detected -->
+            <div id="import-not-found" style="display: none;">
+                <div class="alert" style="background: rgba(255, 255, 255, 0.05); margin-bottom: 0;">
+                    <i data-lucide="info" style="color: var(--plex-text-muted);"></i>
+                    <div style="font-size: 0.85rem;">
+                        <p style="margin: 0;">To import, place your CLI files in <code>/config/import/</code>:</p>
+                        <ul style="margin: 0.5rem 0 0 1rem; padding: 0; list-style: disc;">
+                            <li><code>plexcache_settings.json</code></li>
+                            <li><code>unraid_mover_exclusions.txt</code></li>
+                            <li><code>data/</code> folder (timestamps, trackers, etc.)</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Import files detected -->
+            <div id="import-found" style="display: none;">
+                <div class="alert alert-success" style="margin-bottom: 1rem;">
+                    <i data-lucide="check-circle"></i>
+                    <span>Import files detected!</span>
+                </div>
+
+                <div id="import-summary" style="background: var(--plex-bg-input); padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.85rem;">
+                    <!-- Filled by JS -->
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="cli_cache_prefix" style="font-size: 0.9rem;">CLI Cache Path Prefix</label>
+                    <input type="text" id="cli_cache_prefix" name="cli_cache_prefix"
+                           value="/mnt/cache_downloads/"
+                           placeholder="/mnt/cache_downloads/">
+                    <p class="help-text">The cache path used in your CLI installation. This will be converted to <code>/mnt/cache/</code></p>
+                </div>
+
+                <div style="display: flex; gap: 0.75rem;">
+                    <button type="button" id="import-btn" class="btn btn-primary" style="flex: 1;" onclick="executeImport()">
+                        <i data-lucide="download" class="btn-icon"></i>
+                        <span class="btn-text">Import & Continue</span>
+                        <div class="spinner btn-spinner" style="display: none;"></div>
+                    </button>
+                </div>
+                <p style="margin: 0.75rem 0 0 0; font-size: 0.8rem; color: var(--plex-text-muted); text-align: center;">
+                    After import, you'll verify the Plex connection (URL may differ in Docker)
+                </p>
+
+                <div id="import-error" class="alert alert-error" style="display: none; margin-top: 1rem;">
+                    <i data-lucide="alert-circle"></i>
+                    <span id="import-error-message"></span>
+                </div>
+            </div>
+
+            <!-- Checking for import files -->
+            <div id="import-checking" style="text-align: center; padding: 1rem;">
+                <div class="spinner" style="margin: 0 auto 0.5rem;"></div>
+                <span style="font-size: 0.85rem; color: var(--plex-text-muted);">Checking for import files...</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="setup-footer">
+        <div></div>
+        <button type="submit" class="btn btn-primary">
+            Get Started
+            <i data-lucide="arrow-right"></i>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto-poll interval for import file detection
+    let importPollInterval = null;
+    const POLL_INTERVAL_MS = 3000;  // Check every 3 seconds
+
+    // Check for import files on page load and start polling
+    document.addEventListener('DOMContentLoaded', function() {
+        checkForImportFiles();
+        startImportPolling();
+    });
+
+    function startImportPolling() {
+        // Poll for import files periodically
+        importPollInterval = setInterval(checkForImportFiles, POLL_INTERVAL_MS);
+    }
+
+    function stopImportPolling() {
+        if (importPollInterval) {
+            clearInterval(importPollInterval);
+            importPollInterval = null;
+        }
+    }
+
+    function checkForImportFiles() {
+        const importSection = document.getElementById('import-section');
+        const importChecking = document.getElementById('import-checking');
+        const importFound = document.getElementById('import-found');
+        const importNotFound = document.getElementById('import-not-found');
+
+        // Show section (only on first check)
+        importSection.style.display = 'block';
+
+        fetch('/setup/import/detect')
+            .then(response => response.json())
+            .then(data => {
+                importChecking.style.display = 'none';
+
+                if (data.has_import_files) {
+                    // Files found - stop polling and show import UI
+                    stopImportPolling();
+                    importFound.style.display = 'block';
+                    importNotFound.style.display = 'none';
+
+                    // Build summary
+                    let summary = '<div style="display: grid; gap: 0.25rem;">';
+                    if (data.has_settings) {
+                        summary += '<div><i data-lucide="check" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i> Settings file found</div>';
+                    }
+                    if (data.exclude_entries_count > 0) {
+                        summary += `<div><i data-lucide="check" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i> ${data.exclude_entries_count} exclude file entries</div>`;
+                    }
+                    if (data.timestamps_count > 0) {
+                        summary += `<div><i data-lucide="check" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i> ${data.timestamps_count} cached file timestamps</div>`;
+                    }
+                    if (data.ondeck_count > 0) {
+                        summary += `<div><i data-lucide="check" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i> ${data.ondeck_count} OnDeck items</div>`;
+                    }
+                    if (data.watchlist_count > 0) {
+                        summary += `<div><i data-lucide="check" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i> ${data.watchlist_count} Watchlist items</div>`;
+                    }
+                    summary += '</div>';
+
+                    document.getElementById('import-summary').innerHTML = summary;
+                    lucide.createIcons();
+
+                    // Set detected cache prefix if available
+                    if (data.detected_cache_prefix) {
+                        document.getElementById('cli_cache_prefix').value = data.detected_cache_prefix;
+                    }
+                } else {
+                    // No files - keep polling, show "not found" state
+                    importFound.style.display = 'none';
+                    importNotFound.style.display = 'block';
+                }
+
+                lucide.createIcons();
+            })
+            .catch(err => {
+                console.error('Import detection error:', err);
+                importChecking.style.display = 'none';
+                importNotFound.style.display = 'block';
+                lucide.createIcons();
+            });
+    }
+
+    function executeImport() {
+        const importBtn = document.getElementById('import-btn');
+        const btnText = importBtn.querySelector('.btn-text');
+        const btnIcon = importBtn.querySelector('.btn-icon');
+        const btnSpinner = importBtn.querySelector('.btn-spinner');
+        const errorDiv = document.getElementById('import-error');
+        const errorMsg = document.getElementById('import-error-message');
+
+        // Show loading state
+        btnText.textContent = 'Importing...';
+        btnIcon.style.display = 'none';
+        btnSpinner.style.display = 'block';
+        importBtn.disabled = true;
+        errorDiv.style.display = 'none';
+
+        const formData = new FormData();
+        formData.append('cli_cache_prefix', document.getElementById('cli_cache_prefix').value);
+        formData.append('docker_cache_prefix', '/mnt/cache/');
+
+        fetch('/setup/import/execute', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (data.redirect) {
+                    // Import complete with settings - redirect to verify Plex connection
+                    btnText.textContent = 'Import Complete!';
+                    btnSpinner.style.display = 'none';
+                    setTimeout(() => {
+                        window.location.href = data.redirect;
+                    }, 1000);
+                } else {
+                    // Data imported but no settings - continue with setup
+                    btnText.textContent = 'Data Imported!';
+                    btnSpinner.style.display = 'none';
+                    setTimeout(() => {
+                        window.location.href = '/setup?step=2';
+                    }, 1000);
+                }
+            } else {
+                // Show error
+                btnText.textContent = 'Import & Continue';
+                btnIcon.style.display = 'inline';
+                btnSpinner.style.display = 'none';
+                importBtn.disabled = false;
+                errorMsg.textContent = data.message || 'Import failed';
+                errorDiv.style.display = 'flex';
+                lucide.createIcons();
+            }
+        })
+        .catch(err => {
+            btnText.textContent = 'Import & Continue';
+            btnIcon.style.display = 'inline';
+            btnSpinner.style.display = 'none';
+            importBtn.disabled = false;
+            errorMsg.textContent = 'Network error: ' + err.message;
+            errorDiv.style.display = 'flex';
+            lucide.createIcons();
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,141 @@
+<!-- Path mapping card partial for HTMX responses -->
+<div class="path-mapping-card" id="mapping-{{ index }}">
+    <!-- View Mode -->
+    <div class="mapping-view" id="mapping-view-{{ index }}">
+        <div class="card mb-2" style="background: var(--plex-bg-darker);">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-2">
+                    <strong>{{ mapping.name }}</strong>
+                    <div class="flex gap-1 items-center">
+                        {% if not mapping.enabled %}
+                        <span class="badge badge-muted">Disabled</span>
+                        {% endif %}
+                        {% if not mapping.cacheable %}
+                        <span class="badge badge-warning">Not Cacheable</span>
+                        {% endif %}
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleEditMode({{ index }})">
+                            <i data-lucide="pencil"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-danger"
+                                hx-delete="/settings/paths/{{ index }}"
+                                hx-target="#path-mappings"
+                                hx-swap="innerHTML"
+                                hx-confirm="Delete path mapping '{{ mapping.name }}'?">
+                            <i data-lucide="trash-2"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-2" style="font-size: 0.85rem; margin-bottom: 0.5rem;">
+                    <div>
+                        <span class="text-muted">Plex Path:</span><br>
+                        <code>{{ mapping.plex_path }}</code>
+                    </div>
+                    <div>
+                        <span class="text-muted">Real Path:</span><br>
+                        <code>{{ mapping.real_path }}</code>
+                    </div>
+                </div>
+                <div class="grid grid-2" style="font-size: 0.85rem;">
+                    <div>
+                        <span class="text-muted">Cache Path:</span><br>
+                        <code>{{ mapping.cache_path or 'N/A' }}</code>
+                    </div>
+                    {% if is_docker and mapping.host_cache_path and mapping.host_cache_path != mapping.cache_path %}
+                    <div>
+                        <span class="text-muted" style="color: var(--plex-orange);">Host Cache:</span><br>
+                        <code>{{ mapping.host_cache_path }}</code>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Mode (hidden by default) -->
+    <div class="mapping-edit" id="mapping-edit-{{ index }}" style="display: none;">
+        <div class="card mb-2" style="background: var(--plex-bg-darker); border-color: var(--plex-orange);">
+            <div class="card-body">
+                <form hx-put="/settings/paths/{{ index }}" hx-target="#mapping-{{ index }}" hx-swap="outerHTML">
+                    <div class="flex items-center justify-between mb-2">
+                        <strong style="color: var(--plex-orange);">Editing: {{ mapping.name }}</strong>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleEditMode({{ index }})">
+                            <i data-lucide="x"></i> Cancel
+                        </button>
+                    </div>
+
+                    <div class="grid grid-2 mb-2">
+                        <div class="form-group mb-1">
+                            <label>Name</label>
+                            <input type="text" name="name" value="{{ mapping.name }}" required>
+                        </div>
+                        <div class="form-group mb-1">
+                            <label>Plex Path</label>
+                            <input type="text" name="plex_path" value="{{ mapping.plex_path }}" required>
+                            <div class="form-hint">Path as Plex sees it. Find this in Plex under Settings &gt; Libraries.</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-2 mb-2">
+                        <div class="form-group mb-1">
+                            <label>Real Path</label>
+                            <input type="text" name="real_path" value="{{ mapping.real_path }}" required>
+                            <div class="form-hint">
+                                {% if is_unraid %}Where files live on your Unraid share (e.g., <code>/mnt/user/Movies/</code>). Works with both array and ZFS pool shares.
+                                {% else %}Actual filesystem path where your media files are stored.{% endif %}
+                            </div>
+                        </div>
+                        <div class="form-group mb-1">
+                            <label>Cache Path</label>
+                            <input type="text" name="cache_path" value="{{ mapping.cache_path or '' }}">
+                            <div class="form-hint">
+                                {% if is_unraid %}Fast drive path to cache files to (e.g., <code>/mnt/cache/Movies/</code>).
+                                {% else %}Fast drive path where cached copies are stored.{% endif %}
+                            </div>
+                        </div>
+                    </div>
+
+                    {% if is_docker %}
+                    <div class="form-group mb-2">
+                        <label style="color: var(--plex-orange);">Host Cache Path (Docker)</label>
+                        <input type="text" name="host_cache_path" value="{{ mapping.host_cache_path or mapping.cache_path or '' }}"
+                               placeholder="e.g., /mnt/cache_downloads/Movies/">
+                        <div class="form-hint">
+                            The actual host path {% if is_unraid %}the Unraid mover{% else %}the host{% endif %} sees. Only needed if Docker remaps your cache path.
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="flex gap-2 items-center">
+                        <label class="switch">
+                            <input type="checkbox" name="cacheable" {% if mapping.cacheable %}checked{% endif %}>
+                            <span>Cacheable</span>
+                        </label>
+                        <label class="switch">
+                            <input type="checkbox" name="enabled" {% if mapping.enabled %}checked{% endif %}>
+                            <span>Enabled</span>
+                        </label>
+                        <div style="flex: 1;"></div>
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <i data-lucide="save"></i> Save
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    lucide.createIcons();
+    function toggleEditMode(index) {
+        const view = document.getElementById('mapping-view-' + index);
+        const edit = document.getElementById('mapping-edit-' + index);
+        if (view.style.display === 'none') {
+            view.style.display = 'block';
+            edit.style.display = 'none';
+        } else {
+            view.style.display = 'none';
+            edit.style.display = 'block';
+        }
+        lucide.createIcons();
+    }
+</script>

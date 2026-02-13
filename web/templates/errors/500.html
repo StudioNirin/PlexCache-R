@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article>
+    <hgroup>
+        <h1>500 - Server Error</h1>
+        <p>Something went wrong on our end.</p>
+    </hgroup>
+    {% if error %}
+    <details>
+        <summary>Error Details</summary>
+        <pre><code>{{ error }}</code></pre>
+    </details>
+    {% endif %}
+    <a href="/" role="button">Return to Dashboard</a>
+</article>
+{% endblock %}

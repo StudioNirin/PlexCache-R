@@ -4,13 +4,17 @@
 # Python
 *.pyc
 __pycache__/
+.coverage
 
-# Logs
-logs/
+# Runtime data
+/data/
+
+# Logs (root logs directory only, not web/templates/logs/)
+/logs/
 
 # User data files
 plexcache_settings.json
-plexcache_mover_files_to_exclude.txt
+plexcache_cached_files.txt
 plexcache_timestamps.json
 plexcache_watchlist_tracker.json
 plexcache_user_tokens.json
@@ -24,3 +28,4 @@ plexcache_watched_cache.json
 FUTURE_ENHANCEMENTS.md
 COMPLETED_ENHANCEMENTS.md
 MULTI_PATH_FEATURES.md
+PR49_IMPLEMENTATION_PLAN.md

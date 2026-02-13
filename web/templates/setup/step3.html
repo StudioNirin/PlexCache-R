@@ -1,0 +1,246 @@
+{% extends "setup/base_setup.html" %}
+
+{% block content %}
+<form action="/setup/step3" method="post">
+    <div class="setup-content">
+        <h2>Libraries & Paths</h2>
+        <p class="description">
+            Select which libraries to cache and configure path mappings.
+        </p>
+
+        {% if not libraries %}
+        <div class="alert alert-error">
+            <i data-lucide="alert-circle"></i>
+            <span>Could not fetch libraries from Plex. Please check your connection.</span>
+        </div>
+        {% else %}
+
+        <div class="form-group">
+            <label>Select Libraries to Cache</label>
+            <p class="help-text" style="margin-bottom: 0.75rem;">
+                Choose which libraries to monitor for OnDeck and Watchlist items.
+            </p>
+
+            <!-- Cacheable explanation -->
+            <div class="alert" style="margin-bottom: 1rem; background: rgba(33, 150, 243, 0.1); border: 1px solid rgba(33, 150, 243, 0.3); color: var(--plex-text);">
+                <i data-lucide="info" style="color: var(--plex-info); flex-shrink: 0;"></i>
+                <div style="font-size: 0.9rem;">
+                    <strong style="color: var(--plex-info);">What is "Cacheable"?</strong>
+                    <p style="margin: 0.25rem 0 0 0; color: var(--plex-text-muted);">
+                        Check <strong>Cacheable</strong> for libraries stored on your
+                        {% if is_unraid %}Unraid array{% else %}main storage{% endif %}
+                        that can be moved to the cache drive.
+                        Leave unchecked for remote storage (NAS, cloud mounts, network shares) where files cannot be physically relocated.
+                    </p>
+                </div>
+            </div>
+
+            <div class="checkbox-group">
+                {% for library in libraries %}
+                <div class="checkbox-item" style="flex-direction: column; align-items: stretch;">
+                    <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
+                        <input type="checkbox" name="libraries" value="{{ library.id }}"
+                               {% if library.id in valid_sections %}checked{% endif %}
+                               onchange="updatePathMappings()">
+                        <div class="checkbox-label">
+                            <strong>{{ library.title }}</strong>
+                            <span>{{ library.type_label }}</span>
+                        </div>
+                    </label>
+                    <div style="margin-left: 2rem; margin-top: 0.5rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.85rem;">
+                            <input type="checkbox" name="library_cacheable_{{ library.id }}"
+                                   {% if library_cacheable.get(library.id|string) %}checked{% endif %}>
+                            <span style="color: var(--plex-text-muted);">Cacheable</span>
+                        </label>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="cache_dir">Cache Directory</label>
+            <input type="text" id="cache_dir" name="cache_dir"
+                   value="{{ cache_dir or '/mnt/cache' }}"
+                   placeholder="/mnt/cache">
+            <p class="help-text">
+                The fast drive where cached files will be stored.
+                {% if is_docker %}
+                <br><em style="color: var(--plex-text-muted);">Running in Docker: This should match your container's cache mount (typically /mnt/cache).</em>
+                {% endif %}
+            </p>
+        </div>
+
+        <div class="form-group">
+            <label>Path Mappings <span style="font-weight: normal; color: var(--plex-text-muted);">(Advanced)</span></label>
+            <p class="help-text" style="margin-bottom: 0.75rem;">
+                Only needed if Plex paths differ from your actual filesystem paths (e.g., Docker path remapping).
+                Most users can skip this section.
+            </p>
+
+            {% if is_docker %}
+            <!-- Docker host cache path explanation -->
+            <div class="alert" style="margin-bottom: 1rem; background: rgba(229, 160, 13, 0.1); border: 1px solid rgba(229, 160, 13, 0.3); color: var(--plex-text);">
+                <i data-lucide="container" style="color: var(--plex-orange); flex-shrink: 0;"></i>
+                <div style="font-size: 0.9rem;">
+                    <strong style="color: var(--plex-orange);">Docker Detected: Host Cache Path</strong>
+                    <p style="margin: 0.25rem 0 0 0; color: var(--plex-text-muted);">
+                        If your Docker volume mounts remap cache paths (e.g., <code>/mnt/cache_downloads:/mnt/cache</code>),
+                        set <strong>Host Cache</strong> to what the host sees (e.g., <code>/mnt/cache_downloads/Movies/</code>).
+                        {% if is_unraid %}This ensures the Unraid mover exclude list uses the correct paths.
+                        {% else %}This ensures the cache tracking file uses the correct paths.{% endif %}
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+
+            <div id="path-mappings-container">
+                {% if path_mappings %}
+                    {% for mapping in path_mappings %}
+                    <div class="path-mapping-row" style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px; margin-bottom: 0.75rem;">
+                        <input type="hidden" name="mapping_name_{{ loop.index0 }}" value="{{ mapping.name }}">
+
+                        <div style="display: grid; gap: 0.5rem;">
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Name:</strong>
+                                <input type="text" name="mapping_name_{{ loop.index0 }}" value="{{ mapping.name }}"
+                                       style="flex: 1;" placeholder="e.g., Movies">
+                            </div>
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Plex Path:</strong>
+                                <input type="text" name="mapping_plex_path_{{ loop.index0 }}" value="{{ mapping.plex_path }}"
+                                       style="flex: 1;" placeholder="/data/movies/">
+                            </div>
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Real Path:</strong>
+                                <input type="text" name="mapping_real_path_{{ loop.index0 }}" value="{{ mapping.real_path }}"
+                                       style="flex: 1;" placeholder="/mnt/user/Media/Movies/">
+                            </div>
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Cache Path:</strong>
+                                <input type="text" name="mapping_cache_path_{{ loop.index0 }}" value="{{ mapping.cache_path or '' }}"
+                                       style="flex: 1;" placeholder="/mnt/cache/Movies/">
+                            </div>
+                            {% if is_docker %}
+                            <div style="display: flex; gap: 0.5rem; align-items: center;" class="host-cache-path-row">
+                                <strong style="width: 110px; font-size: 0.85rem; color: var(--plex-orange);">Host Cache:</strong>
+                                <input type="text" name="mapping_host_cache_path_{{ loop.index0 }}" value="{{ mapping.host_cache_path or mapping.cache_path or '' }}"
+                                       style="flex: 1;" placeholder="/mnt/cache_downloads/Movies/">
+                            </div>
+                            {% endif %}
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <input type="checkbox" name="mapping_cacheable_{{ loop.index0 }}"
+                                       {% if mapping.cacheable %}checked{% endif %}>
+                                <span style="font-size: 0.85rem; color: var(--text-secondary);">Cacheable</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+
+            <button type="button" class="btn btn-secondary" style="width: 100%; margin-top: 0.5rem;" onclick="addPathMapping()">
+                <i data-lucide="plus"></i>
+                Add Path Mapping
+            </button>
+        </div>
+
+        {% endif %}
+    </div>
+
+    <div class="setup-footer">
+        <a href="/setup?step=2" class="btn btn-secondary">
+            <i data-lucide="arrow-left"></i>
+            Back
+        </a>
+        <button type="submit" class="btn btn-primary" id="next-btn">
+            <span class="btn-text">Next</span>
+            <i data-lucide="arrow-right" class="btn-icon"></i>
+            <div class="spinner btn-spinner" style="display: none;"></div>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let mappingCount = {{ path_mappings | length if path_mappings else 0 }};
+    const isDocker = {{ 'true' if is_docker else 'false' }};
+
+    // Show loading spinner on Next button when form is submitted
+    document.querySelector('form').addEventListener('submit', function(e) {
+        const nextBtn = document.getElementById('next-btn');
+        const btnText = nextBtn.querySelector('.btn-text');
+        const btnIcon = nextBtn.querySelector('.btn-icon');
+        const btnSpinner = nextBtn.querySelector('.btn-spinner');
+
+        btnText.textContent = 'Loading...';
+        btnIcon.style.display = 'none';
+        btnSpinner.style.display = 'block';
+        nextBtn.disabled = true;
+    });
+
+    function addPathMapping() {
+        const container = document.getElementById('path-mappings-container');
+        const cacheDir = document.getElementById('cache_dir').value.replace(/\/+$/, '') || '/mnt/cache';
+
+        // Remove the "no mappings" alert if present
+        const alert = container.querySelector('.alert');
+        if (alert) alert.remove();
+
+        // Build host cache path row only for Docker
+        const hostCacheRow = isDocker ? `
+                    <div style="display: flex; gap: 0.5rem; align-items: center;" class="host-cache-path-row">
+                        <strong style="width: 110px; font-size: 0.85rem; color: var(--plex-orange);">Host Cache:</strong>
+                        <input type="text" name="mapping_host_cache_path_${mappingCount}" value="${cacheDir}/"
+                               style="flex: 1;" placeholder="/mnt/cache_downloads/Movies/">
+                    </div>
+        ` : '';
+
+        const html = `
+            <div class="path-mapping-row" style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px; margin-bottom: 0.75rem;">
+                <div style="display: grid; gap: 0.5rem;">
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Name:</strong>
+                        <input type="text" name="mapping_name_${mappingCount}" value=""
+                               style="flex: 1;" placeholder="e.g., Movies">
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Plex Path:</strong>
+                        <input type="text" name="mapping_plex_path_${mappingCount}" value=""
+                               style="flex: 1;" placeholder="/data/movies/">
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Real Path:</strong>
+                        <input type="text" name="mapping_real_path_${mappingCount}" value=""
+                               style="flex: 1;" placeholder="/mnt/user/Media/Movies/">
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Cache Path:</strong>
+                        <input type="text" name="mapping_cache_path_${mappingCount}" value="${cacheDir}/"
+                               style="flex: 1;" placeholder="/mnt/cache/Movies/">
+                    </div>
+                    ${hostCacheRow}
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="checkbox" name="mapping_cacheable_${mappingCount}" checked>
+                        <span style="font-size: 0.85rem; color: var(--text-secondary);">Cacheable (uncheck for remote/network storage)</span>
+                        <button type="button" onclick="this.closest('.path-mapping-row').remove()" style="margin-left: auto; background: none; border: none; color: var(--error); cursor: pointer;">
+                            <i data-lucide="trash-2" style="width: 16px; height: 16px;"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.insertAdjacentHTML('beforeend', html);
+        mappingCount++;
+        lucide.createIcons();
+    }
+
+    function updatePathMappings() {
+        // This could auto-populate path mappings based on selected libraries
+        // For simplicity, we'll leave it to manual configuration
+    }
+</script>
+{% endblock %}

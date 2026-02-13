@@ -1377,7 +1377,7 @@ Example log format:
             { id: 'retention', name: 'Retention', patterns: [/Watchlist retention expired/i, /retention.*days/i, /Cache retention/i, /expired.*items/i] },
             { id: 'rss', name: 'RSS Feed', patterns: [/RSS title/i, /RSS feed contains/i, /Fetching RSS/i, /RSS.*items/i] },
             { id: 'cache', name: 'Cache Ops', patterns: [/File already on cache/i, /non-cacheable/i, /Moving.*to cache/i, /Moving.*to array/i, /evict/i] },
-            { id: 'summary', name: 'Summary', patterns: [/SUMMARY/i, /Completed in/i, /Finished moving/i, /Run complete/i] },
+            { id: 'summary', name: 'Summary', patterns: [/SUMMARY/i, /Completed in/i, /Finished moving/i, /Run complete/i, /--- Results ---/i, /Already cached:/i, /Moved to cache:/i, /Moved to array:/i] },
             { id: 'errors', name: 'Errors', patterns: [/ERROR|CRITICAL/i] }
         ];
 
@@ -1561,6 +1561,11 @@ Example log format:
             { pattern: /OnDeck: 0 items/i, key: "OnDeck Items", value: "0" },
             { pattern: /Total media to cache: (\d+) files?/i, key: "Files to Cache", extract: (m) => m[1] },
             { pattern: /Watchlist.*?(\d+) items/i, key: "Watchlist Items", extract: (m) => m[1] },
+            // Results summary format (new): "Moved to cache: X files"
+            { pattern: /Moved to cache: (\d+) files?/i, key: "Moved to Cache", extract: (m) => m[1] },
+            { pattern: /Moved to array: (\d+) files?/i, key: "Moved to Array", extract: (m) => m[1] },
+            { pattern: /Already cached: (\d+) files?/i, key: "Already Cached", extract: (m) => m[1] },
+            // Legacy format: "Moved X files to cache"
             { pattern: /Moved (\d+).*?to cache/i, key: "Moved to Cache", extract: (m) => m[1] },
             { pattern: /Moved (\d+).*?to array/i, key: "Moved to Array", extract: (m) => m[1] },
             { pattern: /Skipped (\d+) files from disabled libraries/i, key: "Skipped (Disabled)", extract: (m) => m[1] },
@@ -2407,7 +2412,7 @@ Example log format:
             }
 
             // Check if log ends abruptly (no summary or completion)
-            const hasEnding = parsed.lines.some(l => /SUMMARY|Finished moving|complete/i.test(l.message));
+            const hasEnding = parsed.lines.some(l => /SUMMARY|Finished moving|complete|--- Results ---/i.test(l.message));
             if (!hasEnding && parsed.lines.length > 10) {
                 hints.push({
                     title: "Log may be incomplete",
@@ -2437,6 +2442,7 @@ Example log format:
             { pattern: /Path does not exist/i, event: "Path Validation Failed", type: "error" },
             { pattern: /Restore complete/i, event: "Restore Complete", type: "success" },
             { pattern: /Finished moving files/i, event: "File Operations Complete", type: "success" },
+            { pattern: /--- Results ---/i, event: "Results Summary", type: "success" },
             { pattern: /SUMMARY/i, event: "Run Summary", type: "success" },
         ];
 

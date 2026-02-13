@@ -1,0 +1,33 @@
+<!-- Alert message partial for HTMX responses -->
+{% set auto_dismiss = type in ['success', 'info'] %}
+{% if type == 'success' %}
+<div class="alert alert-success{% if auto_dismiss %} alert-auto-dismiss{% endif %}" role="alert">
+    <i data-lucide="check-circle"></i>
+    {{ message }}
+</div>
+{% elif type == 'error' %}
+<div class="alert alert-error" role="alert">
+    <i data-lucide="alert-circle"></i>
+    {{ message }}
+</div>
+{% elif type == 'warning' %}
+<div class="alert alert-warning" role="alert">
+    <i data-lucide="alert-triangle"></i>
+    {{ message }}
+</div>
+{% else %}
+<div class="alert alert-info{% if auto_dismiss %} alert-auto-dismiss{% endif %}" role="alert">
+    <i data-lucide="info"></i>
+    {{ message }}
+</div>
+{% endif %}
+<script>
+lucide.createIcons();
+// Auto-dismiss success/info alerts after 4 seconds
+document.querySelectorAll('.alert-auto-dismiss').forEach(function(alert) {
+    setTimeout(function() {
+        alert.classList.add('alert-fade-out');
+        setTimeout(function() { alert.remove(); }, 300);
+    }, 4000);
+});
+</script>

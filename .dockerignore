@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+env/
+venv/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+logs/
+data/
+*.log
+plexcache_settings.json
+plexcache_cached_files.txt
+unraid_mover_exclusions.txt
+plexcache.lock
+
+# Documentation (not needed in container)
+*.md
+!requirements*.txt
+docs/
+
+# Development
+tests/
+*.test.py
+.editorconfig
+
+# Local files
+FUTURE_ENHANCEMENTS.md
+COMPLETED_ENHANCEMENTS.md
+DOCKER_IMPLEMENTATION_PLAN.md

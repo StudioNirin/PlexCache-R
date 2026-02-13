@@ -1,0 +1,514 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<!-- Export Settings Card -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="download"></i>
+        <h2>Export Settings</h2>
+    </div>
+    <div class="card-body">
+        <p class="form-hint" style="margin-bottom: 1rem;">
+            Download your current settings as a JSON file for backup or migration to another installation.
+        </p>
+
+        <div class="form-group">
+            <label class="switch">
+                <input type="checkbox" id="include_sensitive" checked>
+                <span>Include sensitive data</span>
+            </label>
+            <div class="form-hint">
+                <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--plex-orange); vertical-align: middle;"></i>
+                Only include sensitive data if you're backing up for yourself. Uncheck to share settings safely.
+                When unchecked, redacts: tokens, Plex URL, RSS URL, webhook URL, client ID, usernames, and user IDs.
+            </div>
+        </div>
+
+        <div class="form-group mb-0">
+            <button type="button" class="btn btn-primary" onclick="downloadBackup()">
+                <i data-lucide="download"></i>
+                Download Backup
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Import Settings Card -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="upload"></i>
+        <h2>Import Settings</h2>
+    </div>
+    <div class="card-body">
+        <p class="form-hint" style="margin-bottom: 1rem;">
+            Upload a previously exported settings file to restore or migrate your configuration.
+        </p>
+
+        <form id="import-form" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="settings_file">Settings File</label>
+                <input type="file" id="settings_file" name="settings_file" accept=".json,application/json"
+                       onchange="updateFileLabel(this)">
+                <div class="form-hint">Select a PlexCache backup JSON file</div>
+            </div>
+
+            <div class="form-group">
+                <label>Import Mode</label>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+                    <label class="radio-label">
+                        <input type="radio" name="import_mode" value="replace" checked>
+                        <span><strong>Replace</strong> - Completely replace current settings</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="import_mode" value="merge">
+                        <span><strong>Merge</strong> - Keep existing values, add/update from import</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Validation Results Container -->
+            <div id="validation-container" style="display: none;"></div>
+
+            <div class="form-group mb-0" style="display: flex; gap: 0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="validateSettings()">
+                    <i data-lucide="check-circle"></i>
+                    Validate
+                </button>
+                <button type="button" class="btn btn-primary" onclick="importSettings()" id="import-btn">
+                    <i data-lucide="upload"></i>
+                    Import
+                </button>
+            </div>
+        </form>
+
+        <!-- Import Result Alert -->
+        <div id="import-alert-container" style="margin-top: 1rem;"></div>
+    </div>
+</div>
+
+<!-- CLI Migration Card (Collapsible) -->
+<div class="card">
+    <div class="card-header" style="cursor: pointer;" onclick="toggleCliMigration()">
+        <i data-lucide="package"></i>
+        <h2>CLI Migration</h2>
+        <i data-lucide="chevron-down" id="cli-migration-chevron" style="margin-left: auto; transition: transform 0.2s;"></i>
+    </div>
+    <div id="cli-migration-body" class="card-body" style="display: none;">
+        <p class="form-hint" style="margin-bottom: 1rem;">
+            Import configuration and tracking data from a CLI installation of PlexCache-R by placing files in the import directory.
+        </p>
+
+        <!-- Import folder location -->
+        <div class="alert" style="margin-bottom: 1.5rem; background: rgba(255, 255, 255, 0.05);">
+            <i data-lucide="folder" style="color: var(--plex-text-muted);"></i>
+            <div>
+                <strong>Import Location</strong>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.9rem; color: var(--plex-text-muted);">
+                    Place your CLI files in <code>/config/import/</code>
+                </p>
+            </div>
+        </div>
+
+        <!-- Import status section -->
+        <div id="cli-import-status">
+            <!-- Checking for files -->
+            <div id="cli-import-checking" style="text-align: center; padding: 2rem; display: none;">
+                <div class="spinner" style="margin: 0 auto 1rem;"></div>
+                <p class="text-muted">Checking for import files...</p>
+            </div>
+
+            <!-- No files found -->
+            <div id="cli-import-not-found">
+                <div style="background: var(--plex-surface); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                    <i data-lucide="inbox" style="width: 48px; height: 48px; color: var(--plex-text-muted); margin-bottom: 1rem; display: block; margin: 0 auto 1rem;"></i>
+                    <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1rem;">No Import Files Detected</h3>
+                    <p style="margin: 0; color: var(--plex-text-muted); font-size: 0.9rem;">
+                        To import data from CLI version, place these files in <code>/config/import/</code>:
+                    </p>
+                    <ul style="text-align: left; max-width: 400px; margin: 1rem auto 0; padding-left: 1.5rem; color: var(--plex-text-muted); font-size: 0.9rem;">
+                        <li><code>plexcache_settings.json</code> - Configuration file</li>
+                        <li><code>data/</code> folder containing:
+                            <ul style="padding-left: 1rem; margin-top: 0.25rem;">
+                                <li><code>timestamps.json</code></li>
+                                <li><code>ondeck_tracker.json</code></li>
+                                <li><code>watchlist_tracker.json</code></li>
+                                <li><code>user_tokens.json</code></li>
+                            </ul>
+                        </li>
+                    </ul>
+                    <button type="button" class="btn btn-secondary" style="margin-top: 1rem;" onclick="checkForCliImportFiles()">
+                        <i data-lucide="refresh-cw"></i>
+                        Check Again
+                    </button>
+                </div>
+            </div>
+
+            <!-- Files found -->
+            <div id="cli-import-found" style="display: none;">
+                <div class="alert alert-success" style="margin-bottom: 1rem;">
+                    <i data-lucide="check-circle"></i>
+                    <span>Import files detected!</span>
+                </div>
+
+                <!-- Summary -->
+                <div style="background: var(--plex-surface); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                    <h4 style="margin: 0 0 0.75rem 0; font-size: 0.95rem; color: var(--plex-text-muted);">Files Found</h4>
+                    <div id="cli-import-summary" style="display: grid; gap: 0.5rem; font-size: 0.9rem;">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+
+                <!-- Path conversion settings -->
+                <div style="background: var(--plex-surface); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                    <h4 style="margin: 0 0 0.75rem 0; font-size: 0.95rem; color: var(--plex-text-muted);">Path Conversion</h4>
+                    <p style="margin: 0 0 1rem 0; font-size: 0.85rem; color: var(--plex-text-muted);">
+                        Cache paths in your CLI data will be converted to Docker container paths.
+                    </p>
+
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label for="cli_cache_prefix">CLI Cache Path Prefix</label>
+                        <input type="text" id="cli_cache_prefix" name="cli_cache_prefix"
+                               value="/mnt/cache_downloads/"
+                               placeholder="/mnt/cache_downloads/">
+                        <p class="form-hint">The cache path used in your CLI installation</p>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="docker_cache_prefix">Docker Cache Path</label>
+                        <input type="text" id="docker_cache_prefix" name="docker_cache_prefix"
+                               value="/mnt/cache/"
+                               placeholder="/mnt/cache/">
+                        <p class="form-hint">The cache path in your Docker container (usually /mnt/cache/)</p>
+                    </div>
+                </div>
+
+                <!-- Warning -->
+                <div class="alert alert-warning" style="margin-bottom: 1.5rem;">
+                    <i data-lucide="alert-triangle"></i>
+                    <div>
+                        <strong>Warning</strong>
+                        <p style="margin: 0.25rem 0 0 0; font-size: 0.9rem;">
+                            Importing will overwrite your current configuration and data files.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div style="display: flex; gap: 0.75rem;">
+                    <button type="button" id="cli-import-btn" class="btn btn-primary" style="flex: 1;" onclick="executeCliImport()">
+                        <i data-lucide="download" class="btn-icon"></i>
+                        <span class="btn-text">Import Data</span>
+                        <div class="spinner btn-spinner" style="display: none; width: 14px; height: 14px;"></div>
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="checkForCliImportFiles()">
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh
+                    </button>
+                </div>
+
+                <!-- Result alerts -->
+                <div id="cli-import-error" class="alert alert-error" style="display: none; margin-top: 1rem;">
+                    <i data-lucide="alert-circle"></i>
+                    <span id="cli-import-error-message"></span>
+                </div>
+                <div id="cli-import-success" class="alert alert-success" style="display: none; margin-top: 1rem;">
+                    <i data-lucide="check-circle"></i>
+                    <span id="cli-import-success-message"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Previously Imported -->
+{% if has_completed_import %}
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="history"></i>
+        <h2>Previous Imports</h2>
+    </div>
+    <div class="card-body">
+        <p class="text-muted" style="font-size: 0.9rem;">
+            Previously imported files are stored in <code>/config/import/completed/</code>
+        </p>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.radio-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+.radio-label:hover {
+    background: var(--plex-bg-hover);
+}
+.radio-label input[type="radio"] {
+    margin-top: 0.25rem;
+}
+.radio-label span {
+    color: var(--plex-text);
+}
+.radio-label strong {
+    color: var(--plex-text-bright);
+}
+</style>
+
+<script>
+// ============================================================================
+// Export Functions
+// ============================================================================
+
+function downloadBackup() {
+    const includeSensitive = document.getElementById('include_sensitive').checked;
+    window.location.href = `/settings/import-export/export?include_sensitive=${includeSensitive}`;
+}
+
+// ============================================================================
+// File Upload Import Functions
+// ============================================================================
+
+function updateFileLabel(input) {
+    // Reset validation when file changes
+    document.getElementById('validation-container').style.display = 'none';
+    document.getElementById('validation-container').innerHTML = '';
+}
+
+async function validateSettings() {
+    const fileInput = document.getElementById('settings_file');
+    if (!fileInput.files.length) {
+        showAlert('import-alert-container', 'error', 'Please select a file first');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('settings_file', fileInput.files[0]);
+
+    try {
+        const response = await fetch('/settings/import-export/validate', {
+            method: 'POST',
+            body: formData
+        });
+
+        const html = await response.text();
+        const container = document.getElementById('validation-container');
+        container.innerHTML = html;
+        container.style.display = 'block';
+
+        if (window.lucide) {
+            lucide.createIcons();
+        }
+    } catch (error) {
+        showAlert('import-alert-container', 'error', 'Validation request failed: ' + error.message);
+    }
+}
+
+async function importSettings() {
+    const fileInput = document.getElementById('settings_file');
+    if (!fileInput.files.length) {
+        showAlert('import-alert-container', 'error', 'Please select a file first');
+        return;
+    }
+
+    const importMode = document.querySelector('input[name="import_mode"]:checked').value;
+
+    const formData = new FormData();
+    formData.append('settings_file', fileInput.files[0]);
+    formData.append('import_mode', importMode);
+
+    // Show loading state
+    const importBtn = document.getElementById('import-btn');
+    const originalHtml = importBtn.innerHTML;
+    importBtn.innerHTML = '<span class="spinner" style="width: 14px; height: 14px;"></span> Importing...';
+    importBtn.disabled = true;
+
+    try {
+        const response = await fetch('/settings/import-export/import', {
+            method: 'POST',
+            body: formData
+        });
+
+        const html = await response.text();
+        document.getElementById('import-alert-container').innerHTML = html;
+
+        if (window.lucide) {
+            lucide.createIcons();
+        }
+
+        // If success, prompt to reload
+        if (html.includes('alert-success')) {
+            setTimeout(() => {
+                if (confirm('Settings imported successfully. Reload page to see changes?')) {
+                    window.location.reload();
+                }
+            }, 500);
+        }
+    } catch (error) {
+        showAlert('import-alert-container', 'error', 'Import request failed: ' + error.message);
+    } finally {
+        importBtn.innerHTML = originalHtml;
+        importBtn.disabled = false;
+        if (window.lucide) {
+            lucide.createIcons();
+        }
+    }
+}
+
+function showAlert(containerId, type, message) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = `
+        <div class="alert alert-${type}">
+            <i data-lucide="${type === 'success' ? 'check-circle' : 'alert-circle'}"></i>
+            ${message}
+        </div>
+    `;
+    if (window.lucide) {
+        lucide.createIcons();
+    }
+}
+
+// ============================================================================
+// CLI Migration Functions
+// ============================================================================
+
+function toggleCliMigration() {
+    const body = document.getElementById('cli-migration-body');
+    const chevron = document.getElementById('cli-migration-chevron');
+
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        chevron.style.transform = 'rotate(180deg)';
+        // Check for files when opening
+        checkForCliImportFiles();
+    } else {
+        body.style.display = 'none';
+        chevron.style.transform = 'rotate(0deg)';
+    }
+}
+
+function checkForCliImportFiles() {
+    const importChecking = document.getElementById('cli-import-checking');
+    const importFound = document.getElementById('cli-import-found');
+    const importNotFound = document.getElementById('cli-import-not-found');
+    const importError = document.getElementById('cli-import-error');
+    const importSuccess = document.getElementById('cli-import-success');
+
+    // Reset state
+    importChecking.style.display = 'block';
+    importFound.style.display = 'none';
+    importNotFound.style.display = 'none';
+    if (importError) importError.style.display = 'none';
+    if (importSuccess) importSuccess.style.display = 'none';
+
+    fetch('/setup/import/detect')
+        .then(response => response.json())
+        .then(data => {
+            importChecking.style.display = 'none';
+
+            if (data.has_import_files) {
+                importFound.style.display = 'block';
+
+                // Build summary
+                let summary = '';
+                if (data.has_settings) {
+                    summary += '<div><i data-lucide="check" style="width: 16px; height: 16px; color: var(--success); vertical-align: middle; margin-right: 0.5rem;"></i>Settings file found</div>';
+                }
+                if (data.timestamps_count > 0) {
+                    summary += `<div><i data-lucide="check" style="width: 16px; height: 16px; color: var(--success); vertical-align: middle; margin-right: 0.5rem;"></i>${data.timestamps_count} cached file timestamps</div>`;
+                }
+                if (data.ondeck_count > 0) {
+                    summary += `<div><i data-lucide="check" style="width: 16px; height: 16px; color: var(--success); vertical-align: middle; margin-right: 0.5rem;"></i>${data.ondeck_count} OnDeck items</div>`;
+                }
+                if (data.watchlist_count > 0) {
+                    summary += `<div><i data-lucide="check" style="width: 16px; height: 16px; color: var(--success); vertical-align: middle; margin-right: 0.5rem;"></i>${data.watchlist_count} Watchlist items</div>`;
+                }
+                if (!data.has_settings && data.timestamps_count === 0 && data.ondeck_count === 0 && data.watchlist_count === 0) {
+                    summary = '<div class="text-muted">Import folder exists but no recognizable files found</div>';
+                }
+
+                document.getElementById('cli-import-summary').innerHTML = summary;
+                lucide.createIcons();
+
+                // Set detected cache prefix if available
+                if (data.detected_cache_prefix) {
+                    document.getElementById('cli_cache_prefix').value = data.detected_cache_prefix;
+                }
+            } else {
+                importNotFound.style.display = 'block';
+            }
+
+            lucide.createIcons();
+        })
+        .catch(err => {
+            console.error('Import detection error:', err);
+            importChecking.style.display = 'none';
+            importNotFound.style.display = 'block';
+            lucide.createIcons();
+        });
+}
+
+function executeCliImport() {
+    const importBtn = document.getElementById('cli-import-btn');
+    const btnText = importBtn.querySelector('.btn-text');
+    const btnIcon = importBtn.querySelector('.btn-icon');
+    const btnSpinner = importBtn.querySelector('.btn-spinner');
+    const errorDiv = document.getElementById('cli-import-error');
+    const errorMsg = document.getElementById('cli-import-error-message');
+    const successDiv = document.getElementById('cli-import-success');
+    const successMsg = document.getElementById('cli-import-success-message');
+
+    // Show loading state
+    btnText.textContent = 'Importing...';
+    btnIcon.style.display = 'none';
+    btnSpinner.style.display = 'block';
+    importBtn.disabled = true;
+    errorDiv.style.display = 'none';
+    successDiv.style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('cli_cache_prefix', document.getElementById('cli_cache_prefix').value);
+    formData.append('docker_cache_prefix', document.getElementById('docker_cache_prefix').value);
+
+    fetch('/setup/import/execute', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        btnText.textContent = 'Import Data';
+        btnIcon.style.display = 'inline';
+        btnSpinner.style.display = 'none';
+        importBtn.disabled = false;
+
+        if (data.success) {
+            successMsg.textContent = data.message + '. Refreshing page...';
+            successDiv.style.display = 'flex';
+            lucide.createIcons();
+
+            // Refresh after a moment to show updated state
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            errorMsg.textContent = data.message || 'Import failed';
+            errorDiv.style.display = 'flex';
+            lucide.createIcons();
+        }
+    })
+    .catch(err => {
+        btnText.textContent = 'Import Data';
+        btnIcon.style.display = 'inline';
+        btnSpinner.style.display = 'none';
+        importBtn.disabled = false;
+        errorMsg.textContent = 'Network error: ' + err.message;
+        errorDiv.style.display = 'flex';
+        lucide.createIcons();
+    });
+}
+</script>
+{% endblock %}

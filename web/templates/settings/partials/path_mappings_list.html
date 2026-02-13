@@ -1,0 +1,11 @@
+{% if mappings %}
+    {% for mapping in mappings %}
+    {% set index = loop.index0 %}
+    {% include "settings/partials/path_mapping_card.html" %}
+    {% endfor %}
+{% else %}
+    <div class="alert alert-info" id="no-mappings-alert">
+        <i data-lucide="info"></i>
+        No path mappings configured. Run setup wizard or add mappings below.
+    </div>
+{% endif %}

@@ -1,0 +1,319 @@
+{% extends "setup/base_setup.html" %}
+
+{% block content %}
+<form id="plex-form" action="/setup/step2" method="post">
+    <div class="setup-content">
+        <h2>Connect to Plex</h2>
+        <p class="description">
+            Enter your Plex server details or sign in with your Plex account.
+        </p>
+
+        {% if error %}
+        <div class="alert alert-error">
+            <i data-lucide="alert-circle"></i>
+            <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <div id="connection-status"></div>
+
+        <!-- OAuth Button -->
+        <button type="button" id="oauth-btn" class="oauth-btn" onclick="startOAuth()">
+            <i data-lucide="log-in"></i>
+            Sign in with Plex
+        </button>
+
+        <div class="divider">or enter manually</div>
+
+        <div class="form-group">
+            <label for="plex_url">Plex Server URL</label>
+            <input type="url" id="plex_url" name="plex_url"
+                   value="{{ plex_url }}"
+                   placeholder="http://192.168.1.x:32400"
+                   required>
+            <p class="help-text">The URL of your Plex server (include port)</p>
+        </div>
+
+        <div class="form-group">
+            <label for="plex_token">Plex Token</label>
+            <input type="password" id="plex_token" name="plex_token"
+                   value="{{ plex_token }}"
+                   placeholder="Your Plex authentication token">
+            <p class="help-text">
+                <a href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/" target="_blank" style="color: var(--accent-primary);">
+                    How to find your Plex token
+                </a>
+            </p>
+        </div>
+
+        <button type="button" class="btn btn-secondary" style="width: 100%;" onclick="testConnection()">
+            <i data-lucide="wifi"></i>
+            Test Connection
+        </button>
+    </div>
+
+    <div class="setup-footer">
+        <a href="/setup?step=1" class="btn btn-secondary">
+            <i data-lucide="arrow-left"></i>
+            Back
+        </a>
+        <button type="submit" class="btn btn-primary" id="next-btn">
+            <span class="btn-text">Next</span>
+            <i data-lucide="arrow-right" class="btn-icon"></i>
+            <div class="spinner btn-spinner" style="display: none;"></div>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let oauthPollInterval = null;
+
+    // Show loading spinner on Next button when form is submitted
+    document.getElementById('plex-form').addEventListener('submit', function(e) {
+        const nextBtn = document.getElementById('next-btn');
+        const btnText = nextBtn.querySelector('.btn-text');
+        const btnIcon = nextBtn.querySelector('.btn-icon');
+        const btnSpinner = nextBtn.querySelector('.btn-spinner');
+
+        // Show spinner, hide text and icon
+        btnText.textContent = 'Connecting...';
+        btnIcon.style.display = 'none';
+        btnSpinner.style.display = 'block';
+        nextBtn.disabled = true;
+    });
+
+    async function startOAuth() {
+        const btn = document.getElementById('oauth-btn');
+        const statusDiv = document.getElementById('connection-status');
+
+        btn.disabled = true;
+        btn.innerHTML = '<div class="spinner"></div> Starting authentication...';
+
+        try {
+            const response = await fetch('/setup/oauth/start', {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                // Open Plex auth in new window
+                window.open(data.auth_url, '_blank', 'width=600,height=700');
+
+                btn.innerHTML = '<div class="spinner"></div> Waiting for authentication...';
+                statusDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <i data-lucide="external-link"></i>
+                        <span>A new window has opened. Please sign in to Plex and authorize PlexCache-R.</span>
+                    </div>
+                `;
+                lucide.createIcons();
+
+                // Start polling for token
+                oauthPollInterval = setInterval(() => pollOAuth(data.client_id), 2000);
+
+                // Timeout after 5 minutes
+                setTimeout(() => {
+                    if (oauthPollInterval) {
+                        clearInterval(oauthPollInterval);
+                        btn.disabled = false;
+                        btn.innerHTML = '<i data-lucide="log-in"></i> Sign in with Plex';
+                        lucide.createIcons();
+                        statusDiv.innerHTML = `
+                            <div class="alert alert-error">
+                                <i data-lucide="alert-circle"></i>
+                                <span>Authentication timed out. Please try again.</span>
+                            </div>
+                        `;
+                        lucide.createIcons();
+                    }
+                }, 300000);
+            } else {
+                throw new Error(data.error || 'Failed to start authentication');
+            }
+        } catch (error) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="log-in"></i> Sign in with Plex';
+            lucide.createIcons();
+            statusDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i data-lucide="alert-circle"></i>
+                    <span>${error.message}</span>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+    }
+
+    async function pollOAuth(clientId) {
+        try {
+            const response = await fetch(`/setup/oauth/poll?client_id=${clientId}`);
+            const data = await response.json();
+
+            if (data.success && data.complete) {
+                clearInterval(oauthPollInterval);
+                oauthPollInterval = null;
+
+                // Fill in the token
+                const token = data.token;
+                document.getElementById('plex_token').value = token;
+
+                const btn = document.getElementById('oauth-btn');
+                const statusDiv = document.getElementById('connection-status');
+
+                btn.innerHTML = '<i data-lucide="check-circle"></i> Authenticated!';
+                lucide.createIcons();
+
+                // Discover servers associated with this account
+                statusDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <div class="spinner"></div>
+                        <span>Discovering your Plex servers...</span>
+                    </div>
+                `;
+
+                await discoverServers(token);
+            }
+        } catch (error) {
+            console.error('Poll error:', error);
+        }
+    }
+
+    async function discoverServers(token) {
+        const statusDiv = document.getElementById('connection-status');
+        const urlInput = document.getElementById('plex_url');
+
+        try {
+            const formData = new FormData();
+            formData.append('plex_token', token);
+
+            const response = await fetch('/setup/discover-servers', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+
+            if (data.success && data.servers && data.servers.length > 0) {
+                // Find the owned server (primary) or use first server
+                const ownedServer = data.servers.find(s => s.owned) || data.servers[0];
+
+                // Update URL field with discovered server
+                urlInput.value = ownedServer.url;
+
+                statusDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <i data-lucide="check-circle"></i>
+                        <span>Found server "${ownedServer.name}" - testing connection...</span>
+                    </div>
+                `;
+                lucide.createIcons();
+
+                // Now test the connection
+                testConnection();
+            } else {
+                // No servers found - user needs to enter URL manually
+                statusDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <i data-lucide="check-circle"></i>
+                        <span>Authenticated! Please enter your Plex server URL below.</span>
+                    </div>
+                `;
+                lucide.createIcons();
+            }
+        } catch (error) {
+            console.error('Server discovery error:', error);
+            statusDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i data-lucide="check-circle"></i>
+                    <span>Authenticated! Please enter your Plex server URL below.</span>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+    }
+
+    async function testConnection() {
+        const statusDiv = document.getElementById('connection-status');
+        const plex_url = document.getElementById('plex_url').value;
+        const plex_token = document.getElementById('plex_token').value;
+
+        if (!plex_url || !plex_token) {
+            statusDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i data-lucide="alert-circle"></i>
+                    <span>Please enter both URL and token</span>
+                </div>
+            `;
+            lucide.createIcons();
+            return;
+        }
+
+        statusDiv.innerHTML = `
+            <div class="alert alert-info">
+                <div class="spinner"></div>
+                <span>Testing connection...</span>
+            </div>
+        `;
+
+        try {
+            const formData = new FormData();
+            formData.append('plex_url', plex_url);
+            formData.append('plex_token', plex_token);
+
+            const response = await fetch('/setup/test-connection', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                statusDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <i data-lucide="check-circle"></i>
+                        <span>Connected to "${data.server_name}" (v${data.version})</span>
+                    </div>
+                `;
+
+                // Prefetch users in background for faster step 4 loading
+                prefetchUsers(plex_url, plex_token);
+            } else {
+                statusDiv.innerHTML = `
+                    <div class="alert alert-error">
+                        <i data-lucide="alert-circle"></i>
+                        <span>Connection failed: ${data.error}</span>
+                    </div>
+                `;
+            }
+            lucide.createIcons();
+        } catch (error) {
+            statusDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i data-lucide="alert-circle"></i>
+                    <span>Connection failed: ${error.message}</span>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+    }
+
+    // Background prefetch of users for faster step 4
+    function prefetchUsers(plex_url, plex_token) {
+        const formData = new FormData();
+        formData.append('plex_url', plex_url);
+        formData.append('plex_token', plex_token);
+
+        // Fire and forget - don't await
+        fetch('/setup/prefetch-users', {
+            method: 'POST',
+            body: formData
+        }).then(response => response.json())
+          .then(data => {
+              if (data.success) {
+                  console.log(`Prefetched ${data.count} users for step 4`);
+              }
+          })
+          .catch(err => console.log('User prefetch skipped:', err));
+    }
+</script>
+{% endblock %}

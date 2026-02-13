@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="hard-drive"></i>
+        </div>
+        <div>
+            <h1>Storage</h1>
+            <p>Storage overview and cache analysis</p>
+        </div>
+    </div>
+    <div class="action-buttons">
+        <a href="/cache" class="btn btn-secondary">
+            <i data-lucide="database"></i>
+            View All Files
+        </a>
+    </div>
+</header>
+
+<!-- Dynamic content with auto-refresh -->
+<div id="storage-content"
+     hx-get="/api/cache/storage?expiring_within={{ data.expiring_within_days }}"
+     hx-trigger="load, every 30s"
+     hx-swap="innerHTML">
+{% include "cache/partials/storage_stats.html" %}
+</div><!-- End storage-content -->
+
+<!-- Configuration Reference -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="settings"></i>
+        <h2>Cache Configuration</h2>
+    </div>
+    <div class="card-body">
+        <div class="config-grid">
+            <div class="config-item">
+                <div class="config-label">Cache Directory</div>
+                <div class="config-value">{{ data.config.cache_dir or 'Not configured' }}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Cache Limit</div>
+                <div class="config-value">{% if data.config.cache_limit and data.config.cache_limit not in ['', 'N/A', 'none', 'None', '0'] %}{{ data.config.cache_limit }}{% else %}<span class="infinity-symbol">&infin;</span> Unlimited{% endif %}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Cache Retention</div>
+                <div class="config-value">{{ data.config.cache_retention_hours }} hours</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Watchlist Retention</div>
+                <div class="config-value">{{ data.config.watchlist_retention_days }} days</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Episodes to Prefetch</div>
+                <div class="config-value">{{ data.config.number_episodes }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

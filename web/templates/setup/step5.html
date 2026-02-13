@@ -1,0 +1,150 @@
+{% extends "setup/base_setup.html" %}
+
+{% block content %}
+<form action="/setup/step5" method="post">
+    <div class="setup-content">
+        <h2>Caching Behavior</h2>
+        <p class="description">
+            Configure how PlexCache-R handles your media.
+        </p>
+
+        <div style="display: grid; gap: 1.5rem;">
+            <!-- OnDeck Settings -->
+            <div style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px;">
+                <h3 style="margin: 0 0 1rem 0; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i data-lucide="play-circle" style="width: 18px; height: 18px; color: var(--accent-primary);"></i>
+                    OnDeck Settings
+                </h3>
+
+                <div class="form-group" style="margin-bottom: 0.75rem;">
+                    <label for="number_episodes">Episodes per Show</label>
+                    <div class="input-with-suffix">
+                        <input type="number" id="number_episodes" name="number_episodes"
+                               value="{{ number_episodes or 6 }}"
+                               min="1" max="99"
+                               placeholder="6">
+                        <span class="input-suffix">episodes</span>
+                    </div>
+                    <p class="help-text">How many episodes to cache per TV show on OnDeck (recommended: 6)</p>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="days_to_monitor">Days to Monitor</label>
+                    <div class="input-with-suffix">
+                        <input type="number" id="days_to_monitor" name="days_to_monitor"
+                               value="{{ days_to_monitor or 183 }}"
+                               min="7" max="365"
+                               placeholder="183">
+                        <span class="input-suffix">days</span>
+                    </div>
+                    <p class="help-text">How far back to look for OnDeck items (recommended: 183 = 6 months)</p>
+                </div>
+            </div>
+
+            <!-- Watchlist Settings -->
+            <div style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px;">
+                <h3 style="margin: 0 0 1rem 0; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i data-lucide="bookmark" style="width: 18px; height: 18px; color: var(--accent-primary);"></i>
+                    Watchlist Settings
+                </h3>
+
+                <div class="form-group" style="margin-bottom: 0.75rem;">
+                    <label class="checkbox-item" style="background: none; padding: 0;">
+                        <input type="checkbox" name="watchlist_toggle" id="watchlist_toggle"
+                               {% if watchlist_toggle %}checked{% endif %}>
+                        <div class="checkbox-label">
+                            <strong>Cache Watchlist Items</strong>
+                            <span>Pre-cache media from your Plex watchlist</span>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0.75rem;">
+                    <label for="watchlist_episodes">Watchlist Episodes per Show</label>
+                    <div class="input-with-suffix">
+                        <input type="number" id="watchlist_episodes" name="watchlist_episodes"
+                               value="{{ watchlist_episodes or 3 }}"
+                               min="1" max="99"
+                               placeholder="3">
+                        <span class="input-suffix">episodes</span>
+                    </div>
+                    <p class="help-text">How many episodes to cache for watchlist TV shows (recommended: 3)</p>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="watchlist_retention_days">Watchlist Retention</label>
+                    <div class="input-with-suffix">
+                        <input type="number" id="watchlist_retention_days" name="watchlist_retention_days"
+                               value="{{ watchlist_retention_days or 14 }}"
+                               min="0" max="365"
+                               placeholder="14">
+                        <span class="input-suffix">days</span>
+                    </div>
+                    <p class="help-text">Auto-expire watchlist items after this many days (0 = never expire)</p>
+                </div>
+            </div>
+
+            <!-- Retention Settings -->
+            <div style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px;">
+                <h3 style="margin: 0 0 1rem 0; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i data-lucide="clock" style="width: 18px; height: 18px; color: var(--accent-primary);"></i>
+                    Retention & Move-back
+                </h3>
+
+                <div class="form-group" style="margin-bottom: 0.75rem;">
+                    <label class="checkbox-item" style="background: none; padding: 0;">
+                        <input type="checkbox" name="watched_move" id="watched_move"
+                               {% if watched_move %}checked{% endif %}>
+                        <div class="checkbox-label">
+                            <strong>Move Watched Media Back</strong>
+                            <span>Return watched content from cache to the array</span>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0.75rem;">
+                    <label for="cache_retention_hours">Cache Retention</label>
+                    <div class="input-with-suffix">
+                        <input type="number" id="cache_retention_hours" name="cache_retention_hours"
+                               value="{{ cache_retention_hours or 12 }}"
+                               min="1" max="168"
+                               placeholder="12">
+                        <span class="input-suffix">hours</span>
+                    </div>
+                    <p class="help-text">How long to keep files on cache after they leave OnDeck (recommended: 12)</p>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="cache_limit">Cache Limit</label>
+                    <div class="input-with-suffix">
+                        <input type="text" id="cache_limit" name="cache_limit"
+                               value="{{ cache_limit or '' }}"
+                               placeholder="e.g., 500GB or 80%">
+                        <span class="input-suffix">size</span>
+                    </div>
+                    <p class="help-text">Max cache size (e.g., 500GB, 1TB, 80%). Leave blank for unlimited.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="alert alert-info" style="margin-top: 1rem;">
+            <i data-lucide="settings"></i>
+            <div>
+                <strong>Advanced options</strong> like eviction policies and notifications
+                can be configured in Settings after setup is complete.
+            </div>
+        </div>
+    </div>
+
+    <div class="setup-footer">
+        <a href="/setup?step=4" class="btn btn-secondary">
+            <i data-lucide="arrow-left"></i>
+            Back
+        </a>
+        <button type="submit" class="btn btn-primary">
+            Next
+            <i data-lucide="arrow-right"></i>
+        </button>
+    </div>
+</form>
+{% endblock %}

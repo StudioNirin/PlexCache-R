@@ -1,0 +1,12 @@
+<!-- Modal dialog component -->
+{% macro modal(id, title) %}
+<dialog id="{{ id }}">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('{{ id }}').close()"></button>
+            <strong>{{ title }}</strong>
+        </header>
+        {{ caller() }}
+    </article>
+</dialog>
+{% endmacro %}

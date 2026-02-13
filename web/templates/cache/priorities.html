@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Page Header -->
+<header class="page-header">
+    <div class="page-title">
+        <div class="page-title-icon">
+            <i data-lucide="bar-chart-2"></i>
+        </div>
+        <div>
+            <h1>Priority Report</h1>
+            <p>Cache priority scores and eviction analysis</p>
+        </div>
+    </div>
+    <div class="action-buttons">
+        <a href="/cache" class="btn btn-secondary">
+            <i data-lucide="arrow-left"></i>
+            Back to Cache
+        </a>
+    </div>
+</header>
+
+<!-- Priority Report Content - lazy loaded -->
+<div id="priorities-container"
+     hx-get="/api/cache/priorities-content?sort={{ sort_by|default('priority') }}&dir={{ sort_dir|default('desc') }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    {% include "cache/partials/priorities_skeleton.html" %}
+</div>
+
+<!-- Hidden inputs for sort state -->
+<input type="hidden" id="sort-input" value="{{ sort_by|default('priority') }}">
+<input type="hidden" id="dir-input" value="{{ sort_dir|default('desc') }}">
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Toggle row expansion for priority breakdown
+function toggleBreakdown(rowId) {
+    const breakdownRow = document.getElementById('breakdown-' + rowId);
+    const toggle = document.querySelector(`[data-row="${rowId}"]`);
+    const icon = toggle.querySelector('i');
+
+    if (breakdownRow.style.display === 'none' || !breakdownRow.style.display) {
+        breakdownRow.style.display = 'table-row';
+        toggle.classList.add('expanded');
+        // Update icon
+        icon.setAttribute('data-lucide', 'chevron-down');
+        lucide.createIcons();
+    } else {
+        breakdownRow.style.display = 'none';
+        toggle.classList.remove('expanded');
+        // Update icon
+        icon.setAttribute('data-lucide', 'chevron-right');
+        lucide.createIcons();
+    }
+}
+
+// Table sorting
+function sortTable(column) {
+    const sortInput = document.getElementById('sort-input');
+    const dirInput = document.getElementById('dir-input');
+    const currentSort = sortInput.value;
+    const currentDir = dirInput.value;
+
+    // Toggle direction if same column, otherwise default to desc (except filename which defaults to asc)
+    if (currentSort === column) {
+        dirInput.value = currentDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortInput.value = column;
+        dirInput.value = column === 'filename' ? 'asc' : 'desc';
+    }
+
+    // Reload content via HTMX
+    htmx.ajax('GET', `/api/cache/priorities-content?sort=${sortInput.value}&dir=${dirInput.value}`, {
+        target: '#priorities-container',
+        swap: 'innerHTML'
+    });
+}
+
+// Custom threshold simulation
+function simulateCustomThreshold() {
+    const input = document.getElementById('custom-threshold');
+    const threshold = parseInt(input.value) || 85;
+
+    // Validate range
+    if (threshold < 50 || threshold > 100) {
+        alert('Threshold must be between 50% and 100%');
+        return;
+    }
+
+    htmx.ajax('GET', `/api/cache/simulate-eviction?threshold=${threshold}`, {
+        target: '#simulation-results'
+    });
+}
+
+// Update active simulation button
+document.addEventListener('htmx:beforeRequest', function(e) {
+    if (e.detail.elt.classList.contains('simulation-btn')) {
+        document.querySelectorAll('.simulation-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        e.detail.elt.classList.add('active');
+    }
+});
+
+// Reinitialize icons after HTMX swaps
+document.addEventListener('htmx:afterSwap', function(e) {
+    lucide.createIcons();
+});
+</script>
+{% endblock %}

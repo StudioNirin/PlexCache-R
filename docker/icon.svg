@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="#1f1f1f" stroke="#E5A00D" stroke-width="24"/>
+
+  <!-- Cache/storage drive icon -->
+  <rect x="128" y="176" width="256" height="160" rx="32" fill="none" stroke="#E5A00D" stroke-width="24"/>
+
+  <!-- Drive indicator light -->
+  <circle cx="192" cy="256" r="24" fill="#E5A00D"/>
+
+  <!-- Speed lines (caching indicator) -->
+  <line x1="256" y1="224" x2="352" y2="224" stroke="#E5A00D" stroke-width="24" stroke-linecap="round"/>
+  <line x1="256" y1="288" x2="320" y2="288" stroke="#E5A00D" stroke-width="24" stroke-linecap="round"/>
+</svg>

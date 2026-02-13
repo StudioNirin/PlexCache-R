@@ -1,0 +1,74 @@
+# PlexCache-R Docker Compose
+# Intelligent Plex media caching for Unraid
+#
+# Usage:
+#   docker-compose up -d          # Start container (pulls from GHCR)
+#   docker-compose up -d --build  # Build and start (for development)
+#   docker-compose logs -f        # View logs
+#   docker-compose down           # Stop container
+#
+# Configuration:
+#   1. Copy this file to your preferred location
+#   2. Update environment variables (PLEX_URL, PLEX_TOKEN)
+#   3. Update volume paths to match your system
+#   4. Run: docker-compose up -d
+
+version: "3.8"
+
+services:
+  plexcache:
+    # Use pre-built image from GitHub Container Registry
+    image: ghcr.io/brandon-haney/plexcache-r:latest
+    # Or build locally (uncomment for development):
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
+    container_name: plexcache-r
+    restart: unless-stopped
+
+    environment:
+      # User/Group IDs (match your media files ownership)
+      # Default: 99/100 (nobody/users on Unraid)
+      - PUID=99
+      - PGID=100
+
+      # Timezone
+      - TZ=America/Los_Angeles
+
+      # Logging level (DEBUG, INFO, WARNING, ERROR)
+      - LOG_LEVEL=INFO
+
+      # Note: Plex URL/Token and Schedule settings are configured
+      # via the Web UI and saved to the config file
+
+    volumes:
+      # Config persistence (includes mover exclude file)
+      # This directory stores:
+      #   - plexcache_settings.json (configuration)
+      #   - data/ (tracking files)
+      #   - logs/ (log files)
+      #   - plexcache_cached_files.txt (cached files list)
+      - /mnt/user/appdata/plexcache:/config
+
+      # Media paths (MUST match host paths exactly)
+      # These paths need to match what Plex sees and your actual filesystem
+      - /mnt/cache:/mnt/cache
+      - /mnt/user0:/mnt/user0
+      - /mnt/user:/mnt/user:ro
+
+    ports:
+      # Web UI port (container:host)
+      - 5757:5757
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5757/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Optional: Create a custom network for Plex communication
+# networks:
+#   default:
+#     name: plex-network
+#     external: true

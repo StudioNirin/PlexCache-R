@@ -1,0 +1,26 @@
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="eye"></i>
+        <h2>Preview: {{ action }}</h2>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info">
+            <i data-lucide="info"></i>
+            <span>{{ result.message }}</span>
+        </div>
+
+        {% if items %}
+        <div class="preview-list" style="max-height: 300px; overflow-y: auto; margin-top: 1rem;">
+            <p class="text-muted" style="margin-bottom: 0.5rem;">Files that would be affected:</p>
+            <ul style="margin: 0; padding-left: 1.5rem;">
+                {% for item in items %}
+                <li style="word-break: break-all; margin-bottom: 0.25rem;">{{ item.split('/') | last }}</li>
+                {% endfor %}
+                {% if items|length == 50 %}
+                <li class="text-muted">...list truncated to first 50 items</li>
+                {% endif %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+</div>

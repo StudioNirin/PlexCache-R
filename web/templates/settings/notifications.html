@@ -1,0 +1,151 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="bell"></i>
+        <h2>Notification Settings</h2>
+    </div>
+    <div class="card-body">
+        <form hx-put="/settings/notifications" hx-target="#settings-alert-container" hx-swap="innerHTML">
+
+            <div class="form-group">
+                <label for="notification_type">Notification Type</label>
+                <select id="notification_type" name="notification_type">
+                    <option value="system" {% if settings.notification_type == 'system' %}selected{% endif %}>System (console only)</option>
+                    {% if is_unraid or is_docker %}
+                    <option value="Unraid" {% if settings.notification_type == 'Unraid' %}selected{% endif %}>Unraid</option>
+                    {% endif %}
+                    <option value="Webhook" {% if settings.notification_type == 'Webhook' %}selected{% endif %}>Webhook (Discord/Slack)</option>
+                    {% if is_unraid or is_docker %}
+                    <option value="Both" {% if settings.notification_type == 'Both' %}selected{% endif %}>Both (Unraid + Webhook)</option>
+                    {% endif %}
+                </select>
+            </div>
+
+            {% if is_unraid or is_docker %}
+            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="server" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Unraid Notifications
+            </h3>
+
+            {% if is_docker and not unraid_notify_available %}
+            <div class="alert alert-info" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.3); border-radius: 4px;">
+                <div style="display: flex; align-items: flex-start; gap: 0.5rem;">
+                    <i data-lucide="info" style="width: 18px; height: 18px; color: #3498db; flex-shrink: 0; margin-top: 2px;"></i>
+                    <div style="font-size: 0.9rem; color: #ccc;">
+                        <strong style="color: #3498db;">Unraid notifications require additional Docker mounts.</strong><br>
+                        Add these volume mappings to enable native Unraid notifications:<br>
+                        <code style="font-size: 0.85rem; color: #aaa;">/usr/local/emhttp</code> (read-only) and
+                        <code style="font-size: 0.85rem; color: #aaa;">/tmp/notifications</code> (read-write)<br>
+                        <a href="https://github.com/StudioNirin/PlexCache-R/blob/main/docker/UNRAID_SETUP.md#optional-volume-mappings-unraid-notifications"
+                           target="_blank" style="color: #3498db;">See documentation →</a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="form-group">
+                <label>Unraid Notification Levels</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="unraid_levels" value="summary"
+                               {% if 'summary' in settings.unraid_levels or (settings.unraid_level == 'summary' and not settings.unraid_levels) %}checked{% endif %}>
+                        <span>Summary</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Send summary after each run</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="unraid_levels" value="activity"
+                               {% if 'activity' in settings.unraid_levels %}checked{% endif %}>
+                        <span>Activity</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Send summary only when files are moved</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="unraid_levels" value="error"
+                               {% if 'error' in settings.unraid_levels or settings.unraid_level == 'error' %}checked{% endif %}>
+                        <span>Errors</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur (includes summary)</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="unraid_levels" value="warning"
+                               {% if 'warning' in settings.unraid_levels or settings.unraid_level == 'warning' %}checked{% endif %}>
+                        <span>Warnings</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur (includes summary)</span>
+                    </label>
+                </div>
+            </div>
+            {% endif %}
+
+            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="webhook" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Webhook Notifications
+            </h3>
+
+            <div class="form-group">
+                <label for="webhook_url">Webhook URL</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="url" id="webhook_url" name="webhook_url"
+                           value="{{ settings.webhook_url | default('') }}"
+                           placeholder="https://discord.com/api/webhooks/..."
+                           style="flex: 1;">
+                    <button type="button" class="btn btn-secondary" id="test-webhook-btn"
+                            hx-post="/settings/notifications/test"
+                            hx-include="#webhook_url"
+                            hx-target="#webhook-test-result"
+                            hx-swap="innerHTML"
+                            hx-indicator="#test-webhook-spinner">
+                        <span id="test-webhook-spinner" class="htmx-indicator">
+                            <div class="spinner" style="width: 16px; height: 16px;"></div>
+                        </span>
+                        <i data-lucide="send" class="htmx-hide-on-request" style="width: 16px; height: 16px;"></i>
+                        <span class="htmx-hide-on-request">Test</span>
+                    </button>
+                </div>
+                <div class="form-hint">Discord or Slack webhook URL</div>
+                <div id="webhook-test-result" style="margin-top: 0.5rem;"></div>
+            </div>
+
+            <div class="form-group">
+                <label>Webhook Notification Levels</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="webhook_levels" value="summary"
+                               {% if 'summary' in settings.webhook_levels or (settings.webhook_level == 'summary' and not settings.webhook_levels) %}checked{% endif %}>
+                        <span>Summary</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Send summary after each run</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="webhook_levels" value="activity"
+                               {% if 'activity' in settings.webhook_levels %}checked{% endif %}>
+                        <span>Activity</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Send summary only when files are moved</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="webhook_levels" value="error"
+                               {% if 'error' in settings.webhook_levels or settings.webhook_level == 'error' %}checked{% endif %}>
+                        <span>Errors</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when errors occur (includes summary)</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="webhook_levels" value="warning"
+                               {% if 'warning' in settings.webhook_levels or settings.webhook_level == 'warning' %}checked{% endif %}>
+                        <span>Warnings</span>
+                        <span class="form-hint" style="margin-left: 0.5rem; font-weight: normal;">Notify when warnings occur (includes summary)</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group mb-0">
+                <button type="submit" class="btn btn-primary">
+                    <i data-lucide="save"></i>
+                    Save Notification Settings
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

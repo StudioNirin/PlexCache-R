@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Setup{% endblock %} - PlexCache-R</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Custom Plex Theme -->
+    <link rel="stylesheet" href="/static/css/plex-theme.css">
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+
+    <style>
+        /* Setup wizard specific styles - Plex themed */
+        .setup-container {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background: linear-gradient(135deg, #0d0d0d 0%, #1a1a1a 50%, #141414 100%);
+            position: relative;
+        }
+
+        /* Subtle animated gradient overlay */
+        .setup-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(ellipse at 30% 20%, rgba(229, 160, 13, 0.08) 0%, transparent 50%),
+                        radial-gradient(ellipse at 70% 80%, rgba(229, 160, 13, 0.05) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .setup-card {
+            background: var(--plex-bg-card);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(229, 160, 13, 0.1);
+            max-width: 600px;
+            width: 100%;
+            overflow: hidden;
+            position: relative;
+            z-index: 1;
+            border: 1px solid var(--plex-border);
+        }
+
+        .setup-header {
+            background: linear-gradient(180deg, rgba(229, 160, 13, 0.15) 0%, rgba(229, 160, 13, 0.05) 100%);
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--plex-border);
+            text-align: center;
+            position: relative;
+        }
+
+        .setup-header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, var(--plex-orange) 50%, transparent 100%);
+        }
+
+        .setup-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: var(--plex-text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .setup-header h1 i {
+            color: var(--plex-orange);
+        }
+
+        .setup-progress {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .setup-progress .step-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--plex-border);
+            transition: all 0.3s ease;
+        }
+
+        .setup-progress .step-dot.active {
+            background: var(--plex-orange);
+            transform: scale(1.2);
+            box-shadow: 0 0 8px rgba(229, 160, 13, 0.5);
+        }
+
+        .setup-progress .step-dot.completed {
+            background: var(--plex-success);
+        }
+
+        .setup-content {
+            padding: 2rem;
+            background: var(--plex-bg-card);
+        }
+
+        .setup-content h2 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.25rem;
+            color: var(--plex-text);
+        }
+
+        .setup-content .description {
+            color: var(--plex-text-muted);
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+
+        .setup-footer {
+            padding: 1.5rem 2rem;
+            border-top: 1px solid var(--plex-border);
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .setup-footer .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s ease;
+        }
+
+        .setup-footer .btn-secondary {
+            background: var(--plex-bg-hover);
+            border: 1px solid var(--plex-border);
+            color: var(--plex-text-muted);
+        }
+
+        .setup-footer .btn-secondary:hover {
+            background: var(--plex-bg-card-hover);
+            color: var(--plex-text);
+            border-color: var(--plex-border-light);
+        }
+
+        .setup-footer .btn-primary {
+            background: var(--plex-orange);
+            border: none;
+            color: #1a1a1a;
+        }
+
+        .setup-footer .btn-primary:hover {
+            background: var(--plex-orange-light);
+            transform: translateY(-1px);
+        }
+
+        .setup-footer .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Form styles */
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--plex-text);
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="password"],
+        .form-group input[type="number"],
+        .form-group input[type="url"],
+        .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--plex-border);
+            border-radius: 6px;
+            background: var(--plex-bg-input);
+            color: var(--plex-text);
+            font-size: 0.95rem;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--plex-orange);
+            box-shadow: 0 0 0 3px rgba(229, 160, 13, 0.2);
+        }
+
+        .form-group .help-text {
+            font-size: 0.85rem;
+            color: var(--plex-text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* Input with suffix (e.g., "6 episodes", "12 hours") */
+        .input-with-suffix {
+            display: flex;
+            align-items: center;
+        }
+
+        .input-with-suffix input {
+            flex: 1;
+            border-top-right-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+            border-right: none !important;
+        }
+
+        .input-with-suffix .input-suffix {
+            padding: 0.75rem 1rem;
+            background: var(--plex-bg-hover);
+            border: 1px solid var(--plex-border);
+            border-left: none;
+            border-radius: 0 6px 6px 0;
+            color: var(--plex-text-muted);
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+
+        .input-with-suffix input:focus + .input-suffix {
+            border-color: var(--plex-orange);
+        }
+
+        /* Hide number input spinners for cleaner look */
+        .input-with-suffix input[type="number"]::-webkit-outer-spin-button,
+        .input-with-suffix input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .input-with-suffix input[type="number"] {
+            -moz-appearance: textfield;
+        }
+
+        /* Checkbox styles */
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            background: var(--plex-bg-input);
+            border: 1px solid var(--plex-border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .checkbox-item:hover {
+            background: var(--plex-bg-hover);
+            border-color: var(--plex-border-light);
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-top: 2px;
+            accent-color: var(--plex-orange);
+        }
+
+        .checkbox-item .checkbox-label {
+            flex: 1;
+        }
+
+        .checkbox-item .checkbox-label strong {
+            display: block;
+            color: var(--plex-text);
+        }
+
+        .checkbox-item .checkbox-label span {
+            font-size: 0.85rem;
+            color: var(--plex-text-muted);
+        }
+
+        /* Alert styles */
+        .alert {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .alert-error {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            color: var(--plex-error);
+        }
+
+        .alert-success {
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            color: var(--plex-success);
+        }
+
+        .alert-info {
+            background: rgba(33, 150, 243, 0.1);
+            border: 1px solid rgba(33, 150, 243, 0.3);
+            color: var(--plex-info);
+        }
+
+        /* Welcome specific */
+        .welcome-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            background: linear-gradient(135deg, var(--plex-orange) 0%, var(--plex-orange-dark) 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 20px rgba(229, 160, 13, 0.3);
+        }
+
+        .welcome-icon i {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 1.5rem 0;
+        }
+
+        .feature-list li {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--plex-border);
+        }
+
+        .feature-list li:last-child {
+            border-bottom: none;
+        }
+
+        .feature-list li i {
+            color: var(--plex-orange);
+            width: 20px;
+            height: 20px;
+        }
+
+        /* OAuth button */
+        .oauth-btn {
+            width: 100%;
+            padding: 1rem;
+            background: #e5a00d;
+            border: none;
+            border-radius: 6px;
+            color: #1a1a1a;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .oauth-btn:hover {
+            background: #c98d0c;
+        }
+
+        .oauth-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .divider {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 1.5rem 0;
+            color: var(--plex-text-muted);
+            font-size: 0.85rem;
+        }
+
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--plex-border);
+        }
+
+        /* Loading spinner */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--plex-border);
+            border-top-color: var(--plex-orange);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        /* Button spinner variant (dark background) */
+        .btn-primary .spinner {
+            border-color: rgba(0, 0, 0, 0.2);
+            border-top-color: #1a1a1a;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Path mapping table */
+        .path-mapping-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        .path-mapping-table th,
+        .path-mapping-table td {
+            padding: 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid var(--plex-border);
+        }
+
+        .path-mapping-table th {
+            font-size: 0.85rem;
+            color: var(--plex-text-muted);
+            font-weight: 500;
+        }
+
+        .path-mapping-table input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--plex-border);
+            border-radius: 4px;
+            background: var(--plex-bg-input);
+            color: var(--plex-text);
+            font-size: 0.9rem;
+            transition: border-color 0.15s ease;
+        }
+
+        .path-mapping-table input:focus {
+            outline: none;
+            border-color: var(--plex-orange);
+        }
+
+        /* Summary card */
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--plex-border);
+        }
+
+        .summary-item:last-child {
+            border-bottom: none;
+        }
+
+        .summary-item .label {
+            color: var(--plex-text-muted);
+        }
+
+        .summary-item .value {
+            color: var(--plex-text);
+            font-weight: 500;
+        }
+
+        .summary-item .value.success {
+            color: var(--plex-success);
+        }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="setup-container">
+        <div class="setup-card">
+            <div class="setup-header">
+                <h1>
+                    <i data-lucide="hard-drive"></i>
+                    PlexCache-R Setup
+                </h1>
+                {% if step is defined %}
+                <div class="setup-progress">
+                    {% for i in range(1, total_steps + 1) %}
+                    <div class="step-dot {% if i < step %}completed{% elif i == step %}active{% endif %}"></div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Re-initialize icons after HTMX swaps
+        document.addEventListener('htmx:afterSwap', function() {
+            lucide.createIcons();
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

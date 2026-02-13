@@ -1,0 +1,93 @@
+<!-- Priority Report skeleton placeholders - shown while loading -->
+
+<!-- Summary Stats Cards Skeleton -->
+<div class="stats-row">
+    <div class="stat-card skeleton-card">
+        <div class="stat-card-header">
+            <div class="skeleton skeleton-text" style="width: 70px;"></div>
+        </div>
+        <div class="skeleton skeleton-value"></div>
+        <div class="skeleton skeleton-text-sm"></div>
+    </div>
+    <div class="stat-card skeleton-card">
+        <div class="stat-card-header">
+            <div class="skeleton skeleton-text" style="width: 55px;"></div>
+        </div>
+        <div class="skeleton skeleton-value"></div>
+        <div class="skeleton skeleton-text-sm"></div>
+    </div>
+    <div class="stat-card skeleton-card">
+        <div class="stat-card-header">
+            <div class="skeleton skeleton-text" style="width: 65px;"></div>
+        </div>
+        <div class="skeleton skeleton-value"></div>
+        <div class="skeleton skeleton-text-sm"></div>
+    </div>
+</div>
+
+<!-- Priority Distribution Skeleton -->
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="layers"></i>
+        <h2>Priority Distribution</h2>
+    </div>
+    <div class="card-body">
+        <div class="breakdown-grid">
+            <div class="tier-card skeleton-card">
+                <div class="skeleton skeleton-text" style="width: 100px; margin: 0 auto 0.5rem;"></div>
+                <div class="skeleton skeleton-value" style="margin: 0 auto;"></div>
+                <div class="skeleton skeleton-text-sm" style="margin: 0.5rem auto;"></div>
+                <div class="skeleton" style="height: 6px; width: 100%; margin-top: 0.75rem;"></div>
+            </div>
+            <div class="tier-card skeleton-card">
+                <div class="skeleton skeleton-text" style="width: 110px; margin: 0 auto 0.5rem;"></div>
+                <div class="skeleton skeleton-value" style="margin: 0 auto;"></div>
+                <div class="skeleton skeleton-text-sm" style="margin: 0.5rem auto;"></div>
+                <div class="skeleton" style="height: 6px; width: 100%; margin-top: 0.75rem;"></div>
+            </div>
+            <div class="tier-card skeleton-card">
+                <div class="skeleton skeleton-text" style="width: 90px; margin: 0 auto 0.5rem;"></div>
+                <div class="skeleton skeleton-value" style="margin: 0 auto;"></div>
+                <div class="skeleton skeleton-text-sm" style="margin: 0.5rem auto;"></div>
+                <div class="skeleton" style="height: 6px; width: 100%; margin-top: 0.75rem;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- File Table Skeleton -->
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="file-text"></i>
+        <h2>File Priority Details</h2>
+        <span class="text-muted" style="margin-left: auto; font-size: 0.85rem;">Loading...</span>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 40px;"></th>
+                    <th>Priority</th>
+                    <th>File</th>
+                    <th>Size</th>
+                    <th>Source</th>
+                    <th>Age</th>
+                    <th>Users</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for i in range(5) %}
+                <tr>
+                    <td><div class="skeleton" style="width: 20px; height: 20px;"></div></td>
+                    <td><div class="skeleton" style="width: 36px; height: 24px;"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 200px;"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 50px;"></div></td>
+                    <td><div class="skeleton" style="width: 60px; height: 20px;"></div></td>
+                    <td><div class="skeleton skeleton-text" style="width: 40px;"></div></td>
+                    <td><div class="skeleton" style="width: 50px; height: 20px;"></div></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>

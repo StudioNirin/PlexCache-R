@@ -1,0 +1,114 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<form hx-put="/settings/users" hx-target="#settings-alert-container" hx-swap="innerHTML">
+
+<!-- Multi-User Toggle Card -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="users"></i>
+        <h2>Multi-User Support</h2>
+    </div>
+    <div class="card-body">
+        <div class="form-group mb-0">
+            <label class="switch">
+                <input type="checkbox" name="users_toggle" id="users_toggle"
+                       {% if settings.users_toggle %}checked{% endif %}
+                       onchange="document.getElementById('user-list-section').style.display = this.checked ? 'block' : 'none'; document.getElementById('rss-section').style.display = this.checked ? 'block' : 'none';">
+                <span>Enable Multi-User Support</span>
+            </label>
+            <div class="form-hint">Cache media from other Plex Home users' OnDeck and Watchlist</div>
+        </div>
+    </div>
+</div>
+
+<!-- User List Card (lazy loaded) -->
+<div class="card" id="user-list-section" style="{% if not settings.users_toggle %}display: none;{% endif %}">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <i data-lucide="user-check"></i>
+            <h2>User Preferences</h2>
+        </div>
+        {% if has_plex_config %}
+        <button type="button" class="btn btn-secondary"
+                hx-post="/settings/users/sync"
+                hx-target="#users-table-container"
+                hx-swap="innerHTML"
+                hx-indicator="#sync-spinner">
+            <span id="sync-spinner" class="htmx-indicator spinner" style="width: 14px; height: 14px;"></span>
+            <i data-lucide="refresh-cw" class="htmx-indicator-hide" style="width: 14px; height: 14px;"></i>
+            Sync Users
+        </button>
+        {% else %}
+        <button type="button" class="btn btn-secondary" disabled title="Configure Plex connection first">
+            <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
+            Sync Users
+        </button>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        <div class="form-hint mb-1">Select which data sources to include for each user</div>
+        <div id="users-table-container"
+             hx-get="/settings/users/list"
+             hx-trigger="load"
+             hx-target="this"
+             hx-swap="innerHTML">
+            {% include "settings/partials/users_skeleton.html" %}
+        </div>
+    </div>
+</div>
+
+<!-- Remote Watchlist RSS Card -->
+<div class="card" id="rss-section" style="{% if not settings.users_toggle %}display: none;{% endif %}">
+    <div class="card-header">
+        <i data-lucide="rss"></i>
+        <h2>Remote User Watchlists</h2>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info mb-2">
+            <i data-lucide="info" style="flex-shrink: 0;"></i>
+            <div>
+                Remote/Friend users can only have their OnDeck monitored directly via API.
+                To cache their Watchlists, provide your Plex RSS URL below.
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="switch">
+                <input type="checkbox" name="remote_watchlist_toggle"
+                       {% if settings.remote_watchlist_toggle %}checked{% endif %}>
+                <span>Enable Remote Watchlist (RSS fallback)</span>
+            </label>
+        </div>
+
+        <div class="form-group mb-0">
+            <label for="remote_watchlist_rss_url">RSS URL</label>
+            <input type="url" id="remote_watchlist_rss_url" name="remote_watchlist_rss_url"
+                   value="{{ settings.remote_watchlist_rss_url | default('') }}"
+                   placeholder="https://rss.plex.tv/...">
+            <div class="form-hint">
+                Generate at: <a href="https://app.plex.tv/desktop/#!/settings/watchlist"
+                target="_blank" rel="noopener" style="color: var(--plex-orange);">Plex Settings > Watchlist > Generate URL</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Save Button Card -->
+<div class="card">
+    <div class="card-body" style="padding: 1rem 1.25rem;">
+        <button type="submit" class="btn btn-primary">
+            <i data-lucide="save"></i>
+            Save User Settings
+        </button>
+    </div>
+</div>
+
+</form>
+
+<style>
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator { display: inline-block; }
+.htmx-request .htmx-indicator-hide { display: none; }
+</style>
+{% endblock %}

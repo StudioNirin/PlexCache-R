@@ -1,0 +1,209 @@
+{% extends "setup/base_setup.html" %}
+
+{% block content %}
+<form action="/setup/step4" method="post">
+    <div class="setup-content">
+        <h2>User Configuration</h2>
+        <p class="description">
+            Select which users' OnDeck and Watchlist to monitor for caching.
+        </p>
+
+        <div class="form-group">
+            <label class="checkbox-item" style="background: none; padding: 0;">
+                <input type="checkbox" name="users_toggle" id="users_toggle"
+                       {% if users_toggle %}checked{% endif %}
+                       onchange="toggleUserList()">
+                <div class="checkbox-label">
+                    <strong>Monitor Other Users</strong>
+                    <span>Cache media from other Plex users' OnDeck and Watchlist</span>
+                </div>
+            </label>
+        </div>
+
+        <div id="user-list" style="{% if not users_toggle %}display: none;{% endif %}">
+            {% if users %}
+            <div class="form-group">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <label style="margin: 0;">Plex Users</label>
+                    <button type="button" id="select-all-btn" class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" onclick="toggleSelectAll()">
+                        <i data-lucide="check-square" style="width: 14px; height: 14px;"></i>
+                        Select All
+                    </button>
+                </div>
+                <p class="help-text" style="margin-bottom: 0.75rem;">
+                    Your main account is always included. Select additional users below.
+                </p>
+
+                <div class="checkbox-group" id="user-checkboxes">
+                    {% for user in users %}
+                    {% if not user.is_admin %}
+                    <div class="checkbox-item" style="flex-direction: column; align-items: stretch;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <input type="checkbox" name="user_{{ user.username }}" id="user_{{ user.username }}"
+                                   {% if user.username in (existing_users | map(attribute='title') | list) %}checked{% endif %}>
+                            <div class="checkbox-label">
+                                <strong>{{ user.title }}</strong>
+                                <span>{% if user.is_home %}Home User{% else %}Friend/Remote{% endif %}</span>
+                            </div>
+                        </div>
+
+                        <div style="margin-left: 2rem; margin-top: 0.5rem; display: flex; gap: 1rem; font-size: 0.85rem;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                <input type="checkbox" name="skip_ondeck_{{ user.username }}">
+                                <span style="color: var(--text-secondary);">Skip OnDeck</span>
+                            </label>
+                            {% if user.is_home %}
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                <input type="checkbox" name="skip_watchlist_{{ user.username }}">
+                                <span style="color: var(--text-secondary);">Skip Watchlist</span>
+                            </label>
+                            {% else %}
+                            <span style="color: var(--text-muted);">(Watchlist via RSS for remote users)</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i data-lucide="info"></i>
+                <span>No additional users found on your Plex server.</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="alert alert-info" style="margin-top: 1rem;">
+            <i data-lucide="info"></i>
+            <div>
+                <strong>Note:</strong> Your main Plex account is always monitored.
+                Remote/Friend users can only have their OnDeck monitored directly.
+            </div>
+        </div>
+
+        <!-- RSS URL for Remote Watchlist Support -->
+        <div style="margin-top: 1rem; background: rgba(229, 160, 13, 0.1); border: 1px solid rgba(229, 160, 13, 0.3); border-radius: 6px; padding: 1rem;">
+            <div style="display: flex; align-items: flex-start; gap: 0.75rem; margin-bottom: 0.75rem;">
+                <i data-lucide="rss" style="color: var(--plex-orange); flex-shrink: 0; width: 20px; height: 20px;"></i>
+                <div>
+                    <strong style="color: var(--plex-orange);">Remote User Watchlists (Optional)</strong>
+                    <p style="margin: 0.25rem 0 0 0; color: var(--plex-text-muted); font-size: 0.9rem;">
+                        To cache remote users' Watchlists, you'll need your Plex RSS URL. Generate it at:
+                        <a href="https://app.plex.tv/desktop/#!/settings/watchlist" target="_blank"
+                           style="color: var(--plex-orange); text-decoration: underline;">
+                            Plex Settings → Watchlist → Generate URL
+                        </a>
+                    </p>
+                </div>
+            </div>
+            <div class="form-group" style="margin: 0;">
+                <input type="url" id="remote_watchlist_rss_url" name="remote_watchlist_rss_url"
+                       value="{{ remote_watchlist_rss_url or '' }}"
+                       placeholder="https://rss.plex.tv/..."
+                       style="width: 100%;">
+                <p class="help-text" style="margin-top: 0.25rem;">Leave blank to skip - you can add this later in Settings.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="setup-footer">
+        <a href="/setup?step=3" class="btn btn-secondary">
+            <i data-lucide="arrow-left"></i>
+            Back
+        </a>
+        <button type="submit" class="btn btn-primary" id="next-btn">
+            <span class="btn-text">Next</span>
+            <i data-lucide="arrow-right" class="btn-icon"></i>
+            <div class="spinner btn-spinner" style="display: none;"></div>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Show loading spinner on Next button when form is submitted
+    document.querySelector('form').addEventListener('submit', function(e) {
+        const nextBtn = document.getElementById('next-btn');
+        const btnText = nextBtn.querySelector('.btn-text');
+        const btnIcon = nextBtn.querySelector('.btn-icon');
+        const btnSpinner = nextBtn.querySelector('.btn-spinner');
+
+        btnText.textContent = 'Loading...';
+        btnIcon.style.display = 'none';
+        btnSpinner.style.display = 'block';
+        nextBtn.disabled = true;
+    });
+
+    function toggleUserList() {
+        const checkbox = document.getElementById('users_toggle');
+        const userList = document.getElementById('user-list');
+        userList.style.display = checkbox.checked ? 'block' : 'none';
+    }
+
+    function toggleSelectAll() {
+        const container = document.getElementById('user-checkboxes');
+        const checkboxes = container.querySelectorAll('input[type="checkbox"][name^="user_"]');
+        const btn = document.getElementById('select-all-btn');
+
+        // Check if all are currently selected
+        const allSelected = Array.from(checkboxes).every(cb => cb.checked);
+
+        // Toggle all checkboxes
+        checkboxes.forEach(cb => {
+            cb.checked = !allSelected;
+        });
+
+        // Update button text
+        updateSelectAllButton();
+    }
+
+    function updateSelectAllButton() {
+        const container = document.getElementById('user-checkboxes');
+        const checkboxes = container.querySelectorAll('input[type="checkbox"][name^="user_"]');
+        const btn = document.getElementById('select-all-btn');
+
+        const allSelected = Array.from(checkboxes).every(cb => cb.checked);
+        const icon = btn.querySelector('i');
+
+        if (allSelected && checkboxes.length > 0) {
+            btn.innerHTML = '<i data-lucide="square" style="width: 14px; height: 14px;"></i> Deselect All';
+        } else {
+            btn.innerHTML = '<i data-lucide="check-square" style="width: 14px; height: 14px;"></i> Select All';
+        }
+        lucide.createIcons();
+    }
+
+    // Update button state when individual checkboxes change
+    document.addEventListener('DOMContentLoaded', function() {
+        const container = document.getElementById('user-checkboxes');
+        if (container) {
+            container.addEventListener('change', function(e) {
+                if (e.target.name && e.target.name.startsWith('user_')) {
+                    updateSelectAllButton();
+                }
+            });
+            // Set initial button state
+            updateSelectAllButton();
+        }
+
+        // Prefetch user tokens in background for faster step 5 transition
+        prefetchUserTokens();
+    });
+
+    // Prefetch tokens while user is selecting users (background operation)
+    function prefetchUserTokens() {
+        fetch('/setup/prefetch-tokens', {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log(`Prefetched ${data.count} user tokens for faster transition`);
+            }
+        })
+        .catch(err => console.log('Token prefetch skipped:', err));
+    }
+</script>
+{% endblock %}

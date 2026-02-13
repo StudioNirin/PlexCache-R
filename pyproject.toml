@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "critical: marks tests as critical data-loss prevention",
+    "unit: marks tests as unit tests",
+]
+addopts = "-v --tb=short"

@@ -1,0 +1,70 @@
+{% extends "setup/base_setup.html" %}
+
+{% block content %}
+<form action="/setup/complete" method="post">
+    <div class="setup-content" style="text-align: center;">
+        <div class="welcome-icon" style="background: var(--success);">
+            <i data-lucide="check"></i>
+        </div>
+
+        <h2>Setup Complete!</h2>
+        <p class="description">
+            PlexCache-R has been configured and is ready to use.
+        </p>
+
+        <div style="background: var(--surface-secondary); border-radius: 6px; padding: 1rem; text-align: left; margin: 1.5rem 0;">
+            <h3 style="margin: 0 0 1rem 0; font-size: 1rem; color: var(--text-secondary);">Configuration Summary</h3>
+
+            <div class="summary-item">
+                <span class="label">Plex Server</span>
+                <span class="value success">
+                    <i data-lucide="check-circle" style="width: 14px; height: 14px; margin-right: 4px;"></i>
+                    Connected
+                </span>
+            </div>
+
+            <div class="summary-item">
+                <span class="label">Libraries</span>
+                <span class="value">{{ libraries_count }} selected</span>
+            </div>
+
+            <div class="summary-item">
+                <span class="label">Path Mappings</span>
+                {% if path_mappings_count > 0 %}
+                <span class="value">{{ path_mappings_count }} configured</span>
+                {% else %}
+                <span class="value" style="color: var(--plex-text-muted);">Using default paths</span>
+                {% endif %}
+            </div>
+
+            <div class="summary-item">
+                <span class="label">Users</span>
+                <span class="value">{{ users_count }} user(s)</span>
+            </div>
+        </div>
+
+        <div class="alert alert-info" style="text-align: left;">
+            <i data-lucide="info"></i>
+            <div>
+                <strong>Next Steps:</strong>
+                <ul style="margin: 0.5rem 0 0 1rem; padding: 0;">
+                    <li>Run a dry-run test from the Dashboard to verify paths</li>
+                    <li>Configure the schedule in Settings to automate caching</li>
+                    <li>Set up notifications ({% if is_unraid %}Unraid/{% endif %}Discord/Slack) in Settings</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="setup-footer">
+        <a href="/setup?step=5" class="btn btn-secondary">
+            <i data-lucide="arrow-left"></i>
+            Back
+        </a>
+        <button type="submit" class="btn btn-primary">
+            <i data-lucide="rocket"></i>
+            Launch PlexCache-R
+        </button>
+    </div>
+</form>
+{% endblock %}

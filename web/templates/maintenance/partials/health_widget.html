@@ -1,0 +1,23 @@
+<a href="/maintenance" class="stat-card {% if health.status == 'critical' %}stat-card-danger{% elif health.status == 'warnings' %}stat-card-warning{% else %}stat-card-success{% endif %}" style="text-decoration: none; cursor: pointer;">
+    <div class="stat-icon">
+        {% if health.status == 'critical' %}
+        <i data-lucide="alert-circle"></i>
+        {% elif health.status == 'warnings' %}
+        <i data-lucide="alert-triangle"></i>
+        {% else %}
+        <i data-lucide="check-circle"></i>
+        {% endif %}
+    </div>
+    <div class="stat-info">
+        <span class="stat-label">Tracking Health</span>
+        <span class="stat-value">
+            {% if health.status == 'critical' %}
+            {{ health.unprotected_count + health.orphaned_count }} issues
+            {% elif health.status == 'warnings' %}
+            {{ health.stale_exclude_count + health.stale_timestamp_count }} warnings
+            {% else %}
+            Healthy
+            {% endif %}
+        </span>
+    </div>
+</a>

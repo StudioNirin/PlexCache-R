@@ -1,0 +1,450 @@
+<!-- Global Operation Banner - centered toast on all pages when operation or maintenance is running -->
+<style>
+/* Expand active-files/mini-log on banner hover — instant expand (no transition)
+   so it doesn't flicker when HTMX replaces the DOM every 2s while cursor is over */
+#active-op-banner:hover .maint-active-files {
+    max-height: 200px !important;
+    opacity: 1 !important;
+    margin-top: 0.3rem !important;
+    transition: none !important;
+}
+/* Also expand on the completion banner hover */
+#global-operation-alert:hover .maint-active-files {
+    max-height: 200px !important;
+    opacity: 1 !important;
+    margin-top: 0.3rem !important;
+    transition: none !important;
+}
+</style>
+<!-- Banner warning helper - expands a warning row inside the active banner -->
+<script>
+function showBannerWarning(message) {
+    var warning = document.getElementById('banner-warning');
+    var banner = document.getElementById('active-op-banner');
+    var textEl = document.getElementById('banner-warning-text');
+    if (!warning || !banner || !textEl) return;
+    textEl.textContent = message;
+    // Pause HTMX polling so it doesn't replace the warning before it's seen
+    var pollEl = document.querySelector('#global-operation-banner [hx-trigger]');
+    if (pollEl) { pollEl.setAttribute('hx-trigger', 'every 8s'); htmx.process(pollEl); }
+    // Expand with animation (double rAF ensures browser paints collapsed state first)
+    requestAnimationFrame(function() { requestAnimationFrame(function() {
+        banner.style.borderColor = '#e67e22';
+        warning.style.maxHeight = '2.5rem';
+        warning.style.maxWidth = '40rem';
+        warning.style.opacity = '1';
+        warning.style.paddingTop = '0.6rem';
+        warning.style.marginTop = '0.6rem';
+        warning.style.borderColor = 'rgba(230, 126, 34, 0.3)';
+    }); });
+    // Auto-collapse after 4 seconds
+    setTimeout(function() {
+        if (!warning) return;
+        warning.style.maxHeight = '0';
+        warning.style.maxWidth = '0';
+        warning.style.opacity = '0';
+        warning.style.paddingTop = '0';
+        warning.style.marginTop = '0';
+        warning.style.borderColor = 'transparent';
+        banner.style.borderColor = '#e5a00d';
+    }, 4000);
+}
+</script>
+{% if maint_status is defined and maint_status.state == 'running' %}
+<!-- Maintenance action running -->
+<div id="active-op-banner" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e5a00d; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; transition: border-color 0.3s ease-out; width: 520px;"
+     hx-get="/api/operation-banner" hx-trigger="every {{ '8s' if (blocked_message is defined and blocked_message) else '2s' }}" hx-swap="innerHTML" hx-target="#global-operation-banner">
+    <div style="display: flex; align-items: center; justify-content: center; gap: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <span class="spinner" style="width: 18px; height: 18px;"></span>
+            <strong style="color: #fff; font-size: 0.95rem;">{{ maint_status.action_display }}</strong>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <button type="button" class="btn btn-sm btn-danger" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;"
+                    hx-post="/maintenance/stop-action"
+                    hx-target="#global-operation-banner"
+                    hx-swap="innerHTML">
+                <i data-lucide="square" style="width: 14px; height: 14px;"></i>
+                Stop
+            </button>
+            <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
+                    onclick="document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">
+                <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+            </button>
+        </div>
+    </div>
+    {% if maint_status.file_count and maint_status.file_count > 0 %}
+    <div style="width: 100%; margin-top: 0.5rem;">
+        <!-- Progress bar -->
+        <div style="height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
+            <div style="height: 100%; width: {{ maint_status.progress_percent }}%;
+                 background: linear-gradient(90deg, #e5a00d, #cc8a00);
+                 border-radius: 2px; transition: width 0.5s ease;"></div>
+        </div>
+        <!-- Progress text -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.35rem;
+             font-size: 0.8rem; color: rgba(255,255,255,0.5);">
+            <span>{{ maint_status.files_processed }}/{{ maint_status.file_count }} files
+                {%- if maint_status.parallel %} <span style="color: rgba(255,255,255,0.35);">({{ maint_status.parallel }}&times;)</span>{% endif %}
+                {%- if not maint_status.parallel and maint_status.current_file %} &mdash; {{ maint_status.current_file|truncate(40, True, '...') }}{% endif %}</span>
+            <span style="color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums;">
+                {%- if maint_status.bytes_display %}{{ maint_status.bytes_display }} <span style="color: rgba(255,255,255,0.3);">&middot;</span> {% endif %}
+                {{- maint_status.elapsed_display }}
+                {%- if maint_status.eta_display %} <span style="color: rgba(255,255,255,0.45);">|</span> ~{{ maint_status.eta_display }} left{% endif %}</span>
+        </div>
+        {%- if maint_status.active_files %}
+        <!-- Active files - collapsed, expands on hover -->
+        <div class="maint-active-files" style="max-height: 0; opacity: 0; overflow: hidden;
+             transition: max-height 0.25s ease, opacity 0.2s ease; margin-top: 0;
+             width: 100%; text-align: left;">
+            {%- for f in maint_status.active_files %}
+            <div style="font-size: 0.75rem; color: rgba(255,255,255,0.4); padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                <span style="color: rgba(255,255,255,0.2);">&#8627;</span> {{ f|truncate(55, True, '...') }}</div>
+            {%- endfor %}
+        </div>
+        {%- endif %}
+    </div>
+    {% endif %}
+    <!-- Warning row - collapsed by default, expanded by showBannerWarning() -->
+    <div id="banner-warning" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; max-height: 0; max-width: 0; opacity: 0; overflow: hidden; padding-top: 0; margin-top: 0; border-top: 1px solid transparent; transition: max-height 0.35s ease-out, max-width 0.4s ease-out, opacity 0.3s ease-out, padding-top 0.35s ease-out, margin-top 0.35s ease-out, border-color 0.3s ease-out;">
+        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
+        <span id="banner-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
+    </div>
+</div>
+<script>
+    lucide.createIcons();
+    {% if blocked_message is defined and blocked_message %}showBannerWarning('{{ blocked_message }}');{% endif %}
+</script>
+{% elif maint_status is defined and maint_status.state == 'completed' %}
+<!-- Maintenance action completed -->
+<script>
+(function() {
+    var completionKey = 'plexcache_last_maint_completion_shown';
+    var completionId = '{{ maint_status.completed_at or maint_status.duration_seconds }}';
+    var lastShown = sessionStorage.getItem(completionKey);
+
+    if (lastShown === completionId) {
+        // Already showed this completion, dismiss and go idle
+        fetch('/maintenance/dismiss-action', { method: 'POST' });
+        document.getElementById('global-operation-banner').innerHTML =
+            '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
+        htmx.process(document.getElementById('global-operation-banner'));
+        return;
+    }
+
+    // Mark as shown
+    sessionStorage.setItem(completionKey, completionId);
+
+    var resultMsg = '{{ maint_status.result_message | default("Action completed") }}';
+    var duration = '{{ maint_status.elapsed_display|default(maint_status.duration_seconds ~ "s") }}';
+    var maintErrors = {{ maint_status.errors|length if maint_status.errors is defined else 0 }};
+    var borderColor = maintErrors > 0 ? '#e67e22' : '{{ "#2ecc71" if maint_status.result_success is not defined or maint_status.result_success else "#2ecc71" }}';
+    var iconColor = borderColor;
+    var maintErrorBadge = maintErrors > 0 ? '<span style="background: #e74c3c; color: #fff; font-size: 0.7rem; padding: 0.15rem 0.45rem; border-radius: 9px; font-weight: 600; margin-left: 0.25rem;">' + maintErrors + ' error' + (maintErrors !== 1 ? 's' : '') + '</span>' : '';
+
+    document.getElementById('global-operation-banner').innerHTML = `
+        <div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid ${borderColor}; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 1rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <i data-lucide="check-circle" style="width: 20px; height: 20px; color: ${iconColor};"></i>
+                <strong style="color: #fff; font-size: 0.95rem;">Maintenance Complete</strong>
+                ${maintErrorBadge}
+                <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">
+                    ${resultMsg} | ${duration}
+                </span>
+            </div>
+            <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
+                    onclick="dismissMaintCompletionBanner()" title="Dismiss">
+                <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+            </button>
+        </div>
+    `;
+    lucide.createIcons();
+
+    // Auto-refresh audit content if on maintenance page
+    var auditContent = document.getElementById('audit-content');
+    if (auditContent) {
+        htmx.ajax('GET', '/maintenance/audit?refresh=true', {target: '#audit-content', swap: 'innerHTML'});
+    }
+
+    // Auto-dismiss after 6 seconds
+    setTimeout(dismissMaintCompletionBanner, 6000);
+})();
+
+function dismissMaintCompletionBanner() {
+    var alert = document.getElementById('global-operation-alert');
+    if (alert && alert.style.opacity !== '0') {
+        alert.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
+        alert.style.opacity = '0';
+        alert.style.transform = 'translateY(-20px)';
+        setTimeout(function() {
+            // Dismiss the runner state and resume idle polling
+            fetch('/maintenance/dismiss-action', { method: 'POST' });
+            document.getElementById('global-operation-banner').innerHTML =
+                '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
+            htmx.process(document.getElementById('global-operation-banner'));
+        }, 400);
+    }
+}
+</script>
+{% elif maint_status is defined and maint_status.state == 'failed' %}
+<!-- Maintenance action failed -->
+<div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e74c3c; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 1rem;">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <i data-lucide="alert-circle" style="width: 20px; height: 20px; color: #e74c3c;"></i>
+        <strong style="color: #fff; font-size: 0.95rem;">Maintenance Failed</strong>
+        {% if maint_status.error_message %}
+        <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">{{ maint_status.error_message }}</span>
+        {% endif %}
+    </div>
+    <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
+            onclick="fetch('/maintenance/dismiss-action',{method:'POST'}); this.parentElement.style.display='none'; document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));"
+            title="Dismiss">
+        <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+    </button>
+</div>
+<script>lucide.createIcons();</script>
+{% elif status.state == 'running' %}
+<div id="active-op-banner" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e5a00d; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; transition: border-color 0.3s ease-out; width: 520px;"
+     hx-get="/api/operation-banner" hx-trigger="every {{ '8s' if (blocked_message is defined and blocked_message) else '2s' }}" hx-swap="innerHTML" hx-target="#global-operation-banner">
+    <div style="display: flex; align-items: center; justify-content: center; gap: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <span class="spinner" style="width: 18px; height: 18px;"></span>
+            <strong style="color: #fff; font-size: 0.95rem;">{{ status.current_phase_display|default('Operation in progress...') }}</strong>
+            {% if status.error_count is defined and status.error_count > 0 %}
+            <span style="background: #e74c3c; color: #fff; font-size: 0.7rem; padding: 0.15rem 0.45rem; border-radius: 9px; font-weight: 600;">{{ status.error_count }} error{{ 's' if status.error_count != 1 }}</span>
+            {% endif %}
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <a href="/logs?live=true" class="btn btn-sm btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;">
+                <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
+                Logs
+            </a>
+            <button type="button" class="btn btn-sm btn-danger" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;"
+                    hx-post="/operations/stop"
+                    hx-target="#global-operation-banner"
+                    hx-swap="innerHTML">
+                <i data-lucide="square" style="width: 14px; height: 14px;"></i>
+                Stop
+            </button>
+            <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
+                    onclick="document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));">
+                <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+            </button>
+        </div>
+    </div>
+    {% if status.total_files is defined and status.total_files > 0 %}
+    <!-- Progress section (shown when file totals are known) -->
+    <div style="width: 100%; margin-top: 0.5rem;">
+        <!-- Progress bar -->
+        <div style="height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
+            <div style="height: 100%; width: {{ status.progress_percent }}%;
+                 background: linear-gradient(90deg, #e5a00d, #cc8a00);
+                 border-radius: 2px; transition: width 0.5s ease;"></div>
+        </div>
+        <!-- Progress text -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.35rem;
+             font-size: 0.8rem; color: rgba(255,255,255,0.5);">
+            <span>{{ status.completed_files }}/{{ status.total_files }} file{{ 's' if status.total_files != 1 }}
+                {%- if status.last_completed_file %} &mdash; {{ status.last_completed_file|truncate(40, True, '...') }}{% endif %}</span>
+            <span style="color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums;">
+                {%- if status.bytes_display %}{{ status.bytes_display }} <span style="color: rgba(255,255,255,0.3);">&middot;</span> {% endif %}
+                {{- status.elapsed_display }}
+                {%- if status.eta_display %} <span style="color: rgba(255,255,255,0.45);">|</span> ~{{ status.eta_display }} left{% endif %}</span>
+        </div>
+    </div>
+    {% elif status.elapsed_display is defined %}
+    <!-- Pre-move phases: just show elapsed time -->
+    <div style="width: 100%; margin-top: 0.35rem; text-align: center;">
+        <span style="font-size: 0.8rem; color: rgba(255,255,255,0.5); font-variant-numeric: tabular-nums;">{{ status.elapsed_display }}</span>
+    </div>
+    {% endif %}
+    {%- if status.recent_logs is defined and status.recent_logs %}
+    <!-- Hover mini-log (last 5 messages) -->
+    <div class="maint-active-files" style="max-height: 0; opacity: 0; overflow: hidden;
+         transition: max-height 0.25s ease, opacity 0.2s ease; margin-top: 0;
+         width: 100%; text-align: left;">
+        {%- for log_line in status.recent_logs %}
+        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.4); padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: monospace;">
+            {{ log_line|truncate(80, True, '...') }}</div>
+        {%- endfor %}
+    </div>
+    {%- endif %}
+    <!-- Warning row - collapsed by default, expanded by showBannerWarning() -->
+    <div id="banner-warning" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; max-height: 0; max-width: 0; opacity: 0; overflow: hidden; padding-top: 0; margin-top: 0; border-top: 1px solid transparent; transition: max-height 0.35s ease-out, max-width 0.4s ease-out, opacity 0.3s ease-out, padding-top 0.35s ease-out, margin-top 0.35s ease-out, border-color 0.3s ease-out;">
+        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
+        <span id="banner-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
+    </div>
+</div>
+<script>
+    lucide.createIcons();
+    // Clear "next run" dismiss flag so the countdown reappears after this run finishes
+    sessionStorage.removeItem('plexcache_nextrun_dismissed');
+    {% if blocked_message is defined and blocked_message %}showBannerWarning('{{ blocked_message }}');{% endif %}
+</script>
+{% elif status.state == 'completed' %}
+<!-- Check if we already showed this completion (prevent repeated flashing) -->
+<script>
+(function() {
+    var completionKey = 'plexcache_last_completion_shown';
+    var completionId = '{{ status.completed_at or status.duration_seconds }}';
+    var lastShown = sessionStorage.getItem(completionKey);
+
+    if (lastShown === completionId) {
+        // Already showed this completion, don't show again
+        document.getElementById('global-operation-banner').innerHTML =
+            '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
+        return;
+    }
+
+    // Mark as shown
+    sessionStorage.setItem(completionKey, completionId);
+
+    var filesCached = {{ status.files_cached|default(0) }};
+    var filesRestored = {{ status.files_restored|default(0) }};
+    var bytesCachedDisplay = '{{ status.bytes_cached_display|default("") }}';
+    var bytesRestoredDisplay = '{{ status.bytes_restored_display|default("") }}';
+    var durationDisplay = '{{ status.duration_display|default(status.duration_seconds ~ "s") }}';
+    var errorCount = {{ status.error_count|default(0) }};
+    var isDryRun = {{ 'true' if status.dry_run else 'false' }};
+
+    // Build summary parts
+    var parts = [];
+    if (filesCached > 0) {
+        var s = 'Cached ' + filesCached + ' file' + (filesCached !== 1 ? 's' : '');
+        if (bytesCachedDisplay) s += ' (' + bytesCachedDisplay + ')';
+        parts.push(s);
+    }
+    if (filesRestored > 0) {
+        var s = 'Restored ' + filesRestored + ' file' + (filesRestored !== 1 ? 's' : '');
+        if (bytesRestoredDisplay) s += ' (' + bytesRestoredDisplay + ')';
+        parts.push(s);
+    }
+    if (filesCached === 0 && filesRestored === 0) parts.push('No files needed processing');
+    parts.push(durationDisplay);
+    var summaryText = parts.join(' | ');
+
+    var errorBadge = '';
+    if (errorCount > 0) {
+        errorBadge = '<span style="background: #e74c3c; color: #fff; font-size: 0.7rem; padding: 0.15rem 0.45rem; border-radius: 9px; font-weight: 600; margin-left: 0.25rem;">' + errorCount + ' error' + (errorCount !== 1 ? 's' : '') + '</span>';
+    }
+
+    // Build hover detail rows from recent files
+    var recentFiles = [
+        {% for f in status.recent_files|default([]) %}
+        { action: '{{ f.action }}', filename: '{{ f.filename|truncate(50, True, "...")|e }}', size: '{{ f.size }}' },
+        {% endfor %}
+    ];
+    var detailRows = '';
+    if (recentFiles.length > 0) {
+        var rows = recentFiles.map(function(f) {
+            var color = f.action === 'Cached' ? 'rgba(229,160,13,0.6)' : 'rgba(46,204,113,0.6)';
+            return '<div style="font-size: 0.7rem; color: rgba(255,255,255,0.45); padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' +
+                '<span style="color: ' + color + ';">[' + f.action + ']</span> ' + f.filename +
+                (f.size !== '-' ? ' <span style="color: rgba(255,255,255,0.25);">(' + f.size + ')</span>' : '') + '</div>';
+        }).join('');
+        detailRows = '<div class="maint-active-files" style="max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s ease; margin-top: 0; width: 100%; text-align: left;">' + rows + '</div>';
+    }
+
+    // Show the completion banner with inline styles (same as running state but green border)
+    var borderColor = errorCount > 0 ? '#e67e22' : '#2ecc71';
+    var iconColor = errorCount > 0 ? '#e67e22' : '#2ecc71';
+    document.getElementById('global-operation-banner').innerHTML = `
+        <style>
+        #global-operation-alert:hover .maint-active-files {
+            max-height: 200px !important;
+            opacity: 1 !important;
+            margin-top: 0.3rem !important;
+            transition: none !important;
+        }
+        </style>
+        <div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid ${borderColor}; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <i data-lucide="check-circle" style="width: 20px; height: 20px; color: ${iconColor};"></i>
+                <strong style="color: #fff; font-size: 0.95rem;">${isDryRun ? 'Dry Run' : 'Operation'} Completed</strong>
+                ${errorBadge}
+                <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">${summaryText}</span>
+                <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
+                        onclick="dismissCompletionBanner()" title="Dismiss">
+                    <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+                </button>
+            </div>
+            ${detailRows}
+        </div>
+    `;
+    lucide.createIcons();
+
+    // Auto-dismiss after 6 seconds (paused while hovering)
+    var autoDismissTimer = setTimeout(dismissCompletionBanner, 6000);
+    var alertEl = document.getElementById('global-operation-alert');
+    if (alertEl) {
+        alertEl.addEventListener('mouseenter', function() { clearTimeout(autoDismissTimer); });
+        alertEl.addEventListener('mouseleave', function() { autoDismissTimer = setTimeout(dismissCompletionBanner, 3000); });
+    }
+})();
+
+function dismissCompletionBanner() {
+    var alert = document.getElementById('global-operation-alert');
+    if (alert && alert.style.opacity !== '0') {
+        alert.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
+        alert.style.opacity = '0';
+        alert.style.transform = 'translateY(-20px)';
+        setTimeout(function() {
+            // Reset backend state to IDLE so next poll returns scheduler info
+            fetch('/api/dismiss-operation', { method: 'POST' });
+            // Replace with idle polling div
+            document.getElementById('global-operation-banner').innerHTML =
+                '<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
+            htmx.process(document.getElementById('global-operation-banner'));
+        }, 400);
+    }
+}
+</script>
+{% elif status.state == 'failed' %}
+<div id="global-operation-alert" style="position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999; background: #1a1d1f; border: 2px solid #e74c3c; border-radius: 12px; padding: 0.75rem 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 1rem;">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <i data-lucide="alert-circle" style="width: 20px; height: 20px; color: #e74c3c;"></i>
+        <strong style="color: #fff; font-size: 0.95rem;">Operation Failed</strong>
+        {% if status.error_message %}
+        <span style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">{{ status.error_message }}</span>
+        {% endif %}
+    </div>
+    <button type="button" style="background: transparent; border: none; color: #fff; cursor: pointer; padding: 0.25rem; opacity: 0.7;"
+            onclick="fetch('/api/dismiss-operation',{method:'POST'}); this.parentElement.style.display='none'; document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\ 10s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));"
+            title="Dismiss">
+        <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+    </button>
+</div>
+<script>lucide.createIcons();</script>
+{% else %}
+<!-- Not running - poll slowly for next operation -->
+{% if scheduler_status is defined and scheduler_status and scheduler_status.next_run_relative %}
+<script>
+(function() {
+    // Sticky dismiss: if user dismissed the "Next run" banner this session, keep it hidden
+    if (sessionStorage.getItem('plexcache_nextrun_dismissed')) {
+        document.getElementById('global-operation-banner').innerHTML =
+            '<div hx-get="/api/operation-banner" hx-trigger="every 30s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>';
+        htmx.process(document.getElementById('global-operation-banner'));
+        return;
+    }
+
+    document.getElementById('global-operation-banner').innerHTML = `
+    <div id="idle-countdown-banner" style="position: fixed; top: 0.75rem; left: 50%; transform: translateX(-50%); z-index: 9998; display: flex; align-items: center; gap: 0.5rem; background: rgba(26,29,31,0.85); border: 1px solid rgba(229,160,13,0.25); border-radius: 20px; padding: 0.35rem 0.85rem; opacity: 0.7; transition: opacity 0.2s ease;"
+         onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.7'"
+         hx-get="/api/operation-banner" hx-trigger="every 30s" hx-swap="innerHTML" hx-target="#global-operation-banner">
+        <i data-lucide="clock" style="width: 13px; height: 13px; color: #e5a00d; opacity: 0.7;"></i>
+        <span style="font-size: 0.78rem; color: rgba(255,255,255,0.6);">Next run {{ scheduler_status.next_run_relative }}</span>
+        <button type="button" style="background: transparent; border: none; color: rgba(255,255,255,0.4); cursor: pointer; padding: 0.1rem; margin-left: 0.15rem; line-height: 1;"
+                onclick="event.stopPropagation(); sessionStorage.setItem('plexcache_nextrun_dismissed','1'); document.getElementById('global-operation-banner').innerHTML='<div hx-get=/api/operation-banner hx-trigger=every\\ 30s hx-swap=innerHTML hx-target=#global-operation-banner></div>'; htmx.process(document.getElementById('global-operation-banner'));"
+                title="Dismiss">
+            <i data-lucide="x" style="width: 13px; height: 13px;"></i>
+        </button>
+    </div>`;
+    htmx.process(document.getElementById('global-operation-banner'));
+    lucide.createIcons();
+})();
+</script>
+{% else %}
+<div hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"></div>
+{% endif %}
+{% endif %}

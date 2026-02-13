@@ -1,0 +1,516 @@
+<!-- ZFS Warning (only shown when ZFS detected without manual override) -->
+{% if data.storage.is_zfs and not data.storage.has_manual_drive_size %}
+<div class="alert alert-warning mb-2" style="display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem 1rem;">
+    <i data-lucide="alert-triangle" style="flex-shrink: 0; margin-top: 2px;"></i>
+    <div>
+        <strong>ZFS Detected:</strong> Displayed values are dataset-level stats and may not reflect true pool capacity.
+        <a href="/settings#cache" style="color: var(--plex-orange);">Set Cache Drive Size manually</a> for accurate reporting.
+    </div>
+</div>
+{% endif %}
+
+<!-- Storage Overview Stats -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="hard-drive"></i>
+            Total Capacity
+        </div>
+        <div class="stat-value">{{ data.storage.total_display }}</div>
+        <div class="stat-label">drive capacity</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="pie-chart"></i>
+            Used Space
+        </div>
+        <div class="stat-value {% if data.storage.usage_percent >= 90 %}text-error{% elif data.storage.usage_percent >= 75 %}text-warning{% endif %}">{{ data.storage.used_display }}</div>
+        <div class="stat-label">{{ data.storage.usage_percent }}% used</div>
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill {% if data.storage.usage_percent >= 90 %}progress-danger{% elif data.storage.usage_percent >= 75 %}progress-warning{% endif %}" style="width: {{ data.storage.usage_percent }}%"></div>
+            </div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="database"></i>
+            Free Space
+        </div>
+        <div class="stat-value text-success">{{ data.storage.free_display }}</div>
+        <div class="stat-label">available</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-header">
+            <i data-lucide="files"></i>
+            Cached Files
+        </div>
+        <div class="stat-value orange">{{ data.storage.file_count }}</div>
+        <div class="stat-label">{{ data.storage.cached_size_display }} total</div>
+    </div>
+</div>
+
+<!-- Cache Limit Status -->
+{% if data.storage.cache_limit_bytes > 0 %}
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="gauge"></i>
+        <h2>Cache Limit</h2>
+        <span class="text-muted" style="font-size: 0.8rem; margin-left: auto;">Based on total drive usage</span>
+    </div>
+    <div class="card-body">
+        <div class="cache-limit-info">
+            <!-- Stats Grid -->
+            <div class="cache-limit-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                <div class="cache-limit-stat">
+                    <span class="cache-limit-label" title="All files on the cache drive (PlexCache + other applications + system files)">Total Drive Usage:</span>
+                    <span class="cache-limit-value">{{ data.storage.used_display }}</span>
+                </div>
+                <div class="cache-limit-stat">
+                    <span class="cache-limit-label">Cache Limit:</span>
+                    <span class="cache-limit-value">{{ data.storage.cache_limit_display }}</span>
+                </div>
+                {% if data.config.eviction_enabled %}
+                <div class="cache-limit-stat">
+                    <span class="cache-limit-label">Eviction Threshold:</span>
+                    <span class="cache-limit-value">{{ data.storage.eviction_threshold_setting }}% = {{ data.storage.eviction_threshold_display }}</span>
+                </div>
+                {% endif %}
+                <div class="cache-limit-stat">
+                    <span class="cache-limit-label" title="Remaining space before the cache limit is reached (limit minus total drive usage)">Available for Caching:</span>
+                    <span class="cache-limit-value {% if data.storage.cache_limit_available <= 0 %}text-error{% elif data.storage.cache_limit_used_percent >= 90 %}text-warning{% else %}text-success{% endif %}">
+                        {{ data.storage.cache_limit_available_display }}
+                    </span>
+                </div>
+            </div>
+
+            <div style="font-size: 0.8rem; color: var(--plex-text-muted); margin-bottom: 0.75rem;">
+                <i data-lucide="info" style="width: 13px; height: 13px; vertical-align: middle;"></i>
+                Limit applies to <strong>all files</strong> on the drive. The gray bar ("Other") includes any files not managed by PlexCache, such as other applications, downloads, or system files.
+            </div>
+
+            <!-- Visual Bar with Markers - Stacked Bar Design -->
+            <div class="drive-usage-bar-container" style="position: relative; margin-bottom: 0.5rem;">
+                <!-- The bar background represents total drive capacity -->
+                <div class="drive-usage-bar" style="height: 24px; background: var(--plex-card-bg); border-radius: 4px; position: relative; overflow: visible; border: 1px solid var(--plex-border);">
+                    <!-- Stacked bar: Other files (gray) + PlexCache (context-aware color) -->
+                    <div style="display: flex; height: 100%; border-radius: 3px; overflow: hidden;">
+                        <!-- Other files segment (gray) -->
+                        {% if data.storage.other_drive_percent > 0 %}
+                        <div class="other-files-fill" style="width: {{ data.storage.other_drive_percent }}%; height: 100%; background: #555; transition: width 0.3s ease;" title="Other files: {{ data.storage.other_drive_size_display }}"></div>
+                        {% endif %}
+                        <!-- PlexCache segment (context-aware color) -->
+                        {% if data.storage.cached_percent > 0 %}
+                        <div class="plexcache-fill" style="width: {{ data.storage.cached_percent }}%; height: 100%; transition: width 0.3s ease;
+                            {% if data.storage.cache_bar_status == 'over' %}
+                            background: #e74c3c;
+                            {% elif data.storage.cache_bar_status == 'approaching' %}
+                            background: #e67e22;
+                            {% else %}
+                            background: #27ae60;
+                            {% endif %}
+                        " title="PlexCache: {{ data.storage.cached_size_display }}"></div>
+                        {% endif %}
+                    </div>
+
+                    {% if data.config.eviction_enabled and data.storage.eviction_threshold_percent_of_drive > 0 %}
+                    <!-- Eviction threshold marker -->
+                    <div class="threshold-marker" style="position: absolute; top: -4px; bottom: -4px; width: 3px; background: #e67e22; left: {{ data.storage.eviction_threshold_percent_of_drive }}%; z-index: 2;" title="Eviction starts at {{ data.storage.eviction_threshold_display }}">
+                        <div style="position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 0.7rem; color: #e67e22; white-space: nowrap;">Evict</div>
+                    </div>
+                    {% endif %}
+
+                    {% if data.storage.cache_limit_percent %}
+                    <!-- Cache limit marker -->
+                    <div class="limit-marker" style="position: absolute; top: -4px; bottom: -4px; width: 3px; background: #e74c3c; left: {{ data.storage.cache_limit_percent }}%; z-index: 2;" title="Cache limit: {{ data.storage.cache_limit_display }}">
+                        <div style="position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 0.7rem; color: #e74c3c; white-space: nowrap;">Limit</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Status Labels -->
+            <div class="cache-limit-labels" style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; font-size: 0.85rem;">
+                <span>Drive: {{ data.storage.usage_percent }}% used ({{ data.storage.used_display }} / {{ data.storage.total_display }})</span>
+                {% if data.storage.eviction_over_threshold %}
+                <span class="text-error" style="font-weight: 500;">
+                    <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                    Over eviction threshold by {{ data.storage.eviction_over_by_display }}
+                </span>
+                {% elif data.storage.eviction_approaching %}
+                <span class="text-warning" style="font-weight: 500;">
+                    <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                    Approaching eviction threshold
+                </span>
+                {% elif data.storage.cache_limit_used_percent >= 100 %}
+                <span class="text-error" style="font-weight: 500;">Over cache limit!</span>
+                {% endif %}
+            </div>
+
+            <!-- Legend -->
+            <div class="stacked-bar-legend" style="display: flex; gap: 1.5rem; margin-top: 0.75rem; font-size: 0.8rem;">
+                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                    <div style="width: 12px; height: 12px; background: #555; border-radius: 2px;"></div>
+                    <span>Other files ({{ data.storage.other_drive_size_display }})</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                    <div style="width: 12px; height: 12px; border-radius: 2px;
+                        {% if data.storage.cache_bar_status == 'over' %}
+                        background: #e74c3c;
+                        {% elif data.storage.cache_bar_status == 'approaching' %}
+                        background: #e67e22;
+                        {% else %}
+                        background: #27ae60;
+                        {% endif %}
+                    "></div>
+                    <span>PlexCache ({{ data.storage.cached_size_display }})</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Breakdown by Source -->
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="pie-chart"></i>
+        <h2>Cache Breakdown by Source</h2>
+    </div>
+    <div class="card-body">
+        <div class="breakdown-grid">
+            <a href="/cache?source=ondeck" class="breakdown-card breakdown-ondeck">
+                <div class="breakdown-header">
+                    <i data-lucide="play-circle"></i>
+                    <span>OnDeck</span>
+                </div>
+                <div class="breakdown-stats">
+                    <div class="breakdown-value">{{ data.breakdown.ondeck.count }}</div>
+                    <div class="breakdown-label">files</div>
+                </div>
+                <div class="breakdown-size">{{ data.breakdown.ondeck.size_display }}</div>
+                <div class="breakdown-bar">
+                    <div class="breakdown-fill ondeck" style="width: {{ data.breakdown.ondeck.percent }}%"></div>
+                </div>
+                <div class="breakdown-percent">{{ data.breakdown.ondeck.percent }}% of cache</div>
+            </a>
+            <a href="/cache?source=watchlist" class="breakdown-card breakdown-watchlist">
+                <div class="breakdown-header">
+                    <i data-lucide="bookmark"></i>
+                    <span>Watchlist</span>
+                </div>
+                <div class="breakdown-stats">
+                    <div class="breakdown-value">{{ data.breakdown.watchlist.count }}</div>
+                    <div class="breakdown-label">files</div>
+                </div>
+                <div class="breakdown-size">{{ data.breakdown.watchlist.size_display }}</div>
+                <div class="breakdown-bar">
+                    <div class="breakdown-fill watchlist" style="width: {{ data.breakdown.watchlist.percent }}%"></div>
+                </div>
+                <div class="breakdown-percent">{{ data.breakdown.watchlist.percent }}% of cache</div>
+            </a>
+            {% if data.breakdown.other.count > 0 %}
+            <a href="/cache?source=other" class="breakdown-card breakdown-other">
+                <div class="breakdown-header">
+                    <i data-lucide="help-circle"></i>
+                    <span>Other</span>
+                </div>
+                <div class="breakdown-stats">
+                    <div class="breakdown-value">{{ data.breakdown.other.count }}</div>
+                    <div class="breakdown-label">files</div>
+                </div>
+                <div class="breakdown-size">{{ data.breakdown.other.size_display }}</div>
+                <div class="breakdown-bar">
+                    <div class="breakdown-fill other" style="width: {{ data.breakdown.other.percent }}%"></div>
+                </div>
+                <div class="breakdown-percent">{{ data.breakdown.other.percent }}% of cache</div>
+            </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- File Analysis Section -->
+<div class="grid grid-2 mb-2">
+    <!-- Largest Files -->
+    <div class="card">
+        <div class="card-header">
+            <i data-lucide="arrow-up-wide-narrow"></i>
+            <h2>Largest Files</h2>
+        </div>
+        <div class="card-body card-body-scrollable" style="padding: 0;">
+            <table class="compact-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Size</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
+                        <th>Source</th>
+                        <th>Users</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if data.largest_files %}
+                        {% for file in data.largest_files %}
+                        <tr>
+                            <td title="{{ file.path }}">{{ file.filename|truncate(35) }}</td>
+                            <td class="text-muted">{{ file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
+                            <td>
+                                <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                                    {{ file.priority_score }}
+                                </span>
+                            </td>
+                            {% endif %}
+                            <td class="source-badges">
+                                {% if file.is_ondeck %}
+                                <span class="badge badge-info badge-sm">OnDeck</span>
+                                {% endif %}
+                                {% if file.is_watchlist %}
+                                <span class="badge badge-muted badge-sm">Watchlist</span>
+                                {% endif %}
+                                {% if not file.is_ondeck and not file.is_watchlist %}
+                                <span class="badge badge-warning badge-sm">Other</span>
+                                {% endif %}
+                            </td>
+                            <td class="user-badges">
+                                {% if file.users %}
+                                    {% for user in file.users %}
+                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="5" class="text-muted text-center">No files in cache</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Oldest Files -->
+    <div class="card">
+        <div class="card-header">
+            <i data-lucide="clock"></i>
+            <h2>Oldest Cached Files</h2>
+        </div>
+        <div class="card-body card-body-scrollable" style="padding: 0;">
+            <table class="compact-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Size</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
+                        <th>Source</th>
+                        <th>Users</th>
+                        <th>Age</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if data.oldest_files %}
+                        {% for file in data.oldest_files %}
+                        <tr>
+                            <td title="{{ file.path }}">{{ file.filename|truncate(30) }}</td>
+                            <td class="text-muted">{{ file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
+                            <td>
+                                <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                                    {{ file.priority_score }}
+                                </span>
+                            </td>
+                            {% endif %}
+                            <td class="source-badges">
+                                {% if file.is_ondeck %}
+                                <span class="badge badge-info badge-sm">OnDeck</span>
+                                {% endif %}
+                                {% if file.is_watchlist %}
+                                <span class="badge badge-muted badge-sm">Watchlist</span>
+                                {% endif %}
+                                {% if not file.is_ondeck and not file.is_watchlist %}
+                                <span class="badge badge-warning badge-sm">Other</span>
+                                {% endif %}
+                            </td>
+                            <td class="user-badges">
+                                {% if file.users %}
+                                    {% for user in file.users %}
+                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted">
+                                {% if file.cache_age_hours < 24 %}
+                                    {{ file.cache_age_hours|round(1) }}h
+                                {% else %}
+                                    {{ (file.cache_age_hours / 24)|round(1) }}d
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6" class="text-muted text-center">No files in cache</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Activity and Expiring Section -->
+<div class="grid grid-2 mb-2">
+    <!-- Recently Cached -->
+    <div class="card">
+        <div class="card-header">
+            <i data-lucide="activity"></i>
+            <h2>Recently Cached</h2>
+        </div>
+        <div class="card-body card-body-scrollable" style="padding: 0;">
+            <table class="compact-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Size</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
+                        <th>Source</th>
+                        <th>Users</th>
+                        <th>Age</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if data.activity.recently_cached %}
+                        {% for file in data.activity.recently_cached %}
+                        <tr>
+                            <td title="{{ file.path }}">{{ file.filename|truncate(30) }}</td>
+                            <td class="text-muted">{{ file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
+                            <td>
+                                <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
+                                    {{ file.priority_score }}
+                                </span>
+                            </td>
+                            {% endif %}
+                            <td class="source-badges">
+                                {% if file.is_ondeck %}
+                                <span class="badge badge-info badge-sm">OnDeck</span>
+                                {% endif %}
+                                {% if file.is_watchlist %}
+                                <span class="badge badge-muted badge-sm">Watchlist</span>
+                                {% endif %}
+                                {% if not file.is_ondeck and not file.is_watchlist %}
+                                <span class="badge badge-warning badge-sm">Other</span>
+                                {% endif %}
+                            </td>
+                            <td class="user-badges">
+                                {% if file.users %}
+                                    {% for user in file.users %}
+                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted">{{ file.cache_age_hours|round(1) }}h</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6" class="text-muted text-center">No recently cached files</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Expiring Soon / Watchlist Retention -->
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <i data-lucide="timer"></i>
+                <h2>Watchlist Expiring Soon</h2>
+                {% if not data.config.eviction_enabled %}
+                <span class="badge badge-muted badge-sm" title="Smart eviction is disabled. These items will lose watchlist protection but won't be auto-removed.">Eviction Off</span>
+                {% endif %}
+            </div>
+            <select class="form-select" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.85rem;"
+                    onchange="window.location.href='/cache/drive?expiring_within=' + this.value">
+                <option value="3" {% if data.expiring_within_days == 3 %}selected{% endif %}>3 days</option>
+                <option value="7" {% if data.expiring_within_days == 7 %}selected{% endif %}>7 days</option>
+                <option value="14" {% if data.expiring_within_days == 14 %}selected{% endif %}>14 days</option>
+                <option value="30" {% if data.expiring_within_days == 30 %}selected{% endif %}>30 days</option>
+            </select>
+        </div>
+        <div class="card-body card-body-scrollable" style="padding: 0;">
+            <table class="compact-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Size</th>
+                        {% if data.config.eviction_enabled %}<th>Priority</th>{% endif %}
+                        <th>Source</th>
+                        <th>Users</th>
+                        <th>Expires</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if data.expiring_soon %}
+                        {% for item in data.expiring_soon %}
+                        <tr>
+                            <td title="{{ item.file.path }}">{{ item.file.filename|truncate(30) }}</td>
+                            <td class="text-muted">{{ item.file.size_display }}</td>
+                            {% if data.config.eviction_enabled %}
+                            <td>
+                                <span class="priority-badge {{ 'high' if item.file.priority_score >= 70 else 'medium' if item.file.priority_score >= 40 else 'low' }}">
+                                    {{ item.file.priority_score }}
+                                </span>
+                            </td>
+                            {% endif %}
+                            <td class="source-badges">
+                                {% if item.file.is_ondeck %}
+                                <span class="badge badge-info badge-sm">OnDeck</span>
+                                {% endif %}
+                                {% if item.file.is_watchlist %}
+                                <span class="badge badge-muted badge-sm">Watchlist</span>
+                                {% endif %}
+                                {% if not item.file.is_ondeck and not item.file.is_watchlist %}
+                                <span class="badge badge-warning badge-sm">Other</span>
+                                {% endif %}
+                            </td>
+                            <td class="user-badges">
+                                {% if item.file.users %}
+                                    {% for user in item.file.users %}
+                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="{% if item.days_remaining <= 0 %}text-error{% elif item.days_remaining <= 1 %}text-error{% else %}text-warning{% endif %}">
+                                {% if item.days_remaining <= 0 %}
+                                Expired
+                                {% else %}
+                                {{ item.days_remaining }}d
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6" class="text-muted text-center">No files expiring within {{ data.expiring_within_days }} days</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script>lucide.createIcons();</script>
