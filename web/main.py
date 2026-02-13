@@ -125,7 +125,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="PlexCache-R",
     description="Web UI for PlexCache-R media cache management",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan
 )
 
