@@ -305,12 +305,10 @@ def init_web_cache():
 
         summary = load_last_run_summary()
         if summary:
+            total_bytes = summary.get("bytes_cached", 0) + summary.get("bytes_restored", 0)
             stats["last_run_summary"] = {
                 "status": summary.get("status", "unknown"),
-                "files_cached": summary.get("files_cached", 0),
-                "files_restored": summary.get("files_restored", 0),
-                "bytes_cached_display": _OR._format_bytes(summary["bytes_cached"]) if summary.get("bytes_cached") else "",
-                "bytes_restored_display": _OR._format_bytes(summary["bytes_restored"]) if summary.get("bytes_restored") else "",
+                "total_bytes_display": _OR._format_bytes(total_bytes) if total_bytes else "",
                 "duration_display": _OR._format_duration(summary.get("duration_seconds", 0)),
                 "error_count": summary.get("error_count", 0),
                 "dry_run": summary.get("dry_run", False),

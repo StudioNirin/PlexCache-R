@@ -102,10 +102,7 @@
         <span style="font-size: 0.7rem; color: var(--warning);">{{ stats.last_run_summary.error_count }} error{{ 's' if stats.last_run_summary.error_count != 1 }}</span>
         {% endif %}
         <div style="font-size: 0.75rem; color: var(--plex-text-muted); margin-top: 0.15rem;">
-            {% set parts = [] %}
-            {% if stats.last_run_summary.files_cached > 0 %}{% set _ = parts.append(stats.last_run_summary.files_cached ~ ' cached') %}{% endif %}
-            {% if stats.last_run_summary.files_restored > 0 %}{% set _ = parts.append(stats.last_run_summary.files_restored ~ ' restored') %}{% endif %}
-            {% if parts %}{{ parts|join(', ') }} &middot; {% endif %}{{ stats.last_run_summary.duration_display }}
+            {% if stats.last_run_summary.total_bytes_display %}{{ stats.last_run_summary.total_bytes_display }} &middot; {% endif %}{{ stats.last_run_summary.duration_display }}
         </div>
     </div>
     {% endif %}
