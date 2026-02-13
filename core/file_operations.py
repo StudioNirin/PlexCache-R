@@ -3488,17 +3488,21 @@ class FileMover:
         # After copying to cache, renaming through /mnt/user/ targets the cache
         # copy (FUSE prefers cache), not the array original. We must operate on
         # /mnt/user0/ (array-direct) to rename the correct file.
-        array_direct = get_array_direct_path(array_file)
-        if array_direct != array_file:
-            if os.path.isfile(array_direct):
-                array_file = array_direct
-            else:
+        #
+        # Direct probe (defense in depth): even if ZFS detection incorrectly
+        # marked a hybrid share as pool-only, this probe finds the real file.
+        if array_file.startswith('/mnt/user/'):
+            user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
+            if os.path.isfile(user0_path):
+                logging.debug(f"Using array-direct path for .plexcached rename: {user0_path}")
+                array_file = user0_path
+            elif not os.path.exists('/mnt/user0'):
                 raise IOError(
-                    f"Cannot safely create .plexcached backup: array-direct path not accessible "
-                    f"at {array_direct}. If running in Docker, ensure /mnt/user0 is mounted "
-                    f"as a volume (e.g., -v /mnt/user0:/mnt/user0). Without this mount, "
-                    f"the rename operates through FUSE and may target the wrong file."
+                    f"Cannot safely create .plexcached backup: /mnt/user0 not accessible. "
+                    f"If running in Docker, ensure /mnt/user0 is mounted as a volume "
+                    f"(e.g., -v /mnt/user0:/mnt/user0)."
                 )
+            # else: /mnt/user0 accessible but file not there — true pool-only, FUSE path safe
 
         plexcached_file = array_file + PLEXCACHED_EXTENSION
         array_path = os.path.dirname(array_file)
@@ -3831,11 +3835,15 @@ class FileMover:
             array_file = os.path.join(array_path, os.path.basename(cache_file))
 
             # Safety: ensure array operations use array-direct path (/mnt/user0/)
-            # to avoid FUSE path issues (see _move_to_cache for full explanation)
-            array_direct = get_array_direct_path(array_file)
-            if array_direct != array_file:
-                array_file = array_direct
-                array_path = os.path.dirname(array_file)
+            # to avoid FUSE path issues (see _move_to_cache for full explanation).
+            # Direct probe (defense in depth): bypasses ZFS prefix detection.
+            if array_file.startswith('/mnt/user/'):
+                user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
+                user0_plexcached = user0_path + PLEXCACHED_EXTENSION
+                if os.path.isfile(user0_path) or os.path.isfile(user0_plexcached):
+                    logging.debug(f"Using array-direct path for restore: {user0_path}")
+                    array_file = user0_path
+                    array_path = os.path.dirname(array_file)
 
             plexcached_file = array_file + PLEXCACHED_EXTENSION
 

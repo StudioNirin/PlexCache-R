@@ -544,6 +544,15 @@ class PlexCacheApp:
         files at /mnt/user0/ — their files live on the ZFS pool. For these paths, we
         skip the conversion so file operations work correctly.
 
+        Hybrid detection: When a share has a ZFS cache but also has files on the array
+        (shareUseCache=yes/prefer), it is NOT pool-only. We verify by probing /mnt/user0/
+        for actual array files. If found, the share is hybrid and array-direct conversion
+        stays enabled — critical for correct .plexcached renames.
+
+        Note: This detection is a performance hint for get_array_direct_path(). Safety-
+        critical operations (_move_to_cache, _move_to_array) also probe /mnt/user0/
+        directly as defense in depth.
+
         Only runs on Unraid (non-ZFS systems are unaffected).
         """
         if not self.system_detector.is_unraid:
@@ -559,9 +568,35 @@ class PlexCacheApp:
             if real_path.startswith('/mnt/user/'):
                 is_zfs = detect_zfs(real_path)
                 if is_zfs:
-                    prefix = real_path.rstrip('/') + '/'
-                    zfs_prefixes.add(prefix)
-                    logging.info(f"ZFS pool detected for: {real_path} (array-direct conversion disabled)")
+                    # Verify truly pool-only by probing /mnt/user0/ for array files
+                    user0_path = '/mnt/user0/' + real_path[len('/mnt/user/'):]
+                    if os.path.exists('/mnt/user0'):
+                        user0_has_files = False
+                        if os.path.isdir(user0_path):
+                            try:
+                                with os.scandir(user0_path) as it:
+                                    user0_has_files = next(it, None) is not None
+                            except OSError:
+                                pass
+
+                        if user0_has_files:
+                            logging.info(
+                                f"ZFS cache detected for: {real_path}, but array files also exist "
+                                f"at {user0_path} — share is NOT pool-only (likely shareUseCache=yes/prefer). "
+                                f"Array-direct conversion remains enabled."
+                            )
+                        else:
+                            prefix = real_path.rstrip('/') + '/'
+                            zfs_prefixes.add(prefix)
+                            logging.info(f"ZFS pool-only detected for: {real_path} (array-direct conversion disabled)")
+                    else:
+                        # /mnt/user0 not accessible — cannot verify, assume pool-only
+                        prefix = real_path.rstrip('/') + '/'
+                        zfs_prefixes.add(prefix)
+                        logging.warning(
+                            f"ZFS detected for {real_path} but /mnt/user0 not accessible to verify. "
+                            f"Assuming pool-only."
+                        )
                 else:
                     logging.debug(f"No ZFS detected for: {real_path} (standard array path)")
 

@@ -59,6 +59,11 @@ def resolve_user0_to_disk(user0_path: str) -> Optional[str]:
 # because that path only shows standard array disks. Using /mnt/user/ is safe for
 # these paths since there is no cache/array split — no FUSE ambiguity exists.
 # Populated at startup by detect_zfs() checks on each path_mapping's real_path.
+#
+# NOTE: This is a performance hint — get_array_direct_path() uses it to avoid
+# unnecessary /mnt/user0/ conversion for known pool-only shares. Safety-critical
+# operations (_move_to_cache, _move_to_array) also probe /mnt/user0/ directly
+# as defense in depth, so incorrect detection here won't cause data loss.
 _zfs_user_prefixes: set = set()
 
 
@@ -83,6 +88,10 @@ def get_array_direct_path(user_share_path: str) -> str:
     /mnt/user0/ — their files live on a ZFS pool, not array disks. For these
     paths, we skip the conversion and keep /mnt/user/ which is safe because
     there is no cache/array FUSE ambiguity.
+
+    NOTE: This function uses _zfs_user_prefixes as a performance hint. Safety-
+    critical callers (_move_to_cache, _move_to_array) also probe the filesystem
+    directly as defense in depth.
 
     Args:
         user_share_path: A path potentially starting with /mnt/user/
@@ -346,15 +355,18 @@ class SystemDetector:
         self.is_docker = self._detect_docker()
         
     def _detect_unraid(self) -> bool:
-        """Detect if running on Unraid system."""
-        os_info = {
-            'Linux': '/mnt/user0/',
-            'Darwin': None,
-            'Windows': None
-        }
-        
-        unraid_path = os_info.get(self.os_name)
-        return os.path.exists(unraid_path) if unraid_path else False
+        """Detect if running on Unraid system.
+
+        Primary check: kernel version string contains 'Unraid' (e.g., '6.12.54-Unraid').
+        Fallback: /mnt/user0/ exists (standard array systems).
+        The kernel check works for all Unraid setups including ZFS-only pools
+        where /mnt/user0/ doesn't exist.
+        """
+        if self.os_name != 'Linux':
+            return False
+        if 'unraid' in platform.release().lower():
+            return True
+        return os.path.exists('/mnt/user0/')
     
     def _detect_docker(self) -> bool:
         """Detect if running inside a Docker container."""
