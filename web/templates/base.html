@@ -42,7 +42,7 @@
             <i data-lucide="menu"></i>
         </button>
         <div class="mobile-brand">
-            <i data-lucide="hard-drive"></i>
+            <div class="sidebar-brand-icon"><i data-lucide="hard-drive"></i></div>
             <span>PlexCache-R</span>
         </div>
         <div class="mobile-actions">
@@ -67,7 +67,7 @@
         <!-- Sidebar -->
         <nav class="sidebar">
             <div class="sidebar-brand">
-                <i data-lucide="hard-drive"></i>
+                <div class="sidebar-brand-icon"><i data-lucide="hard-drive"></i></div>
                 <span>PlexCache-R</span>
                 {% if image_tag is defined and image_tag != 'latest' %}
                 <span class="dev-badge">{{ image_tag | upper }}</span>
