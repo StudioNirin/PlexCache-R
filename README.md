@@ -1,9 +1,9 @@
-# PlexCache-R V3.0: Automate Plex Media Management
+# PlexCache-D V3.0: Automate Plex Media Management
 ### Updated 2/12/26
 
 ## Current Bugs / Todo List
 
-Now moved to a discussion page [HERE](https://github.com/StudioNirin/PlexCache-R/discussions/16)
+Now moved to a discussion page [HERE](https://github.com/StudioNirin/PlexCache-D/discussions/16)
 
 ## Overview
 Automate Plex media management: Efficiently transfer media from the On Deck/Watchlist to the cache, and seamlessly move watched media back to their respective locations.
