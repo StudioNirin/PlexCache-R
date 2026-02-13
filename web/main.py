@@ -1,4 +1,4 @@
-"""PlexCache-R Web UI - FastAPI Application"""
+"""PlexCache-D Web UI - FastAPI Application"""
 
 import logging
 from contextlib import asynccontextmanager
@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
     # Startup
     _suppress_noisy_loggers()
-    print(f"PlexCache-R Web UI starting...")
+    print(f"PlexCache-D Web UI starting...")
     print(f"Project root: {PROJECT_ROOT}")
 
     # Detect ZFS-backed path mappings before any file operations
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    print("PlexCache-R Web UI shutting down...")
+    print("PlexCache-D Web UI shutting down...")
     scheduler.stop()
 
     # Stop web cache background refresh
@@ -123,8 +123,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="PlexCache-R",
-    description="Web UI for PlexCache-R media cache management",
+    title="PlexCache-D",
+    description="Web UI for PlexCache-D media cache management",
     version="0.1.0",
     lifespan=lifespan
 )
