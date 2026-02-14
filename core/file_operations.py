@@ -2277,26 +2277,41 @@ class FileFilter:
 
             # If array version also exists, rename it to .plexcached (preserve as backup)
             # This ensures we have a recovery option if the cache drive fails
-            if os.path.isfile(array_file):
-                plexcached_file = array_file + PLEXCACHED_EXTENSION
+            #
+            # Defense in depth: If array_file is a /mnt/user/ path (ZFS, no conversion),
+            # probe /mnt/user0/ to verify a real array copy exists. On hybrid ZFS shares,
+            # /mnt/user/ shows the cache file through FUSE — operating on it would destroy
+            # the only copy.
+            actual_array_file = array_file
+            if array_file.startswith('/mnt/user/'):
+                user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
+                if os.path.isfile(user0_path):
+                    actual_array_file = user0_path
+                elif os.path.exists('/mnt/user0'):
+                    # /mnt/user0 exists but file not there — FUSE is showing cache file
+                    logging.debug(f"Skipping array backup: file not at {user0_path} (FUSE/cache only)")
+                    actual_array_file = None
+
+            if actual_array_file and os.path.isfile(actual_array_file):
+                plexcached_file = actual_array_file + PLEXCACHED_EXTENSION
                 # Only rename if .plexcached doesn't already exist
                 if not os.path.isfile(plexcached_file):
                     try:
-                        os.rename(array_file, plexcached_file)
+                        os.rename(actual_array_file, plexcached_file)
                         logging.info(f"Created backup of array file: {os.path.basename(plexcached_file)}")
                     except FileNotFoundError:
                         pass  # File already removed
                     except OSError as e:
-                        logging.error(f"Failed to create backup of array file {array_file}: {type(e).__name__}: {e}")
+                        logging.error(f"Failed to create backup of array file {actual_array_file}: {type(e).__name__}: {e}")
                 else:
                     # .plexcached backup already exists, safe to remove duplicate array file
                     try:
-                        os.remove(array_file)
-                        logging.debug(f"Removed redundant array file (backup exists): {os.path.basename(array_file)}")
+                        os.remove(actual_array_file)
+                        logging.debug(f"Removed redundant array file (backup exists): {os.path.basename(actual_array_file)}")
                     except FileNotFoundError:
                         pass
                     except OSError as e:
-                        logging.error(f"Failed to remove array file {array_file}: {type(e).__name__}: {e}")
+                        logging.error(f"Failed to remove array file {actual_array_file}: {type(e).__name__}: {e}")
 
             return False
 
@@ -3476,6 +3491,18 @@ class FileMover:
         If interrupted at any point, the original array file remains safe.
         Worst case: an orphaned cache copy exists that can be deleted.
         """
+        # Defense in depth: If array_file is a /mnt/user/ path (ZFS, no conversion),
+        # probe /mnt/user0/ for the real array file. On hybrid ZFS shares, /mnt/user/
+        # shows the cache file through FUSE — renaming it would corrupt the only copy.
+        if array_file.startswith('/mnt/user/'):
+            user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
+            if os.path.isfile(user0_path):
+                array_file = user0_path
+            elif os.path.exists('/mnt/user0'):
+                # /mnt/user0 exists but file not found — no array copy to back up
+                # The file visible at /mnt/user/ is the cache copy through FUSE
+                logging.debug(f"No array copy at {user0_path}, skipping .plexcached backup")
+
         plexcached_file = array_file + PLEXCACHED_EXTENSION
         array_path = os.path.dirname(array_file)
 
@@ -3805,6 +3832,24 @@ class FileMover:
         try:
             # Derive the original array file path and .plexcached path
             array_file = os.path.join(array_path, os.path.basename(cache_file))
+
+            # Defense in depth: If array_path is a /mnt/user/ path (ZFS, no conversion),
+            # probe /mnt/user0/ for the real array location. On hybrid ZFS shares,
+            # /mnt/user/ shows the cache file through FUSE.
+            if array_file.startswith('/mnt/user/'):
+                user0_file = '/mnt/user0/' + array_file[len('/mnt/user/'):]
+                user0_plexcached = user0_file + PLEXCACHED_EXTENSION
+                if os.path.isfile(user0_file) or os.path.isfile(user0_plexcached):
+                    array_file = user0_file
+                    array_path = os.path.dirname(user0_file)
+                elif os.path.exists('/mnt/user0'):
+                    # /mnt/user0 exists but no file or .plexcached there
+                    # Check if the directory exists — if so, use user0 path for writes
+                    user0_dir = os.path.dirname(user0_file)
+                    if os.path.isdir(user0_dir):
+                        array_file = user0_file
+                        array_path = user0_dir
+
             plexcached_file = array_file + PLEXCACHED_EXTENSION
 
             # Track operation type for activity logging
