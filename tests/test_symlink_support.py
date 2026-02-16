@@ -14,7 +14,7 @@ import pytest
 if 'fcntl' not in sys.modules:
     sys.modules['fcntl'] = MagicMock()
 
-from core.file_operations import FileMover, PlexcachedRestorer, PLEXCACHED_EXTENSION
+from core.file_operations import FileMover, FileFilter, PlexcachedRestorer, PLEXCACHED_EXTENSION
 
 # Skip symlink tests on Windows (requires developer mode or admin privileges)
 needs_symlink = pytest.mark.skipif(
@@ -322,9 +322,9 @@ class TestMoveToArray:
         cache_dir = tmp_path / "cache" / "Movies"
         cache_dir.mkdir(parents=True)
         cache_file = cache_dir / "movie.mkv"
-        cache_file.write_bytes(b"cached content")
+        cache_file.write_bytes(b"original content")
 
-        # .plexcached backup on array
+        # .plexcached backup on array (same size as cache so rename path is taken)
         plexcached = storage_dir / ("movie.mkv" + PLEXCACHED_EXTENSION)
         plexcached.write_bytes(b"original content")
 
@@ -391,14 +391,30 @@ class TestGetMoveCommandSymlinkGuard:
 # _should_add_to_cache / _should_add_to_array symlink guard tests
 # ============================================================================
 
+
+def _make_symlink_filter(tmp_path, *, use_symlinks=True):
+    """Build a FileFilter configured for symlink testing."""
+    exclude_file = str(tmp_path / "exclude.txt")
+    with open(exclude_file, "w"):
+        pass
+
+    return FileFilter(
+        real_source=str(tmp_path / "storage"),
+        cache_dir=str(tmp_path / "cache"),
+        is_unraid=False,
+        mover_cache_exclude_file=exclude_file,
+        use_symlinks=use_symlinks,
+    )
+
+
 class TestShouldAddSymlinkGuards:
     """Test that _should_add_to_cache and _should_add_to_array don't treat symlinks as real files."""
 
     @needs_symlink
     def test_should_add_to_cache_does_not_delete_symlink(self, tmp_path):
         """Second run: file already on cache with symlink at original — symlink must survive."""
-        mover = _make_symlink_mover(tmp_path, use_symlinks=True, create_backups=True)
-        mover.last_already_cached_count = 0
+        filt = _make_symlink_filter(tmp_path, use_symlinks=True)
+        filt.last_already_cached_count = 0
 
         storage_dir = tmp_path / "storage" / "Movies"
         storage_dir.mkdir(parents=True)
@@ -416,7 +432,7 @@ class TestShouldAddSymlinkGuards:
         original = storage_dir / "movie.mkv"
         os.symlink(str(cache_file), str(original))
 
-        result = mover._should_add_to_cache(str(original), str(cache_file))
+        result = filt._should_add_to_cache(str(original), str(cache_file))
 
         # Should return False (already cached)
         assert result is False
@@ -428,8 +444,8 @@ class TestShouldAddSymlinkGuards:
     @needs_symlink
     def test_should_add_to_cache_recreates_missing_symlink(self, tmp_path):
         """If symlink was deleted (e.g., by Plex scan), it should be re-created."""
-        mover = _make_symlink_mover(tmp_path, use_symlinks=True, create_backups=True)
-        mover.last_already_cached_count = 0
+        filt = _make_symlink_filter(tmp_path, use_symlinks=True)
+        filt.last_already_cached_count = 0
 
         storage_dir = tmp_path / "storage" / "Movies"
         storage_dir.mkdir(parents=True)
@@ -446,7 +462,7 @@ class TestShouldAddSymlinkGuards:
         original = storage_dir / "movie.mkv"
         # No symlink and no real file at original location
 
-        result = mover._should_add_to_cache(str(original), str(cache_file))
+        result = filt._should_add_to_cache(str(original), str(cache_file))
 
         assert result is False
         # Symlink should be re-created
@@ -456,7 +472,7 @@ class TestShouldAddSymlinkGuards:
     @needs_symlink
     def test_should_add_to_array_does_not_delete_cache_for_symlink(self, tmp_path):
         """Eviction: symlink at array path must not cause cache file deletion."""
-        mover = _make_symlink_mover(tmp_path, use_symlinks=True, create_backups=True)
+        filt = _make_symlink_filter(tmp_path, use_symlinks=True)
 
         storage_dir = tmp_path / "storage" / "Movies"
         storage_dir.mkdir(parents=True)
@@ -470,8 +486,8 @@ class TestShouldAddSymlinkGuards:
         original = storage_dir / "movie.mkv"
         os.symlink(str(cache_file), str(original))
 
-        should_add, cache_removed = mover._should_add_to_array(
-            str(original), str(cache_file)
+        should_add, cache_removed = filt._should_add_to_array(
+            str(original), str(cache_file), media_to_cache=[]
         )
 
         # Should add to array (symlink doesn't count as real file)
