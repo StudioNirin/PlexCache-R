@@ -525,7 +525,9 @@ class PlexCacheApp:
             hardlinked_files=self.config_manager.cache.hardlinked_files,
             cleanup_empty_folders=self.config_manager.cache.cleanup_empty_folders,
             use_symlinks=self.config_manager.cache.use_symlinks,
-            bytes_progress_callback=self._bytes_progress_callback
+            bytes_progress_callback=self._bytes_progress_callback,
+            ondeck_tracker=self.ondeck_tracker,
+            watchlist_tracker=self.watchlist_tracker
         )
 
     def _init_cache_management(self) -> None:
@@ -2163,6 +2165,8 @@ class PlexCacheApp:
                 # Clean up tracking
                 self.file_filter.remove_files_from_exclude_list([cache_path])
                 self.timestamp_tracker.remove_entry(cache_path)
+                self.ondeck_tracker.mark_uncached(cache_path)
+                self.watchlist_tracker.mark_uncached(cache_path)
 
                 files_evicted += 1
                 bytes_freed += file_size

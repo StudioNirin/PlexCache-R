@@ -281,6 +281,78 @@ class JSONTracker:
 
             return len(stale)
 
+    def mark_cached(self, file_path: str, source: str, cached_at: Optional[str] = None) -> None:
+        """Mark an entry as cached with source and timestamp.
+
+        Sets is_cached=True, cache_source, and cached_at on the matching entry.
+        Uses filename fallback if full path doesn't match directly.
+        No-op if entry doesn't exist (file may not be on OnDeck/Watchlist).
+
+        Args:
+            file_path: Path to the media file.
+            source: Cache source (e.g., "ondeck", "watchlist", "pre-existing").
+            cached_at: ISO timestamp string. Defaults to now.
+        """
+        with self._lock:
+            entry = None
+            key = file_path
+            if file_path in self._data:
+                entry = self._data[file_path]
+            else:
+                result = self._find_entry_by_filename(file_path)
+                if result:
+                    key, entry = result
+
+            if entry is None:
+                return
+
+            entry['is_cached'] = True
+            entry['cache_source'] = source
+            entry['cached_at'] = cached_at or datetime.now().isoformat()
+            self._save()
+            logging.debug(f"Marked {self._tracker_name} entry as cached: {os.path.basename(key)} (source={source})")
+
+    def mark_uncached(self, file_path: str) -> None:
+        """Clear cache status from an entry.
+
+        Sets is_cached=False and removes cache_source and cached_at.
+        No-op if entry doesn't exist.
+
+        Args:
+            file_path: Path to the media file.
+        """
+        with self._lock:
+            entry = None
+            key = file_path
+            if file_path in self._data:
+                entry = self._data[file_path]
+            else:
+                result = self._find_entry_by_filename(file_path)
+                if result:
+                    key, entry = result
+
+            if entry is None:
+                return
+
+            entry['is_cached'] = False
+            entry.pop('cache_source', None)
+            entry.pop('cached_at', None)
+            self._save()
+            logging.debug(f"Marked {self._tracker_name} entry as uncached: {os.path.basename(key)}")
+
+    def get_cached_entries(self) -> Dict[str, dict]:
+        """Return entries that are currently marked as cached.
+
+        Returns:
+            Dict of {path: entry} for entries where is_cached is True.
+        """
+        with self._lock:
+            return {
+                path: dict(entry)
+                for path, entry in self._data.items()
+                if entry.get('is_cached', False)
+            }
+
 
 class CacheTimestampTracker:
     """Thread-safe tracker for when files were cached and their source.
@@ -2834,6 +2906,12 @@ class FileFilter:
         if self.timestamp_tracker:
             self.timestamp_tracker.record_cache_time(cache_file_name, "pre-existing")
 
+        # Mark as cached in OnDeck/Watchlist trackers
+        if self.ondeck_tracker:
+            self.ondeck_tracker.mark_cached(file, "pre-existing")
+        if self.watchlist_tracker:
+            self.watchlist_tracker.mark_cached(file, "pre-existing")
+
         logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
 
         # Track count of files already on cache
@@ -3480,7 +3558,9 @@ class FileMover:
                  hardlinked_files: str = "skip",
                  cleanup_empty_folders: bool = True,
                  use_symlinks: bool = False,
-                 bytes_progress_callback: Optional[Callable[[int, int], None]] = None):
+                 bytes_progress_callback: Optional[Callable[[int, int], None]] = None,
+                 ondeck_tracker: Optional['OnDeckTracker'] = None,
+                 watchlist_tracker: Optional['WatchlistTracker'] = None):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
@@ -3495,6 +3575,8 @@ class FileMover:
         self.cleanup_empty_folders = cleanup_empty_folders  # Whether to remove empty parent folders after moves
         self.use_symlinks = use_symlinks  # Whether to create symlinks at original locations after caching
         self._bytes_progress_callback = bytes_progress_callback  # Byte-level progress for operation banner
+        self.ondeck_tracker = ondeck_tracker
+        self.watchlist_tracker = watchlist_tracker
         self._exclude_file_lock = threading.Lock()
         # Progress tracking
         self._progress_lock = threading.Lock()
@@ -4296,6 +4378,13 @@ class FileMover:
                     media_type=media_info.get("media_type"),
                     episode_info=media_info.get("episode_info")
                 )
+
+            # Mark as cached in OnDeck/Watchlist trackers
+            cache_source = self._source_map.get(original_path, "unknown") if original_path else "unknown"
+            if self.ondeck_tracker:
+                self.ondeck_tracker.mark_cached(original_path or cache_file_name, cache_source)
+            if self.watchlist_tracker:
+                self.watchlist_tracker.mark_cached(original_path or cache_file_name, cache_source)
 
             # Log successful move - both to logging (for web UI) and tqdm (for CLI progress bar)
             from tqdm import tqdm
