@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import List, Set, Optional, Tuple
+from typing import Dict, List, Set, Optional, Tuple
 import os
 
 from core import __version__
@@ -59,6 +59,7 @@ class PlexCacheApp:
         self.watchlist_items = set()
         self.source_map = {}  # Maps file paths to source ('ondeck' or 'watchlist')
         self.media_info_map = {}  # Maps file paths to Plex media type info
+        self.subtitle_map: Dict[str, List[str]] = {}  # Maps video real paths to subtitle paths
         # Tracking for restore vs move operations (for summary)
         self.restored_count = 0
         self.restored_bytes = 0
@@ -993,15 +994,19 @@ class PlexCacheApp:
 
         # Fetch subtitles for OnDeck media (already using real paths)
         logging.debug("Finding subtitles for OnDeck media...")
-        ondeck_with_subtitles = self.subtitle_finder.get_media_subtitles(list(self.ondeck_items), files_to_skip=set(self.files_to_skip))
-        subtitle_count = len(ondeck_with_subtitles) - len(self.ondeck_items)
-        modified_paths_set.update(ondeck_with_subtitles)
+        ondeck_subtitle_map = self.subtitle_finder.get_media_subtitles_grouped(list(self.ondeck_items), files_to_skip=set(self.files_to_skip))
+        self.subtitle_map.update(ondeck_subtitle_map)
+        subtitle_count = sum(len(subs) for subs in ondeck_subtitle_map.values())
+        # Add all subtitles to the modified paths set
+        for subs in ondeck_subtitle_map.values():
+            modified_paths_set.update(subs)
         logging.debug(f"Found {subtitle_count} subtitle files for OnDeck media")
 
         # Track source for OnDeck subtitles
-        for item in ondeck_with_subtitles:
-            if item not in self.source_map:
-                self.source_map[item] = "ondeck"
+        for subs in ondeck_subtitle_map.values():
+            for item in subs:
+                if item not in self.source_map:
+                    self.source_map[item] = "ondeck"
 
         if self.should_stop:
             logging.info("Operation stopped during media processing")
@@ -1157,8 +1162,10 @@ class PlexCacheApp:
                 }
 
             result_set.update(modified_items)
-            subtitles = self.subtitle_finder.get_media_subtitles(modified_items, files_to_skip=set(self.files_to_skip))
-            result_set.update(subtitles)
+            watchlist_subtitle_map = self.subtitle_finder.get_media_subtitles_grouped(modified_items, files_to_skip=set(self.files_to_skip))
+            self.subtitle_map.update(watchlist_subtitle_map)
+            for subs in watchlist_subtitle_map.values():
+                result_set.update(subs)
 
         except Exception as e:
             logging.exception(f"An error occurred while processing the watchlist: {type(e).__name__}: {e}")
@@ -1351,6 +1358,40 @@ class PlexCacheApp:
                 if len(files_to_cache) > 6:
                     logging.info(f"  ...and {len(files_to_cache) - 6} more")
         self._safe_move_files(self.media_to_cache, 'cache')
+
+        # Associate subtitles with their parent videos in the timestamp tracker
+        if self.timestamp_tracker and self.subtitle_map:
+            cache_subtitle_map: Dict[str, List[str]] = {}
+            for real_video, real_subs in self.subtitle_map.items():
+                if not real_subs:
+                    continue
+                # Convert real paths to cache paths
+                cache_video = None
+                if self.file_mover and self.file_mover.path_modifier:
+                    cache_video, _ = self.file_mover.path_modifier.convert_real_to_cache(real_video)
+                elif self.config_manager.paths.real_source and self.config_manager.paths.cache_dir:
+                    cache_video = real_video.replace(
+                        self.config_manager.paths.real_source,
+                        self.config_manager.paths.cache_dir, 1
+                    )
+                if cache_video:
+                    cache_subs = []
+                    for real_sub in real_subs:
+                        if self.file_mover and self.file_mover.path_modifier:
+                            cache_sub, _ = self.file_mover.path_modifier.convert_real_to_cache(real_sub)
+                        elif self.config_manager.paths.real_source and self.config_manager.paths.cache_dir:
+                            cache_sub = real_sub.replace(
+                                self.config_manager.paths.real_source,
+                                self.config_manager.paths.cache_dir, 1
+                            )
+                        else:
+                            cache_sub = None
+                        if cache_sub:
+                            cache_subs.append(cache_sub)
+                    if cache_subs:
+                        cache_subtitle_map[cache_video] = cache_subs
+            if cache_subtitle_map:
+                self.timestamp_tracker.associate_subtitles(cache_subtitle_map)
 
         # Enrich pre-existing cached files with media type metadata
         # Files already on cache were recorded as "pre-existing" without media_type.

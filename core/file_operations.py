@@ -296,6 +296,7 @@ class CacheTimestampTracker:
         self.timestamp_file = timestamp_file
         self._lock = threading.Lock()
         self._timestamps: Dict[str, dict] = {}
+        self._subtitle_to_parent: Dict[str, str] = {}  # reverse index: subtitle path -> parent video path
         self._load()
 
     def _load(self) -> None:
@@ -324,6 +325,12 @@ class CacheTimestampTracker:
                 if migrated:
                     self._save()
                     logging.info("Migrated timestamp file to new format with source tracking")
+
+                # Build reverse index from existing subtitle associations
+                self._build_subtitle_reverse_index()
+
+                # Migrate standalone subtitle entries to parent associations
+                self._migrate_standalone_subtitles()
 
                 logging.debug(f"Loaded {len(self._timestamps)} timestamps from {self.timestamp_file}")
         except (json.JSONDecodeError, IOError) as e:
@@ -386,14 +393,35 @@ class CacheTimestampTracker:
     def remove_entry(self, cache_file_path: str) -> None:
         """Remove a file's timestamp entry (when file is restored to array).
 
+        If removing a parent video, also clears its subtitles from the reverse index.
+        If removing a subtitle, also removes it from the parent's subtitles list.
+
         Args:
             cache_file_path: The path to the cached file.
         """
         with self._lock:
             if cache_file_path in self._timestamps:
+                # If this is a parent with subtitles, clear reverse index entries
+                entry = self._timestamps[cache_file_path]
+                if isinstance(entry, dict) and "subtitles" in entry:
+                    for sub_path in entry["subtitles"]:
+                        self._subtitle_to_parent.pop(sub_path, None)
                 del self._timestamps[cache_file_path]
                 self._save()
                 logging.debug(f"Removed cache timestamp for: {cache_file_path}")
+            elif cache_file_path in self._subtitle_to_parent:
+                # This is a subtitle — remove from parent's list and reverse index
+                parent_path = self._subtitle_to_parent.pop(cache_file_path)
+                parent_entry = self._timestamps.get(parent_path)
+                if parent_entry and isinstance(parent_entry, dict) and "subtitles" in parent_entry:
+                    try:
+                        parent_entry["subtitles"].remove(cache_file_path)
+                    except ValueError:
+                        pass
+                    if not parent_entry["subtitles"]:
+                        del parent_entry["subtitles"]
+                self._save()
+                logging.debug(f"Removed subtitle entry for: {cache_file_path}")
 
     def get_original_inode(self, cache_file_path: str) -> Optional[int]:
         """Get the original inode for a hard-linked file (for restoration).
@@ -413,6 +441,8 @@ class CacheTimestampTracker:
     def is_within_retention_period(self, cache_file_path: str, retention_hours: int) -> bool:
         """Check if a file is still within its cache retention period.
 
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
         Args:
             cache_file_path: The path to the cached file.
             retention_hours: How many hours files should stay on cache.
@@ -423,9 +453,14 @@ class CacheTimestampTracker:
         """
         with self._lock:
             if cache_file_path not in self._timestamps:
-                # No timestamp means we don't know when it was cached
-                # Default to allowing the move
-                return False
+                # Check if this is a subtitle with a parent
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent and parent in self._timestamps:
+                    cache_file_path = parent
+                else:
+                    # No timestamp means we don't know when it was cached
+                    # Default to allowing the move
+                    return False
 
             try:
                 entry = self._timestamps[cache_file_path]
@@ -460,6 +495,8 @@ class CacheTimestampTracker:
     def get_retention_remaining(self, cache_file_path: str, retention_hours: int) -> float:
         """Get hours remaining in retention period for a cached file.
 
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
         Args:
             cache_file_path: The path to the cached file.
             retention_hours: The configured retention period in hours.
@@ -470,7 +507,11 @@ class CacheTimestampTracker:
         """
         with self._lock:
             if cache_file_path not in self._timestamps:
-                return 0
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent and parent in self._timestamps:
+                    cache_file_path = parent
+                else:
+                    return 0
 
             try:
                 entry = self._timestamps[cache_file_path]
@@ -491,6 +532,8 @@ class CacheTimestampTracker:
     def get_source(self, cache_file_path: str) -> str:
         """Get the source (ondeck/watchlist) for a cached file.
 
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
         Args:
             cache_file_path: The path to the cached file.
 
@@ -499,7 +542,11 @@ class CacheTimestampTracker:
         """
         with self._lock:
             if cache_file_path not in self._timestamps:
-                return "unknown"
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent and parent in self._timestamps:
+                    cache_file_path = parent
+                else:
+                    return "unknown"
             entry = self._timestamps[cache_file_path]
             if isinstance(entry, dict):
                 return entry.get("source", "unknown")
@@ -507,6 +554,8 @@ class CacheTimestampTracker:
 
     def get_media_type(self, cache_file_path: str) -> Optional[str]:
         """Get the Plex media type for a cached file.
+
+        For subtitles associated with a parent video, delegates to the parent's entry.
 
         Args:
             cache_file_path: The path to the cached file.
@@ -516,12 +565,18 @@ class CacheTimestampTracker:
         """
         with self._lock:
             entry = self._timestamps.get(cache_file_path)
+            if not entry:
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent:
+                    entry = self._timestamps.get(parent)
             if entry and isinstance(entry, dict):
                 return entry.get("media_type")
             return None
 
     def get_episode_info(self, cache_file_path: str) -> Optional[Dict]:
         """Get episode info for a cached file.
+
+        For subtitles associated with a parent video, delegates to the parent's entry.
 
         Args:
             cache_file_path: The path to the cached file.
@@ -531,9 +586,165 @@ class CacheTimestampTracker:
         """
         with self._lock:
             entry = self._timestamps.get(cache_file_path)
+            if not entry:
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent:
+                    entry = self._timestamps.get(parent)
             if entry and isinstance(entry, dict):
                 return entry.get("episode_info")
             return None
+
+    def associate_subtitles(self, subtitle_map: Dict[str, List[str]]) -> None:
+        """Bulk-link subtitle files to their parent video entries.
+
+        For each (video, [subtitles]) pair:
+        - Adds a "subtitles" list to the parent's timestamp entry
+        - Removes any standalone subtitle entries from _timestamps
+        - Updates the reverse index
+
+        Args:
+            subtitle_map: Dict mapping parent video cache paths to lists of subtitle cache paths.
+        """
+        with self._lock:
+            changed = False
+            for parent_path, sub_paths in subtitle_map.items():
+                if not sub_paths:
+                    continue
+                parent_entry = self._timestamps.get(parent_path)
+                if parent_entry is None or not isinstance(parent_entry, dict):
+                    # Parent not tracked — leave subtitles as standalone
+                    continue
+
+                existing_subs = set(parent_entry.get("subtitles", []))
+                for sub_path in sub_paths:
+                    if sub_path not in existing_subs:
+                        existing_subs.add(sub_path)
+                        changed = True
+                    # Remove standalone subtitle entry if it exists
+                    if sub_path in self._timestamps:
+                        del self._timestamps[sub_path]
+                        changed = True
+                    # Update reverse index
+                    self._subtitle_to_parent[sub_path] = parent_path
+
+                parent_entry["subtitles"] = sorted(existing_subs)
+
+            if changed:
+                self._save()
+                logging.debug(f"Associated subtitles for {len(subtitle_map)} parent videos")
+
+    def get_subtitles(self, parent_path: str) -> List[str]:
+        """Get the list of subtitle files associated with a parent video.
+
+        Args:
+            parent_path: Cache path of the parent video file.
+
+        Returns:
+            List of subtitle cache paths, or empty list if none.
+        """
+        with self._lock:
+            entry = self._timestamps.get(parent_path)
+            if entry and isinstance(entry, dict):
+                return list(entry.get("subtitles", []))
+            return []
+
+    def find_parent_video(self, subtitle_path: str) -> Optional[str]:
+        """Find the parent video for a subtitle file via the reverse index.
+
+        Args:
+            subtitle_path: Cache path of the subtitle file.
+
+        Returns:
+            Cache path of the parent video, or None if not associated.
+        """
+        with self._lock:
+            return self._subtitle_to_parent.get(subtitle_path)
+
+    def _build_subtitle_reverse_index(self) -> None:
+        """Build _subtitle_to_parent from existing subtitle lists in entries.
+
+        Called during _load() — no lock needed (called within __init__).
+        """
+        self._subtitle_to_parent.clear()
+        for parent_path, entry in self._timestamps.items():
+            if isinstance(entry, dict) and "subtitles" in entry:
+                for sub_path in entry["subtitles"]:
+                    self._subtitle_to_parent[sub_path] = parent_path
+
+    def _migrate_standalone_subtitles(self) -> None:
+        """One-time migration: move standalone subtitle entries to parent associations.
+
+        Scans all entries for subtitle files not already in _subtitle_to_parent.
+        Derives the parent video path and links them if the parent exists.
+        Called during _load() — no lock needed (called within __init__).
+        """
+        standalone_subs = []
+        for path in list(self._timestamps.keys()):
+            if is_subtitle_file(path) and path not in self._subtitle_to_parent:
+                standalone_subs.append(path)
+
+        if not standalone_subs:
+            return
+
+        migrated_count = 0
+        for sub_path in standalone_subs:
+            parent_path = self._derive_parent_video_path(sub_path)
+            if parent_path and parent_path in self._timestamps:
+                # Link to parent
+                parent_entry = self._timestamps[parent_path]
+                if isinstance(parent_entry, dict):
+                    subs = parent_entry.get("subtitles", [])
+                    if sub_path not in subs:
+                        subs.append(sub_path)
+                    parent_entry["subtitles"] = sorted(subs)
+                    self._subtitle_to_parent[sub_path] = parent_path
+                    del self._timestamps[sub_path]
+                    migrated_count += 1
+
+        if migrated_count:
+            self._save()
+            logging.info(f"Migrated {migrated_count} subtitle entries to parent video associations")
+
+    @staticmethod
+    def _derive_parent_video_path(subtitle_path: str) -> Optional[str]:
+        """Derive the parent video path from a subtitle path.
+
+        Strips subtitle extension and optional language code to get the base name,
+        then checks for common video extensions in the same directory.
+
+        Args:
+            subtitle_path: Path to the subtitle file.
+
+        Returns:
+            Path to the likely parent video file, or None if not determinable.
+        """
+        directory = os.path.dirname(subtitle_path)
+        filename = os.path.basename(subtitle_path)
+        lower_name = filename.lower()
+
+        # Strip subtitle extension
+        for ext in SUBTITLE_EXTENSIONS:
+            if lower_name.endswith(ext):
+                filename = filename[:-len(ext)]
+                lower_name = lower_name[:-len(ext)]
+                break
+        else:
+            return None  # Not a subtitle file
+
+        # Strip optional language code (e.g., .en, .es, .pt-br, .zh-hans)
+        lang_pattern = r'\.[a-z]{2,3}(-[a-z]{2,4})?$'
+        match = re.search(lang_pattern, lower_name, re.IGNORECASE)
+        if match:
+            filename = filename[:match.start()]
+
+        # Try common video extensions
+        video_extensions = ['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.flv', '.mov', '.ts']
+        for vext in video_extensions:
+            candidate = os.path.join(directory, filename + vext)
+            if os.path.exists(candidate):
+                return candidate
+
+        return None
 
     def enrich_media_info(self, cache_file_path: str, media_type: Optional[str] = None,
                           episode_info: Optional[Dict] = None) -> None:
@@ -565,17 +776,46 @@ class CacheTimestampTracker:
     def cleanup_missing_files(self) -> int:
         """Remove entries for files that no longer exist on cache.
 
+        Also prunes missing subtitle files from parent entries' subtitle lists
+        and updates the reverse index.
+
         Returns:
             Number of entries removed.
         """
         with self._lock:
             missing = [path for path in self._timestamps if not os.path.exists(path)]
             for path in missing:
+                # If parent with subtitles, clear reverse index
+                entry = self._timestamps[path]
+                if isinstance(entry, dict) and "subtitles" in entry:
+                    for sub_path in entry["subtitles"]:
+                        self._subtitle_to_parent.pop(sub_path, None)
                 del self._timestamps[path]
-            if missing:
+
+            # Prune missing subtitle files from remaining parent entries
+            missing_subs = 0
+            for path, entry in self._timestamps.items():
+                if isinstance(entry, dict) and "subtitles" in entry:
+                    original_count = len(entry["subtitles"])
+                    entry["subtitles"] = [s for s in entry["subtitles"] if os.path.exists(s)]
+                    removed_count = original_count - len(entry["subtitles"])
+                    if removed_count > 0:
+                        missing_subs += removed_count
+                        # Update reverse index
+                        for sub_path in list(self._subtitle_to_parent):
+                            if self._subtitle_to_parent[sub_path] == path and sub_path not in entry["subtitles"]:
+                                del self._subtitle_to_parent[sub_path]
+                    if not entry["subtitles"]:
+                        del entry["subtitles"]
+
+            total_removed = len(missing) + missing_subs
+            if total_removed:
                 self._save()
-                logging.info(f"Cleaned up {len(missing)} stale timestamp entries")
-            return len(missing)
+                if missing_subs:
+                    logging.info(f"Cleaned up {len(missing)} stale timestamp entries and {missing_subs} missing subtitle references")
+                else:
+                    logging.info(f"Cleaned up {len(missing)} stale timestamp entries")
+            return total_removed
 
 
 class WatchlistTracker(JSONTracker):
@@ -1016,6 +1256,7 @@ class CachePriorityManager:
 
         Higher score = more likely to be watched soon = keep longer.
         Lower score = evict first when space is needed.
+        Subtitle files delegate to their parent video's score.
 
         Eviction philosophy: Watchlist items evicted first, OnDeck protected.
 
@@ -1025,6 +1266,12 @@ class CachePriorityManager:
         Returns:
             Priority score between 0 and 100.
         """
+        # Subtitle delegation: use parent's priority so they're evicted together
+        if is_subtitle_file(cache_path):
+            parent = self.timestamp_tracker.find_parent_video(cache_path)
+            if parent:
+                return self.calculate_priority(parent)
+
         score = 50  # Base score
 
         # Factor 1: Source Type (+15 for ondeck, +0 for watchlist)
@@ -2069,27 +2316,55 @@ class SubtitleFinder:
             subtitle_extensions = [".srt", ".vtt", ".sbv", ".sub", ".idx"]
         self.subtitle_extensions = subtitle_extensions
     
-    def get_media_subtitles(self, media_files: List[str], files_to_skip: Optional[Set[str]] = None) -> List[str]:
-        """Get subtitle files for media files."""
-        logging.debug("Fetching subtitles...")
-        
+    def get_media_subtitles_grouped(self, media_files: List[str], files_to_skip: Optional[Set[str]] = None) -> Dict[str, List[str]]:
+        """Get subtitle files grouped by their parent video file.
+
+        Args:
+            media_files: List of media file paths.
+            files_to_skip: Set of file paths to skip.
+
+        Returns:
+            Dict mapping each video path to its list of subtitle paths.
+            Videos without subtitles have an empty list.
+        """
+        logging.debug("Fetching subtitles (grouped)...")
+
         files_to_skip = set() if files_to_skip is None else set(files_to_skip)
         processed_files = set()
-        all_media_files = media_files.copy()
-        
+        result: Dict[str, List[str]] = {}
+
         for file in media_files:
             if file in files_to_skip or file in processed_files:
                 continue
             processed_files.add(file)
-            
+
+            subtitle_files = []
             directory_path = os.path.dirname(file)
             if os.path.exists(directory_path):
                 subtitle_files = self._find_subtitle_files(directory_path, file)
-                all_media_files.extend(subtitle_files)
                 for subtitle_file in subtitle_files:
                     logging.debug(f"Subtitle found: {subtitle_file}")
 
-        return all_media_files
+            result[file] = subtitle_files
+
+        return result
+
+    def get_media_subtitles(self, media_files: List[str], files_to_skip: Optional[Set[str]] = None) -> List[str]:
+        """Get subtitle files for media files (flat list including originals).
+
+        Args:
+            media_files: List of media file paths.
+            files_to_skip: Set of file paths to skip.
+
+        Returns:
+            List of all media files plus their subtitle files.
+        """
+        logging.debug("Fetching subtitles...")
+        grouped = self.get_media_subtitles_grouped(media_files, files_to_skip)
+        all_files = list(media_files)
+        for subs in grouped.values():
+            all_files.extend(subs)
+        return all_files
     
     def _find_subtitle_files(self, directory_path: str, file: str) -> List[str]:
         """Find subtitle files in a directory for a given media file."""
@@ -2148,8 +2423,9 @@ class FileFilter:
     def _lookup_media_info(self, file_path: str) -> Optional[Tuple[str, Optional[Dict]]]:
         """Look up media type from available sources (trackers > regex fallback).
 
-        Checks OnDeckTracker (current run), media_info_map (watchlist), and
-        CacheTimestampTracker (persistent) in order of authority.
+        Checks subtitle parent delegation first, then OnDeckTracker (current run),
+        media_info_map (watchlist), and CacheTimestampTracker (persistent) in order
+        of authority.
 
         Args:
             file_path: Path to the media file.
@@ -2157,6 +2433,12 @@ class FileFilter:
         Returns:
             Tuple of (media_type, episode_info) if found, None for regex fallback.
         """
+        # 0. Subtitle delegation: if this is a subtitle with a tracked parent, use parent's info
+        if is_subtitle_file(file_path) and self.timestamp_tracker:
+            parent = self.timestamp_tracker.find_parent_video(file_path)
+            if parent:
+                return self._lookup_media_info(parent)
+
         # 1. OnDeckTracker (current run, most authoritative for OnDeck items)
         if self.ondeck_tracker:
             ep_info = self.ondeck_tracker.get_episode_info(file_path)
