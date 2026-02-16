@@ -117,6 +117,18 @@
             </div>
 
             <div class="form-group">
+                <label class="switch">
+                    <input type="checkbox" name="use_symlinks"
+                           {% if settings.use_symlinks %}checked{% endif %}>
+                    <span>Create Symlinks After Caching</span>
+                </label>
+                <div class="form-hint">For non-Unraid systems: creates a symlink at the original file
+                location pointing to the cached copy, so Plex can still find files. Not needed on Unraid
+                or mergerfs (FUSE handles this). In Docker, both paths must be mounted at the same absolute
+                paths in PlexCache-R and Plex containers.</div>
+            </div>
+
+            <div class="form-group">
                 <label for="hardlinked_files">Hardlinked Files Handling</label>
                 <select id="hardlinked_files" name="hardlinked_files">
                     <option value="skip" {% if settings.hardlinked_files == 'skip' or not settings.hardlinked_files %}selected{% endif %}>Skip (preserve for seeders)</option>

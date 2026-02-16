@@ -969,6 +969,18 @@ def _setup_advanced_settings():
             hardlink_choice = 'skip'
         settings_data['hardlinked_files'] = hardlink_choice
 
+    # Symlink Support (non-Unraid systems)
+    if 'use_symlinks' not in settings_data:
+        print('\n--- Symlink Support ---')
+        print('On non-Unraid systems (standard Linux, Docker without mergerfs/FUSE),')
+        print('Plex loses access to files when they are renamed to .plexcached.')
+        print('Enabling symlinks creates a symbolic link at the original file location')
+        print('pointing to the cached copy, so Plex can still find files.')
+        print('')
+        print('Not needed on Unraid or mergerfs (FUSE handles path transparency).')
+        symlink_choice = input('Create symlinks after caching? [y/N] ') or 'no'
+        settings_data['use_symlinks'] = symlink_choice.lower() in ['y', 'yes']
+
     # Smart Cache Eviction
     if 'cache_eviction_mode' not in settings_data:
         _configure_eviction_settings()
@@ -1428,6 +1440,7 @@ def check_for_missing_settings(settings: dict) -> list:
         'webhook_level',
         'create_plexcached_backups',
         'hardlinked_files',
+        'use_symlinks',
     ]
     missing = [s for s in optional_new_settings if s not in settings]
     return missing

@@ -61,7 +61,8 @@ def _make_file_filter(tmp_path, *, is_unraid=True, is_docker=False,
 
 
 def _make_file_mover(tmp_path, *, is_unraid=True, path_modifier=None,
-                     timestamp_tracker=None, create_backups=True):
+                     timestamp_tracker=None, create_backups=True,
+                     use_symlinks=False):
     """Build a FileMover wired to tmp_path directories."""
     exclude_file = os.path.join(str(tmp_path), "exclude.txt")
     with open(exclude_file, "w") as f:
@@ -83,6 +84,7 @@ def _make_file_mover(tmp_path, *, is_unraid=True, path_modifier=None,
         timestamp_tracker=timestamp_tracker,
         path_modifier=path_modifier,
         create_plexcached_backups=create_backups,
+        use_symlinks=use_symlinks,
     )
 
 

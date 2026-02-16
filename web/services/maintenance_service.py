@@ -730,7 +730,11 @@ class MaintenanceService:
                     return (plexcached_path, False, f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
                 try:
                     original_path = plexcached_path[:-11]
-                    if os.path.exists(original_path):
+                    if os.path.islink(original_path):
+                        # Symlink at original location (from use_symlinks mode) - remove it, then restore
+                        os.remove(original_path)
+                        os.rename(plexcached_path, original_path)
+                    elif os.path.exists(original_path):
                         os.remove(plexcached_path)
                     else:
                         os.rename(plexcached_path, original_path)
@@ -771,8 +775,12 @@ class MaintenanceService:
                 affected += 1
             else:
                 try:
-                    # Check if original already exists (redundant backup scenario)
-                    if os.path.exists(original_path):
+                    if os.path.islink(original_path):
+                        # Symlink at original location (from use_symlinks mode) - remove it, then restore
+                        os.remove(original_path)
+                        os.rename(plexcached_path, original_path)
+                        logging.debug(f"Removed symlink and restored: {plexcached_path}")
+                    elif os.path.exists(original_path):
                         # Original exists - just delete the redundant backup
                         os.remove(plexcached_path)
                         logging.debug(f"Deleted redundant .plexcached (original exists): {plexcached_path}")

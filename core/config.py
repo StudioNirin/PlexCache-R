@@ -198,6 +198,11 @@ class CacheConfig:
     # Disable if you use year-based or other intentional empty folder structures
     cleanup_empty_folders: bool = True
 
+    # Create symlinks at original file locations after caching (non-Unraid systems)
+    # On non-Unraid/non-mergerfs systems, Plex loses access when originals are renamed to .plexcached.
+    # Symlinks let Plex still find files at their original paths via the cache copy.
+    use_symlinks: bool = False
+
     # Excluded folders: skip these directories during cache scanning
     # Hidden directories (dot-prefixed like .Trash, .Recycle.Bin) are always skipped automatically
     # Use this for non-dot-prefixed folders like Synology @Recycle, #recycle, etc.
@@ -447,6 +452,9 @@ class ConfigManager:
 
         # Load cleanup_empty_folders setting (default True to preserve existing behavior)
         self.cache.cleanup_empty_folders = self.settings_data.get('cleanup_empty_folders', True)
+
+        # Load symlink setting (default False - only needed for non-Unraid systems)
+        self.cache.use_symlinks = self.settings_data.get('use_symlinks', False)
 
         # Load excluded folders for directory scanning
         excluded_folders = self.settings_data.get('excluded_folders', [])
