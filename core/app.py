@@ -54,6 +54,7 @@ class PlexCacheApp:
         # State variables
         self.files_to_skip = []
         self.media_to_cache = []
+        self.all_active_media = []
         self.media_to_array = []
         self.ondeck_items = set()
         self.watchlist_items = set()
@@ -1064,8 +1065,33 @@ class PlexCacheApp:
         # Log consolidated summary of skipped disabled libraries
         self.file_path_modifier.log_disabled_skips_summary()
 
-        # Log total media to cache
-        logging.info(f"Total media to cache: {len(self.media_to_cache)} files")
+        # Early cache-status check: partition into cached vs uncached
+        self.file_filter.last_already_cached_count = 0
+        already_cached = []
+        needs_caching = []
+        for f in self.media_to_cache:
+            if self._file_needs_caching(f):
+                needs_caching.append(f)
+            else:
+                already_cached.append(f)
+
+        # Save full set for eviction/array-move protection
+        self.all_active_media = list(self.media_to_cache)
+
+        # Run protection pass for already-cached files (exclude list, .plexcached, symlinks)
+        if already_cached:
+            for f in already_cached:
+                self.file_filter.protect_cached_file(f)
+            logging.debug(f"Protected {len(already_cached)} already-cached files")
+
+        # Only uncached files proceed through eviction + move pipeline
+        self.media_to_cache = needs_caching
+
+        # Improved summary log
+        total = len(self.all_active_media)
+        cached = len(already_cached)
+        to_cache = len(needs_caching)
+        logging.info(f"Media: {total} total ({cached} already cached, {to_cache} to cache)")
 
         if self.should_stop:
             logging.info("Operation stopped during media processing")
@@ -1371,19 +1397,16 @@ class PlexCacheApp:
         if self.media_to_cache:
             self.media_to_cache = self._filter_low_priority_files(self.media_to_cache, self.source_map)
 
-        # Log preview of files to be cached (similar to array move preview)
+        # Log preview of files to be cached
         if self.media_to_cache:
-            # Filter to only files that actually need moving (not already on cache)
-            files_to_cache = [f for f in self.media_to_cache if self._file_needs_caching(f)]
-            if files_to_cache:
-                count = len(files_to_cache)
-                unit = "file" if count == 1 else "files"
-                logging.info(f"Caching to cache drive ({count} {unit}):")
-                for f in files_to_cache[:6]:  # Show first 6
-                    display_name = self._extract_display_name(f)
-                    logging.info(f"  {display_name}")
-                if len(files_to_cache) > 6:
-                    logging.info(f"  ...and {len(files_to_cache) - 6} more")
+            count = len(self.media_to_cache)
+            unit = "file" if count == 1 else "files"
+            logging.info(f"Caching to cache drive ({count} {unit}):")
+            for f in self.media_to_cache[:6]:
+                display_name = self._extract_display_name(f)
+                logging.info(f"  {display_name}")
+            if len(self.media_to_cache) > 6:
+                logging.info(f"  ...and {len(self.media_to_cache) - 6} more")
         self._safe_move_files(self.media_to_cache, 'cache')
 
         # Associate subtitles with their parent videos in the timestamp tracker
@@ -1953,10 +1976,11 @@ class PlexCacheApp:
             logging.info("No low-priority items available for eviction")
             return (0, 0)
 
-        # Filter out files that are about to be cached (prevents evict-then-recache loop)
-        # Convert media_to_cache paths to cache paths for comparison
+        # Filter out files that are active media (prevents evict-then-recache loop)
+        # Uses all_active_media (cached + uncached) so already-cached files are also protected
         files_to_cache_set = set()
-        for f in self.media_to_cache:
+        active_media = self.all_active_media or self.media_to_cache
+        for f in active_media:
             # media_to_cache contains array paths (/mnt/user/...), convert to cache paths
             if self.file_path_modifier:
                 cache_path, _ = self.file_path_modifier.convert_real_to_cache(f)
@@ -2196,8 +2220,9 @@ class PlexCacheApp:
                                         source_map: dict = None,
                                         media_info_map: dict = None) -> None:
         """Check free space and move files."""
+        protection_list = self.all_active_media or self.media_to_cache
         media_files_filtered = self.file_filter.filter_files(
-            media_files, destination, self.media_to_cache, set(self.files_to_skip)
+            media_files, destination, protection_list, set(self.files_to_skip)
         )
 
         # Note: Smart eviction now runs earlier in _move_files() before filtering

@@ -1215,3 +1215,118 @@ class TestWatchlistTrackerSafety:
             data = json.load(f)
 
         assert "/mnt/cache/Movie.mkv" not in data
+
+
+# ============================================================================
+# protect_cached_file tests
+# ============================================================================
+
+class TestProtectCachedFile:
+    """Test FileFilter.protect_cached_file() early protection pass."""
+
+    def test_returns_true_when_file_on_cache(self, tmp_path):
+        """protect_cached_file returns True and runs side effects when file is on cache."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        result = filt.protect_cached_file(array_file, cache_file)
+        assert result is True
+        assert filt.last_already_cached_count == 1
+
+    def test_returns_false_when_file_not_on_cache(self, tmp_path):
+        """protect_cached_file returns False when cache file does not exist."""
+        cache_file = os.path.join(str(tmp_path), "cache", "media", "Movies", "Movie.mkv")
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+
+        result = filt.protect_cached_file(array_file, cache_file)
+        assert result is False
+        assert filt.last_already_cached_count == 0
+
+    def test_adds_to_exclude_file(self, tmp_path):
+        """protect_cached_file adds the cache file to the exclude list."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "r") as f:
+            content = f.read()
+        assert cache_file in content
+
+    def test_records_timestamp(self, tmp_path):
+        """protect_cached_file records cache timestamp when tracker is available."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        tracker = MagicMock()
+        filt = _make_file_filter(tmp_path, is_unraid=False, timestamp_tracker=tracker)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        tracker.record_cache_time.assert_called_once_with(cache_file, "pre-existing")
+
+    def test_renames_array_file_to_plexcached(self, tmp_path):
+        """protect_cached_file renames array file to .plexcached backup."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "user0", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = create_test_file(os.path.join(array_dir, "Movie.mkv"), "array data")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        result = filt.protect_cached_file(array_file, cache_file)
+        assert result is True
+
+        plexcached = array_file + PLEXCACHED_EXTENSION
+        assert os.path.isfile(plexcached)
+        assert not os.path.isfile(array_file)
+        with open(plexcached, "r") as f:
+            assert f.read() == "array data"
+
+    def test_resolves_cache_path_when_not_provided(self, tmp_path):
+        """protect_cached_file resolves cache path via _get_cache_paths when cache_file_name is None."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.real_source = os.path.join(str(tmp_path), "user0")
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        # Use the real_source-based path so _get_cache_paths can resolve it
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        result = filt.protect_cached_file(array_file)
+        assert result is True
+        assert filt.last_already_cached_count == 1
+
+    def test_idempotent_on_repeated_calls(self, tmp_path):
+        """protect_cached_file is safe to call multiple times on the same file."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        # Call twice
+        assert filt.protect_cached_file(array_file, cache_file) is True
+        assert filt.protect_cached_file(array_file, cache_file) is True
+        # Counter increments each time (expected — caller controls reset)
+        assert filt.last_already_cached_count == 2

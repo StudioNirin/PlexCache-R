@@ -2691,10 +2691,6 @@ class FileFilter:
         cache_files_to_exclude = []
         cache_files_removed = []  # Track cache files removed during filtering
 
-        # Reset already-cached counter for this filter run
-        if destination == 'cache':
-            self.last_already_cached_count = 0
-
         if not files:
             return []
 
@@ -2804,75 +2800,97 @@ class FileFilter:
 
         return True, False  # File should be added to the array
 
-    def _should_add_to_cache(self, file: str, cache_file_name: str) -> bool:
-        """Determine if a file should be added to the cache."""
-        array_file = get_array_direct_path(file) if self.is_unraid else file
+    def protect_cached_file(self, file: str, cache_file_name: str = None) -> bool:
+        """Protect a file that is already on the cache drive.
 
-        # Check if file already exists on cache
-        if os.path.isfile(cache_file_name):
-            # File already on cache - ensure it's protected
-            self._add_to_exclude_file(cache_file_name)
+        Runs all protection side effects: adds to exclude list, records timestamp,
+        renames array original to .plexcached backup, and re-creates symlinks if enabled.
 
-            # Record timestamp if not already tracked (for retention)
-            if self.timestamp_tracker:
-                self.timestamp_tracker.record_cache_time(cache_file_name, "pre-existing")
+        Args:
+            file: The real/array path of the file.
+            cache_file_name: Optional pre-resolved cache path. If None, resolved via _get_cache_paths().
 
-            logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
+        Returns:
+            True if the file is on cache and was protected, False if not on cache.
+        """
+        if cache_file_name is None:
+            _, cache_file_name = self._get_cache_paths(file)
+            if cache_file_name is None:
+                return False
 
-            # Track count of files already on cache
-            self.last_already_cached_count += 1
-
-            # If array version also exists, rename it to .plexcached (preserve as backup)
-            # This ensures we have a recovery option if the cache drive fails
-            #
-            # Defense in depth: If array_file is a /mnt/user/ path (ZFS, no conversion),
-            # probe /mnt/user0/ to verify a real array copy exists. On hybrid ZFS shares,
-            # /mnt/user/ shows the cache file through FUSE — operating on it would destroy
-            # the only copy.
-            actual_array_file = array_file
-            if array_file.startswith('/mnt/user/'):
-                user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
-                if os.path.isfile(user0_path):
-                    actual_array_file = user0_path
-                elif os.path.exists('/mnt/user0'):
-                    # /mnt/user0 exists but file not there — FUSE is showing cache file
-                    logging.debug(f"Skipping array backup: file not at {user0_path} (FUSE/cache only)")
-                    actual_array_file = None
-
-            # Symlinks don't count as real array files — they point to the cache copy
-            if actual_array_file and os.path.isfile(actual_array_file) and not os.path.islink(actual_array_file):
-                plexcached_file = actual_array_file + PLEXCACHED_EXTENSION
-                # Only rename if .plexcached doesn't already exist
-                if not os.path.isfile(plexcached_file):
-                    try:
-                        os.rename(actual_array_file, plexcached_file)
-                        logging.info(f"Created backup of array file: {os.path.basename(plexcached_file)}")
-                    except FileNotFoundError:
-                        pass  # File already removed
-                    except OSError as e:
-                        logging.error(f"Failed to create backup of array file {actual_array_file}: {type(e).__name__}: {e}")
-                    # Create symlink at original location if enabled
-                    if self.use_symlinks:
-                        self._create_symlink(array_file, cache_file_name)
-                else:
-                    # .plexcached backup already exists, safe to remove duplicate array file
-                    try:
-                        os.remove(actual_array_file)
-                        logging.debug(f"Removed redundant array file (backup exists): {os.path.basename(actual_array_file)}")
-                    except FileNotFoundError:
-                        pass
-                    except OSError as e:
-                        logging.error(f"Failed to remove array file {actual_array_file}: {type(e).__name__}: {e}")
-                    # Create symlink at original location if enabled
-                    if self.use_symlinks:
-                        self._create_symlink(array_file, cache_file_name)
-
-            # Re-create symlink if it's missing (e.g., Plex scan or manual deletion removed it)
-            if self.use_symlinks and not os.path.islink(array_file) and not os.path.isfile(array_file):
-                self._create_symlink(array_file, cache_file_name)
-
+        if not os.path.isfile(cache_file_name):
             return False
 
+        array_file = get_array_direct_path(file) if self.is_unraid else file
+
+        # Add to exclude list so Unraid mover doesn't move it back
+        self._add_to_exclude_file(cache_file_name)
+
+        # Record timestamp if not already tracked (for retention)
+        if self.timestamp_tracker:
+            self.timestamp_tracker.record_cache_time(cache_file_name, "pre-existing")
+
+        logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
+
+        # Track count of files already on cache
+        self.last_already_cached_count += 1
+
+        # If array version also exists, rename it to .plexcached (preserve as backup)
+        # This ensures we have a recovery option if the cache drive fails
+        #
+        # Defense in depth: If array_file is a /mnt/user/ path (ZFS, no conversion),
+        # probe /mnt/user0/ to verify a real array copy exists. On hybrid ZFS shares,
+        # /mnt/user/ shows the cache file through FUSE — operating on it would destroy
+        # the only copy.
+        actual_array_file = array_file
+        if array_file.startswith('/mnt/user/'):
+            user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
+            if os.path.isfile(user0_path):
+                actual_array_file = user0_path
+            elif os.path.exists('/mnt/user0'):
+                # /mnt/user0 exists but file not there — FUSE is showing cache file
+                logging.debug(f"Skipping array backup: file not at {user0_path} (FUSE/cache only)")
+                actual_array_file = None
+
+        # Symlinks don't count as real array files — they point to the cache copy
+        if actual_array_file and os.path.isfile(actual_array_file) and not os.path.islink(actual_array_file):
+            plexcached_file = actual_array_file + PLEXCACHED_EXTENSION
+            # Only rename if .plexcached doesn't already exist
+            if not os.path.isfile(plexcached_file):
+                try:
+                    os.rename(actual_array_file, plexcached_file)
+                    logging.info(f"Created backup of array file: {os.path.basename(plexcached_file)}")
+                except FileNotFoundError:
+                    pass  # File already removed
+                except OSError as e:
+                    logging.error(f"Failed to create backup of array file {actual_array_file}: {type(e).__name__}: {e}")
+                # Create symlink at original location if enabled
+                if self.use_symlinks:
+                    self._create_symlink(array_file, cache_file_name)
+            else:
+                # .plexcached backup already exists, safe to remove duplicate array file
+                try:
+                    os.remove(actual_array_file)
+                    logging.debug(f"Removed redundant array file (backup exists): {os.path.basename(actual_array_file)}")
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    logging.error(f"Failed to remove array file {actual_array_file}: {type(e).__name__}: {e}")
+                # Create symlink at original location if enabled
+                if self.use_symlinks:
+                    self._create_symlink(array_file, cache_file_name)
+
+        # Re-create symlink if it's missing (e.g., Plex scan or manual deletion removed it)
+        if self.use_symlinks and not os.path.islink(array_file) and not os.path.isfile(array_file):
+            self._create_symlink(array_file, cache_file_name)
+
+        return True
+
+    def _should_add_to_cache(self, file: str, cache_file_name: str) -> bool:
+        """Determine if a file should be added to the cache."""
+        if os.path.isfile(cache_file_name):
+            self.protect_cached_file(file, cache_file_name)
+            return False
         return True
     
     def _get_cache_paths(self, file: str) -> Tuple[str, Optional[str]]:
