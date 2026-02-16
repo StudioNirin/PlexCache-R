@@ -163,20 +163,15 @@ class TestCountExtraction:
         runner._parse_phase("10:00:00 - INFO - Caching to cache drive (5 files):")
         assert runner._current_result.files_to_cache_total == 5
 
-    def test_cache_count_from_total_media(self, runner):
-        runner._parse_phase("10:00:00 - INFO - Total media to cache: 8 files")
-        assert runner._current_result.files_to_cache_total == 8
+    def test_total_media_ignored_for_count(self, runner):
+        """'Total media to cache' is the protection list, not actual moves — should not set count."""
+        runner._parse_phase("10:00:00 - INFO - Total media to cache: 213 files")
+        assert runner._current_result.files_to_cache_total == 0
 
-    def test_caching_header_overrides_total_media(self, runner):
-        runner._parse_phase("10:00:00 - INFO - Total media to cache: 8 files")
-        assert runner._current_result.files_to_cache_total == 8
+    def test_cache_count_only_from_caching_header(self, runner):
+        """Only 'Caching to cache drive (N files)' sets the actual move count."""
+        runner._parse_phase("10:00:00 - INFO - Total media to cache: 213 files")
         runner._parse_phase("10:00:00 - INFO - Caching to cache drive (5 files):")
-        assert runner._current_result.files_to_cache_total == 5
-
-    def test_total_media_does_not_override_caching_header(self, runner):
-        runner._parse_phase("10:00:00 - INFO - Caching to cache drive (5 files):")
-        runner._parse_phase("10:00:00 - INFO - Total media to cache: 8 files")
-        # Should stay at 5 since caching header already set it
         assert runner._current_result.files_to_cache_total == 5
 
 

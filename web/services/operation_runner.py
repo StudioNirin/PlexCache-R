@@ -428,8 +428,7 @@ class OperationRunner:
 
     # Regex to extract file count from "Caching to cache drive (N file(s)):"
     _cache_count_re = re.compile(r'Caching to cache drive \((\d+)\s+\w+')
-    # Regex to extract file count from "Total media to cache: N files"
-    _total_media_re = re.compile(r'Total media to cache:\s*(\d+)')
+
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
@@ -493,16 +492,11 @@ class OperationRunner:
                 self._current_result.files_to_restore_total += int(m.group(1))
                 return
 
-            # "Caching to cache drive (N file(s)):"
+            # "Caching to cache drive (N file(s)):" — the actual move count
             m = self._cache_count_re.search(clean_msg)
             if m:
                 self._current_result.files_to_cache_total = int(m.group(1))
                 return
-
-            # "Total media to cache: N files" — only set if caching header hasn't set it yet
-            m = self._total_media_re.search(clean_msg)
-            if m and self._current_result.files_to_cache_total == 0:
-                self._current_result.files_to_cache_total = int(m.group(1))
 
     def _parse_file_operation(self, msg: str):
         """Parse log message to extract file operations"""
