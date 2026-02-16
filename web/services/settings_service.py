@@ -249,6 +249,7 @@ class SettingsService:
             "watchlist_toggle": raw.get("watchlist_toggle", True),
             "watchlist_episodes": raw.get("watchlist_episodes", 3),
             "watchlist_retention_days": raw.get("watchlist_retention_days", 0),
+            "ondeck_retention_days": raw.get("ondeck_retention_days", 0),
             "watched_move": raw.get("watched_move", True),
             "create_plexcached_backups": raw.get("create_plexcached_backups", True),
             "cleanup_empty_folders": raw.get("cleanup_empty_folders", True),
