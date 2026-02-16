@@ -349,7 +349,9 @@ class CacheTimestampTracker:
             logging.error(f"Could not save timestamp file: {type(e).__name__}: {e}")
 
     def record_cache_time(self, cache_file_path: str, source: str = "unknown",
-                          original_inode: Optional[int] = None) -> None:
+                          original_inode: Optional[int] = None,
+                          media_type: Optional[str] = None,
+                          episode_info: Optional[Dict] = None) -> None:
         """Record the current time and source when a file was cached.
 
         Only records if no entry exists - never overwrites existing timestamps.
@@ -358,6 +360,8 @@ class CacheTimestampTracker:
             cache_file_path: The path to the cached file.
             source: Where the file came from - "ondeck", "watchlist", "pre-existing", or "unknown".
             original_inode: For hard-linked files, the original inode number for restoration.
+            media_type: Plex media type - "episode" or "movie" (None for legacy/unknown).
+            episode_info: For episodes, dict with 'show', 'season', 'episode' keys.
         """
         with self._lock:
             # Never overwrite existing timestamps - file was cached when it was first recorded
@@ -371,6 +375,10 @@ class CacheTimestampTracker:
             }
             if original_inode is not None:
                 entry["original_inode"] = original_inode
+            if media_type is not None:
+                entry["media_type"] = media_type
+            if episode_info is not None:
+                entry["episode_info"] = episode_info
             self._timestamps[cache_file_path] = entry
             self._save()
             logging.debug(f"Recorded cache timestamp for: {cache_file_path} (source: {source})")
@@ -496,6 +504,63 @@ class CacheTimestampTracker:
             if isinstance(entry, dict):
                 return entry.get("source", "unknown")
             return "unknown"
+
+    def get_media_type(self, cache_file_path: str) -> Optional[str]:
+        """Get the Plex media type for a cached file.
+
+        Args:
+            cache_file_path: The path to the cached file.
+
+        Returns:
+            "episode", "movie", or None if not stored.
+        """
+        with self._lock:
+            entry = self._timestamps.get(cache_file_path)
+            if entry and isinstance(entry, dict):
+                return entry.get("media_type")
+            return None
+
+    def get_episode_info(self, cache_file_path: str) -> Optional[Dict]:
+        """Get episode info for a cached file.
+
+        Args:
+            cache_file_path: The path to the cached file.
+
+        Returns:
+            Dict with 'show', 'season', 'episode' keys, or None if not stored.
+        """
+        with self._lock:
+            entry = self._timestamps.get(cache_file_path)
+            if entry and isinstance(entry, dict):
+                return entry.get("episode_info")
+            return None
+
+    def enrich_media_info(self, cache_file_path: str, media_type: Optional[str] = None,
+                          episode_info: Optional[Dict] = None) -> None:
+        """Enrich an existing entry with media type metadata.
+
+        Only updates fields that are currently None/missing. Used to backfill
+        metadata on pre-existing cached files when they appear in OnDeck/Watchlist.
+        Does nothing if the entry doesn't exist or already has media_type set.
+
+        Args:
+            cache_file_path: The path to the cached file.
+            media_type: "episode" or "movie".
+            episode_info: For episodes, dict with 'show', 'season', 'episode' keys.
+        """
+        if media_type is None:
+            return
+        with self._lock:
+            entry = self._timestamps.get(cache_file_path)
+            if entry is None or not isinstance(entry, dict):
+                return
+            if entry.get("media_type") is not None:
+                return  # Already has metadata, don't overwrite
+            entry["media_type"] = media_type
+            if episode_info is not None:
+                entry["episode_info"] = episode_info
+            self._save()
+            logging.debug(f"Enriched media info for: {cache_file_path} (type: {media_type})")
 
     def cleanup_missing_files(self) -> int:
         """Remove entries for files that no longer exist on cache.
@@ -1289,8 +1354,10 @@ class CachePriorityManager:
             - 1-N: Number of episodes ahead
             - -1: Not a TV episode, or no OnDeck position found for this show
         """
-        # Get episode info for this file
+        # Get episode info for this file (try OnDeck first, then persistent tracker)
         ep_info = self.ondeck_tracker.get_episode_info(cache_path)
+        if not ep_info:
+            ep_info = self.timestamp_tracker.get_episode_info(cache_path)
         if not ep_info:
             return -1  # Not a TV episode or no info available
 
@@ -1335,14 +1402,24 @@ class CachePriorityManager:
     def _is_tv_episode(self, cache_path: str) -> bool:
         """Check if a cached file is a TV episode.
 
+        Checks OnDeckTracker first (current run), then CacheTimestampTracker
+        (persistent metadata from Plex API).
+
         Args:
             cache_path: Path to the cached file.
 
         Returns:
             True if this is a TV episode with episode info, False otherwise.
         """
+        # Check OnDeckTracker (current run)
         ep_info = self.ondeck_tracker.get_episode_info(cache_path)
-        return ep_info is not None and ep_info.get('show') is not None
+        if ep_info is not None and ep_info.get('show') is not None:
+            return True
+        # Check CacheTimestampTracker (persistent Plex API metadata)
+        mt = self.timestamp_tracker.get_media_type(cache_path)
+        if mt is not None:
+            return mt == "episode"
+        return False
 
 
 class PlexcachedMigration:
@@ -2058,6 +2135,51 @@ class FileFilter:
         self.path_modifier = path_modifier  # For multi-path support
         self.is_docker = is_docker  # For path translation in Docker
         self.last_already_cached_count = 0  # Track files already on cache during filtering
+        self._media_info_map = {}  # Plex media type info (set via set_media_info_map)
+
+    def set_media_info_map(self, media_info_map: Dict[str, Dict]) -> None:
+        """Set the media info map for metadata-first classification.
+
+        Args:
+            media_info_map: Dict mapping file paths to {'media_type': str, 'episode_info': dict|None}.
+        """
+        self._media_info_map = media_info_map or {}
+
+    def _lookup_media_info(self, file_path: str) -> Optional[Tuple[str, Optional[Dict]]]:
+        """Look up media type from available sources (trackers > regex fallback).
+
+        Checks OnDeckTracker (current run), media_info_map (watchlist), and
+        CacheTimestampTracker (persistent) in order of authority.
+
+        Args:
+            file_path: Path to the media file.
+
+        Returns:
+            Tuple of (media_type, episode_info) if found, None for regex fallback.
+        """
+        # 1. OnDeckTracker (current run, most authoritative for OnDeck items)
+        if self.ondeck_tracker:
+            ep_info = self.ondeck_tracker.get_episode_info(file_path)
+            if ep_info is not None:
+                return ("episode", ep_info)
+            # Check if it's a known entry without episode_info (movie)
+            entry = self.ondeck_tracker.get_entry(file_path)
+            if entry is not None and 'episode_info' not in entry:
+                return ("movie", None)
+
+        # 2. media_info_map (covers watchlist items not yet cached)
+        if self._media_info_map:
+            info = self._media_info_map.get(file_path)
+            if info and info.get("media_type"):
+                return (info["media_type"], info.get("episode_info"))
+
+        # 3. CacheTimestampTracker (persistent, covers cached files from prior runs)
+        if self.timestamp_tracker:
+            mt = self.timestamp_tracker.get_media_type(file_path)
+            if mt:
+                return (mt, self.timestamp_tracker.get_episode_info(file_path))
+
+        return None  # Caller falls back to regex
 
     def _translate_to_host_path(self, cache_path: str) -> str:
         """Translate container cache path to host cache path for exclude file.
@@ -2327,6 +2449,9 @@ class FileFilter:
                                   current_watchlist_items: Set[str]) -> Tuple[Dict[str, Dict[int, int]], Set[str]]:
         """Build tracking sets of media that should be kept in cache.
 
+        Uses Plex API metadata when available (from OnDeckTracker, media_info_map, or
+        CacheTimestampTracker), falling back to regex path parsing for legacy entries.
+
         Args:
             current_ondeck_items: Set of OnDeck file paths.
             current_watchlist_items: Set of watchlist file paths.
@@ -2339,12 +2464,36 @@ class FileFilter:
         needed_movies: Set[str] = set()
 
         for item in current_ondeck_items | current_watchlist_items:
+            # Try Plex API metadata first (avoids regex misclassification)
+            lookup = self._lookup_media_info(item)
+            if lookup:
+                media_type, ep_info = lookup
+                if media_type == "episode" and ep_info:
+                    show_name = ep_info.get("show")
+                    season_num = ep_info.get("season")
+                    episode_num = ep_info.get("episode")
+                    if show_name and season_num is not None and episode_num is not None:
+                        if show_name not in tv_show_min_episodes:
+                            tv_show_min_episodes[show_name] = {}
+                        if season_num not in tv_show_min_episodes[show_name]:
+                            tv_show_min_episodes[show_name][season_num] = episode_num
+                        else:
+                            tv_show_min_episodes[show_name][season_num] = min(
+                                tv_show_min_episodes[show_name][season_num], episode_num
+                            )
+                        continue
+                if media_type == "movie":
+                    media_name = self._extract_media_name(item)
+                    if media_name:
+                        needed_movies.add(media_name)
+                    continue
+
+            # Fallback: regex classification (legacy/edge cases)
             tv_info = self._extract_tv_info(item)
             if tv_info:
                 show_name, season_num, episode_num = tv_info
                 if show_name not in tv_show_min_episodes:
                     tv_show_min_episodes[show_name] = {}
-                # Keep minimum episode for each season (the "current" episode)
                 if season_num not in tv_show_min_episodes[show_name]:
                     tv_show_min_episodes[show_name][season_num] = episode_num
                 else:
@@ -2352,7 +2501,6 @@ class FileFilter:
                         tv_show_min_episodes[show_name][season_num], episode_num
                     )
             else:
-                # It's a movie
                 media_name = self._extract_media_name(item)
                 if media_name:
                     needed_movies.add(media_name)
@@ -2451,8 +2599,23 @@ class FileFilter:
                     stale_entries.append(cache_file)
                     continue
 
+                # Try stored metadata first for classification (check_path matches timestamp tracker keys)
+                tv_info = None
+                lookup = self._lookup_media_info(check_path)
+                if lookup:
+                    media_type, ep_info = lookup
+                    if media_type == "episode" and ep_info:
+                        show = ep_info.get("show")
+                        season = ep_info.get("season")
+                        episode = ep_info.get("episode")
+                        if show and season is not None and episode is not None:
+                            tv_info = (show, season, episode)
+
+                # Fallback to regex if no stored metadata
+                if tv_info is None:
+                    tv_info = self._extract_tv_info(cache_file)
+
                 # Determine if file should be kept
-                tv_info = self._extract_tv_info(cache_file)
                 if tv_info:
                     show_name, season_num, episode_num = tv_info
                     if self._is_tv_episode_still_needed(show_name, season_num, episode_num, tv_show_min_episodes):
@@ -2880,7 +3043,8 @@ class FileMover:
 
     def move_media_files(self, files: List[str], destination: str,
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
-                        source_map: Optional[Dict[str, str]] = None) -> None:
+                        source_map: Optional[Dict[str, str]] = None,
+                        media_info_map: Optional[Dict[str, Dict]] = None) -> None:
         """Move media files to the specified destination.
 
         Args:
@@ -2889,9 +3053,11 @@ class FileMover:
             max_concurrent_moves_array: Max concurrent moves to array.
             max_concurrent_moves_cache: Max concurrent moves to cache.
             source_map: Optional dict mapping file paths to their source ('ondeck' or 'watchlist').
+            media_info_map: Optional dict mapping file paths to Plex media type info.
         """
-        # Store source map for use during moves
+        # Store source map and media info map for use during moves
         self._source_map = source_map or {}
+        self._media_info_map = media_info_map or {}
         # Reset successful array moves tracker for deferred exclude list cleanup
         if destination == 'array':
             self._successful_array_moves = []
@@ -3636,13 +3802,19 @@ class FileMover:
             if old_cache_file_to_remove:
                 self._remove_from_exclude_file(old_cache_file_to_remove)
 
-            # Step 4: Record timestamp for cache retention with source info
+            # Step 4: Record timestamp for cache retention with source and media type info
             if self.timestamp_tracker:
                 # Look up source from the source map using the original path (e.g., /mnt/user/...)
                 source = self._source_map.get(original_path, "unknown") if original_path else "unknown"
                 # Include original inode for hard-linked files (for restoration)
                 original_inode = self._hardlink_inodes.get(cache_file_name)
-                self.timestamp_tracker.record_cache_time(cache_file_name, source, original_inode)
+                # Look up media type info from Plex API metadata
+                media_info = self._media_info_map.get(original_path, {}) if original_path else {}
+                self.timestamp_tracker.record_cache_time(
+                    cache_file_name, source, original_inode,
+                    media_type=media_info.get("media_type"),
+                    episode_info=media_info.get("episode_info")
+                )
 
             # Log successful move - both to logging (for web UI) and tqdm (for CLI progress bar)
             from tqdm import tqdm

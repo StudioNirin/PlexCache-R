@@ -58,6 +58,7 @@ class PlexCacheApp:
         self.ondeck_items = set()
         self.watchlist_items = set()
         self.source_map = {}  # Maps file paths to source ('ondeck' or 'watchlist')
+        self.media_info_map = {}  # Maps file paths to Plex media type info
         # Tracking for restore vs move operations (for summary)
         self.restored_count = 0
         self.restored_bytes = 0
@@ -970,6 +971,13 @@ class PlexCacheApp:
                 episode_info=item.episode_info,
                 is_current_ondeck=item.is_current_ondeck
             )
+            # Build media_info_map from OnDeck metadata
+            ep = item.episode_info
+            self.media_info_map[real_path] = {
+                "media_type": "episode" if ep else "movie",
+                "episode_info": {"show": ep["show"], "season": ep["season"],
+                                 "episode": ep["episode"]} if ep else None
+            }
 
         # Store modified OnDeck items for filtering later
         self.ondeck_items = set(modified_ondeck)
@@ -1040,14 +1048,18 @@ class PlexCacheApp:
                 logging.warning("Files will remain on cache until next successful run")
             else:
                 logging.debug("Checking for files to move back to array...")
+                # Provide Plex media type metadata for classification
+                self.file_filter.set_media_info_map(self.media_info_map)
                 self._check_files_to_move_back_to_array()
 
     def _process_watchlist(self) -> set:
         """Process watchlist media (local API + remote RSS) and return a set of modified file paths and subtitles.
 
-        Also updates the watchlist tracker with watchlistedAt timestamps for retention tracking.
+        Also updates the watchlist tracker with watchlistedAt timestamps for retention tracking,
+        and populates self.media_info_map with Plex media type metadata for watchlist items.
         """
         result_set = set()
+        plex_path_to_info = {}  # Maps plex paths to episode_info for media_info_map
         retention_days = self.config_manager.cache.watchlist_retention_days
         expired_count = 0
 
@@ -1056,7 +1068,7 @@ class PlexCacheApp:
                 logging.debug(f"Watchlist retention enabled: {retention_days} days")
 
             # --- Local Plex users ---
-            # API returns (file_path, username, watchlisted_at) tuples
+            # API returns (file_path, username, watchlisted_at, episode_info) tuples
             # Build list of home users from settings (only home users have accessible watchlists)
             home_users = [
                 u.get("title") for u in self.config_manager.plex.users
@@ -1071,7 +1083,7 @@ class PlexCacheApp:
             ))
 
             for item in fetched_watchlist:
-                file_path, username, watchlisted_at = item
+                file_path, username, watchlisted_at, episode_info = item
 
                 # Update watchlist tracker with timestamp
                 self.watchlist_tracker.update_entry(file_path, username, watchlisted_at)
@@ -1083,13 +1095,14 @@ class PlexCacheApp:
                         continue
 
                 result_set.add(file_path)
+                plex_path_to_info[file_path] = episode_info
 
             # --- Remote users via RSS ---
             if self.config_manager.cache.remote_watchlist_toggle and self.config_manager.cache.remote_watchlist_rss_url:
                 logging.debug("Fetching watchlist via RSS feed for remote users...")
                 try:
                     # Use get_watchlist_media with rss_url parameter; users_toggle=False because this is just RSS
-                    # RSS items return (file_path, username, pubDate) tuples
+                    # RSS items return (file_path, username, pubDate, episode_info) tuples
                     remote_items = list(
                         self.plex_manager.get_watchlist_media(
                             valid_sections=self.config_manager.plex.valid_sections,
@@ -1102,7 +1115,7 @@ class PlexCacheApp:
                     logging.debug(f"Found {len(remote_items)} remote watchlist items from RSS")
                     rss_expired_count = 0
                     for item in remote_items:
-                        file_path, username, watchlisted_at = item
+                        file_path, username, watchlisted_at, episode_info = item
                         # Update tracker (RSS items use pubDate from feed)
                         self.watchlist_tracker.update_entry(file_path, username, watchlisted_at)
 
@@ -1113,6 +1126,7 @@ class PlexCacheApp:
                                 continue
 
                         result_set.add(file_path)
+                        plex_path_to_info[file_path] = episode_info
 
                     if rss_expired_count > 0:
                         expired_count += rss_expired_count
@@ -1129,8 +1143,19 @@ class PlexCacheApp:
             source_info = " (local + remote)" if has_remote else ""
             logging.info(f"Watchlist: {total_watchlist} items{source_info}")
 
-            # Modify file paths and fetch subtitles
-            modified_items = self.file_path_modifier.modify_file_paths(list(result_set))
+            # Modify file paths and build plex→real mapping for media_info_map
+            plex_paths = list(result_set)
+            modified_items = self.file_path_modifier.modify_file_paths(plex_paths)
+            plex_to_real = dict(zip(plex_paths, modified_items))
+
+            # Populate media_info_map with real/modified paths
+            for plex_path, ep_info in plex_path_to_info.items():
+                real_path = plex_to_real.get(plex_path, plex_path)
+                self.media_info_map[real_path] = {
+                    "media_type": "episode" if ep_info else "movie",
+                    "episode_info": ep_info
+                }
+
             result_set.update(modified_items)
             subtitles = self.subtitle_finder.get_media_subtitles(modified_items, files_to_skip=set(self.files_to_skip))
             result_set.update(subtitles)
@@ -1327,11 +1352,34 @@ class PlexCacheApp:
                     logging.info(f"  ...and {len(files_to_cache) - 6} more")
         self._safe_move_files(self.media_to_cache, 'cache')
 
+        # Enrich pre-existing cached files with media type metadata
+        # Files already on cache were recorded as "pre-existing" without media_type.
+        # Now that we have media_info_map from Plex API, backfill the metadata.
+        if self.timestamp_tracker and self.media_info_map:
+            for real_path, info in self.media_info_map.items():
+                # Convert real/user path to cache path for timestamp tracker lookup
+                if self.file_mover and self.file_mover.path_modifier:
+                    cache_path, _ = self.file_mover.path_modifier.convert_real_to_cache(real_path)
+                elif self.config_manager.paths.real_source and self.config_manager.paths.cache_dir:
+                    cache_path = real_path.replace(
+                        self.config_manager.paths.real_source,
+                        self.config_manager.paths.cache_dir, 1
+                    )
+                else:
+                    cache_path = None
+                if cache_path:
+                    self.timestamp_tracker.enrich_media_info(
+                        cache_path,
+                        media_type=info.get("media_type"),
+                        episode_info=info.get("episode_info")
+                    )
+
     def _safe_move_files(self, files: List[str], destination: str) -> None:
         """Safely move files with consistent error handling."""
         try:
-            # Pass source map only when moving to cache
+            # Pass source map and media info map only when moving to cache
             source_map = self.source_map if destination == 'cache' else None
+            media_info_map = self.media_info_map if destination == 'cache' else None
 
             # Get real_source - in multi-path mode, use first enabled mapping's real_path
             real_source = self.config_manager.paths.real_source
@@ -1353,7 +1401,8 @@ class PlexCacheApp:
                 files, destination,
                 real_source,
                 cache_dir,
-                source_map
+                source_map,
+                media_info_map
             )
         except Exception as e:
             error_msg = f"Error moving media files to {destination}: {type(e).__name__}: {e}"
@@ -2076,7 +2125,8 @@ class PlexCacheApp:
 
     def _check_free_space_and_move_files(self, media_files: List[str], destination: str,
                                         real_source: str, cache_dir: str,
-                                        source_map: dict = None) -> None:
+                                        source_map: dict = None,
+                                        media_info_map: dict = None) -> None:
         """Check free space and move files."""
         media_files_filtered = self.file_filter.filter_files(
             media_files, destination, self.media_to_cache, set(self.files_to_skip)
@@ -2154,7 +2204,8 @@ class PlexCacheApp:
                 media_files_filtered, destination,
                 self.config_manager.performance.max_concurrent_moves_array,
                 self.config_manager.performance.max_concurrent_moves_cache,
-                source_map
+                source_map,
+                media_info_map
             )
         else:
             if not self.logging_manager.files_moved:
