@@ -161,7 +161,7 @@ class UserTokenCache:
             return
         try:
             with open(self._cache_file, 'w') as f:
-                json.dump({'tokens': self._memory_cache}, f)
+                json.dump({'tokens': self._memory_cache}, f, indent=2)
         except IOError as e:
             logging.warning(f"[TOKEN CACHE] Could not save cache file: {e}")
 
@@ -831,7 +831,7 @@ class PlexManager:
                 ]
             }
             with open(self._rss_cache_file, 'w') as f:
-                json.dump(cache_data, f)
+                json.dump(cache_data, f, indent=2)
             logging.debug(f"Saved {len(items)} RSS items to cache")
         except IOError as e:
             logging.debug(f"Failed to save RSS cache: {e}")
