@@ -162,9 +162,9 @@ def cache_files_table(
     if totals["total_size"] >= 1024 ** 3:
         totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 3):.2f} GB"
     elif totals["total_size"] >= 1024 ** 2:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.1f} MB"
+        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.2f} MB"
     else:
-        totals["total_size_display"] = f"{totals['total_size'] / 1024:.0f} KB"
+        totals["total_size_display"] = f"{totals['total_size'] / 1024:.2f} KB"
 
     # Get eviction mode setting
     settings_service = get_settings_service()

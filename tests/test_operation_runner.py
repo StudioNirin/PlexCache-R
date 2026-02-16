@@ -51,20 +51,20 @@ class TestFormatBytes:
         assert OperationRunner._format_bytes(512) == "512 B"
 
     def test_kilobytes(self):
-        assert OperationRunner._format_bytes(1024) == "1.0 KB"
-        assert OperationRunner._format_bytes(1536) == "1.5 KB"
+        assert OperationRunner._format_bytes(1024) == "1.00 KB"
+        assert OperationRunner._format_bytes(1536) == "1.50 KB"
 
     def test_megabytes(self):
-        assert OperationRunner._format_bytes(1048576) == "1.0 MB"
+        assert OperationRunner._format_bytes(1048576) == "1.00 MB"
 
     def test_gigabytes(self):
-        assert OperationRunner._format_bytes(2 * 1024**3) == "2.0 GB"
+        assert OperationRunner._format_bytes(2 * 1024**3) == "2.00 GB"
         # 2.3 GB
         result = OperationRunner._format_bytes(int(2.3 * 1024**3))
         assert result.startswith("2.3") and "GB" in result
 
     def test_terabytes(self):
-        assert OperationRunner._format_bytes(1024**4) == "1.0 TB"
+        assert OperationRunner._format_bytes(1024**4) == "1.00 TB"
 
 
 # ============================================================================

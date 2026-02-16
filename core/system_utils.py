@@ -157,9 +157,9 @@ def format_bytes(bytes_value: int) -> str:
     size = float(bytes_value)
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024 or unit == 'TB':
-            return f"{size:.1f} {unit}" if unit != 'B' else f"{int(size)} B"
+            return f"{size:.2f} {unit}" if unit != 'B' else f"{int(size)} B"
         size /= 1024
-    return f"{size:.1f} TB"
+    return f"{size:.2f} TB"
 
 
 def format_duration(seconds: float) -> str:
