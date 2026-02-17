@@ -409,7 +409,7 @@ class CacheTimestampTracker:
 
                 if migrated:
                     self._save()
-                    logging.info("Migrated timestamp file to new format with source tracking")
+                    logging.info("[MIGRATION] Migrated timestamp file to new format with source tracking")
 
                 # Build reverse index from existing subtitle associations
                 self._build_subtitle_reverse_index()
@@ -790,7 +790,7 @@ class CacheTimestampTracker:
 
         if migrated_count:
             self._save()
-            logging.info(f"Migrated {migrated_count} subtitle entries to parent video associations")
+            logging.info(f"[MIGRATION] Migrated {migrated_count} subtitle entries to parent video associations")
 
     @staticmethod
     def _derive_parent_video_path(subtitle_path: str) -> Optional[str]:
@@ -899,9 +899,9 @@ class CacheTimestampTracker:
             if total_removed:
                 self._save()
                 if missing_subs:
-                    logging.info(f"Cleaned up {len(missing)} stale timestamp entries and {missing_subs} missing subtitle references")
+                    logging.info(f"[CACHE] Cleaned up {len(missing)} stale timestamp entries and {missing_subs} missing subtitle references")
                 else:
-                    logging.info(f"Cleaned up {len(missing)} stale timestamp entries")
+                    logging.info(f"[CACHE] Cleaned up {len(missing)} stale timestamp entries")
             return total_removed
 
 
@@ -2168,7 +2168,7 @@ class PlexcachedMigration:
                         del self._active_files[thread_id]
                     self._print_progress()
                 # Log to file (outside lock for performance)
-                logging.info(f"Migrated: {filename} ({format_bytes(file_size)})")
+                logging.info(f"[MIGRATION] Migrated: {filename} ({format_bytes(file_size)})")
                 return 0
             else:
                 logging.error(f"Failed to verify: {plexcached_file}")
@@ -2219,32 +2219,32 @@ class PlexcachedMigration:
             Tuple of (files_migrated, files_skipped, errors)
         """
         if not self.needs_migration():
-            logging.info("Migration already complete, skipping")
+            logging.info("[MIGRATION] Migration already complete, skipping")
             return 0, 0, 0
 
         # Read and deduplicate exclude file
         cache_files, duplicates_removed = self._read_exclude_file()
 
         if not cache_files:
-            logging.info("No exclude file or empty, nothing to migrate")
+            logging.info("[MIGRATION] No exclude file or empty, nothing to migrate")
             self._mark_complete()
             return 0, 0, 0
 
-        logging.info("=== PlexCache-D Migration ===")
+        logging.info("[MIGRATION] === PlexCache-D Migration ===")
         if duplicates_removed > 0:
-            logging.info(f"Removed {duplicates_removed} duplicate entries from exclude list")
-        logging.info(f"Checking {len(cache_files)} unique files in exclude list...")
+            logging.info(f"[MIGRATION] Removed {duplicates_removed} duplicate entries from exclude list")
+        logging.info(f"[MIGRATION] Checking {len(cache_files)} unique files in exclude list...")
 
         # Find files that need migration
         files_needing_migration, total_bytes = self._find_files_needing_migration(cache_files)
 
         if not files_needing_migration:
-            logging.info("All files already have backups, no migration needed")
+            logging.info("[MIGRATION] All files already have backups, no migration needed")
             self._mark_complete()
             return 0, len(cache_files), 0
 
         total_gb = total_bytes / (1024 ** 3)
-        logging.info(f"Found {len(files_needing_migration)} files needing .plexcached backup ({total_gb:.2f} GB)")
+        logging.info(f"[MIGRATION] Found {len(files_needing_migration)} files needing .plexcached backup ({total_gb:.2f} GB)")
 
         if dry_run:
             logging.info("[DRY RUN] Would create the following backups:")
@@ -2253,7 +2253,7 @@ class PlexcachedMigration:
             return 0, 0, 0
 
         # Perform migration with progress tracking
-        logging.info(f"Starting migration with {max_concurrent} concurrent copies...")
+        logging.info(f"[MIGRATION] Starting migration with {max_concurrent} concurrent copies...")
 
         # Initialize thread-safe counters
         self._migration_lock = threading.Lock()
@@ -2278,12 +2278,12 @@ class PlexcachedMigration:
         skipped = len(cache_files) - len(files_needing_migration)
 
         if self._critical_error:
-            logging.info(f"=== Migration Stopped (Critical Error) ===")
+            logging.info(f"[MIGRATION] === Migration Stopped (Critical Error) ===")
         else:
-            logging.info(f"=== Migration Complete ===")
-        logging.info(f"  Migrated: {migrated} files")
-        logging.info(f"  Skipped (already had backup): {skipped} files")
-        logging.info(f"  Errors: {errors}")
+            logging.info(f"[MIGRATION] === Migration Complete ===")
+        logging.info(f"[MIGRATION]   Migrated: {migrated} files")
+        logging.info(f"[MIGRATION]   Skipped (already had backup): {skipped} files")
+        logging.info(f"[MIGRATION]   Errors: {errors}")
 
         if errors == 0:
             self._mark_complete()
@@ -2300,7 +2300,7 @@ class PlexcachedMigration:
         try:
             with open(self.flag_file, 'w') as f:
                 f.write(f"Migration completed: {datetime.now().isoformat()}\n")
-            logging.info(f"Migration flag created: {self.flag_file}")
+            logging.info(f"[MIGRATION] Migration flag created: {self.flag_file}")
         except IOError as e:
             logging.error(f"Could not create migration flag: {type(e).__name__}: {e}")
 
@@ -2438,7 +2438,7 @@ class MultiPathModifier:
             library_hint = f"/{path_parts[0]}/"
         else:
             library_hint = plex_path
-        logging.info(f"Skipping unmapped path {library_hint} - add to path_mappings with enabled:false to silence")
+        logging.info(f"[CONFIG] Skipping unmapped path {library_hint} - add to path_mappings with enabled:false to silence")
         logging.debug(f"Full unmapped path: {plex_path}")
         return (plex_path, None)
 
@@ -2568,7 +2568,7 @@ class MultiPathModifier:
         if self._accumulated_disabled_skips:
             total_skipped = sum(self._accumulated_disabled_skips.values())
             mapping_names = ', '.join(sorted(self._accumulated_disabled_skips.keys()))
-            logging.info(f"Skipped {total_skipped} files from disabled libraries ({mapping_names})")
+            logging.info(f"[FILTER] Skipped {total_skipped} files from disabled libraries ({mapping_names})")
             self._accumulated_disabled_skips = {}
 
     def get_mapping_stats(self) -> Dict[str, Dict[str, any]]:
@@ -2887,7 +2887,7 @@ class FileFilter:
 
         # Log non-cacheable files summary
         if non_cacheable_count > 0:
-            logging.info(f"Skipped {non_cacheable_count} files from non-cacheable path mappings")
+            logging.info(f"[FILTER] Skipped {non_cacheable_count} files from non-cacheable path mappings")
 
         return media_to
     
@@ -2942,7 +2942,7 @@ class FileFilter:
             if os.path.isfile(cache_file_name):
                 try:
                     os.remove(cache_file_name)
-                    logging.info(f"Removed orphaned cache file (array copy exists): {os.path.basename(cache_file_name)}")
+                    logging.info(f"[CACHE] Removed orphaned cache file (array copy exists): {os.path.basename(cache_file_name)}")
                     cache_removed = True
                 except OSError as e:
                     logging.error(f"Failed to remove cache file {cache_file_name}: {type(e).__name__}: {e}")
@@ -3027,7 +3027,7 @@ class FileFilter:
             if not os.path.isfile(plexcached_file):
                 try:
                     os.rename(actual_array_file, plexcached_file)
-                    logging.info(f"Created backup of array file: {os.path.basename(plexcached_file)}")
+                    logging.info(f"[PLEXCACHED] Created backup of array file: {os.path.basename(plexcached_file)}")
                 except FileNotFoundError:
                     pass  # File already removed
                 except OSError as e:
@@ -3215,7 +3215,7 @@ class FileFilter:
         try:
             # Read exclude file
             if not os.path.exists(self.mover_cache_exclude_file):
-                logging.info("No exclude file found, nothing to move back")
+                logging.info("[RESTORE] No exclude file found, nothing to move back")
                 return files_to_move_back, stale_entries, move_back_exclude_paths
 
             with open(self.mover_cache_exclude_file, 'r') as f:
@@ -3533,7 +3533,7 @@ class FileFilter:
                 with open(self.mover_cache_exclude_file, 'w') as f:
                     for file_path in updated_files:
                         f.write(f"{file_path}\n")
-                logging.info(f"Cleaned up {removed_count} stale entries from exclude list")
+                logging.info(f"[EXCLUDE] Cleaned up {removed_count} stale entries from exclude list")
 
             return True
 
@@ -3582,7 +3582,7 @@ class FileFilter:
                 with open(self.mover_cache_exclude_file, 'w') as f:
                     for entry in valid_entries:
                         f.write(entry + '\n')
-                logging.info(f"Cleaned {len(stale_entries)} stale entries from exclude list")
+                logging.info(f"[EXCLUDE] Cleaned {len(stale_entries)} stale entries from exclude list")
 
             return len(stale_entries)
 
@@ -3866,7 +3866,7 @@ class FileMover:
                             return None
                         else:  # hardlinked_files == "move"
                             logging.info(
-                                f"Caching hard-linked file (has {stat_info.st_nlink} links, seed copy preserved): "
+                                f"[CACHE] Caching hard-linked file (has {stat_info.st_nlink} links, seed copy preserved): "
                                 f"{os.path.basename(user_file_name)}"
                             )
                             # Track inode for potential hard-link restoration when moving back
@@ -4053,7 +4053,7 @@ class FileMover:
                     for entry in stale_entries:
                         old_name = os.path.basename(entry)
                         new_name = os.path.basename(current_cache_file)
-                        logging.info(f"Cleaned up stale exclude entry from upgrade: {old_name} -> {new_name}")
+                        logging.info(f"[EXCLUDE] Cleaned up stale exclude entry from upgrade: {old_name} -> {new_name}")
 
             except Exception as e:
                 logging.warning(f"Failed to cleanup stale exclude entries: {e}")
@@ -4329,7 +4329,7 @@ class FileMover:
                 if old_plexcached and old_plexcached != plexcached_file:
                     old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
                     new_name = os.path.basename(cache_file_name)
-                    logging.info(f"Upgrade detected during cache: {old_name} -> {new_name}")
+                    logging.info(f"[CACHE] Upgrade detected during cache: {old_name} -> {new_name}")
                     os.remove(old_plexcached)
                     logging.debug(f"Deleted old .plexcached: {old_plexcached}")
                     # Build the old cache file path for exclude list cleanup
@@ -4708,7 +4708,7 @@ class FileMover:
                 if source_file:
                     try:
                         os.link(source_file, array_file)
-                        logging.info(f"Restored hard link from seed copy: {os.path.basename(array_file)}")
+                        logging.info(f"[RESTORE] Restored hard link from seed copy: {os.path.basename(array_file)}")
                         logging.debug(f"Hard link created: {source_file} -> {array_file}")
                         # Skip to cache deletion since array file is now restored
                         if os.path.isfile(cache_file):
@@ -4735,7 +4735,7 @@ class FileMover:
                 if cache_size > 0 and cache_size != plexcached_size:
                     # In-place upgrade: same filename but different file content
                     operation_type = "Moved"  # Copy operation
-                    logging.info(f"In-place upgrade detected ({format_bytes(plexcached_size)} -> {format_bytes(cache_size)}): {os.path.basename(cache_file)}")
+                    logging.info(f"[RESTORE] In-place upgrade detected ({format_bytes(plexcached_size)} -> {format_bytes(cache_size)}): {os.path.basename(cache_file)}")
                     os.remove(plexcached_file)
                     # For Docker: translate cache path to host path for log display
                     display_src = self._translate_to_host_path(cache_file) if self.file_utils.is_docker else None
@@ -4782,7 +4782,7 @@ class FileMover:
                     operation_type = "Moved"  # Copy operation (upgrade)
                     old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
                     new_name = os.path.basename(cache_file)
-                    logging.info(f"Upgrade detected: {old_name} -> {new_name}")
+                    logging.info(f"[RESTORE] Upgrade detected: {old_name} -> {new_name}")
 
                     # Delete the old .plexcached (it's outdated)
                     os.remove(old_plexcached)
@@ -5059,7 +5059,7 @@ class PlexcachedRestorer:
             Tuple of (success_count, error_count)
         """
         plexcached_files = self.find_plexcached_files()
-        logging.info(f"Found {len(plexcached_files)} .plexcached files to restore")
+        logging.info(f"[RESTORE] Found {len(plexcached_files)} .plexcached files to restore")
 
         if not plexcached_files:
             return 0, 0
@@ -5081,7 +5081,7 @@ class PlexcachedRestorer:
                 if os.path.islink(original_file):
                     try:
                         os.remove(original_file)
-                        logging.info(f"Removed symlink before restore: {original_file}")
+                        logging.info(f"[RESTORE] Removed symlink before restore: {original_file}")
                     except OSError as e:
                         logging.warning(f"Cannot remove symlink at {original_file}: {e}")
                         error_count += 1
@@ -5093,13 +5093,13 @@ class PlexcachedRestorer:
                     continue
 
                 os.rename(plexcached_file, original_file)
-                logging.info(f"Restored: {plexcached_file} -> {original_file}")
+                logging.info(f"[RESTORE] Restored: {plexcached_file} -> {original_file}")
                 success_count += 1
             except Exception as e:
                 logging.error(f"Failed to restore {plexcached_file}: {type(e).__name__}: {e}")
                 error_count += 1
 
-        logging.info(f"Restore complete: {success_count} succeeded, {error_count} failed")
+        logging.info(f"[RESTORE] Restore complete: {success_count} succeeded, {error_count} failed")
         return success_count, error_count
 
 

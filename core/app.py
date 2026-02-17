@@ -96,7 +96,7 @@ class PlexCacheApp:
             if self.dry_run:
                 logging.warning("DRY-RUN MODE - No files will be moved")
             if self.verbose:
-                logging.info("VERBOSE MODE - Showing DEBUG level logs")
+                logging.info("[CONFIG] VERBOSE MODE - Showing DEBUG level logs")
 
             # Prevent multiple instances from running simultaneously
             # Compute project root: if we're in core/, go up one level
@@ -126,9 +126,9 @@ class PlexCacheApp:
                     time.sleep(poll_interval)
                     waited += poll_interval
                     if waited % 300 == 0:  # Log every 5 minutes
-                        logging.info(f"Still waiting for mover to finish... ({waited // 60} minutes elapsed)")
+                        logging.info(f"[MOVER] Still waiting for mover to finish... ({waited // 60} minutes elapsed)")
                 minutes_waited = waited / 60
-                logging.info(f"Unraid mover finished after {minutes_waited:.1f} minutes of waiting. Proceeding with PlexCache run.")
+                logging.info(f"[MOVER] Unraid mover finished after {minutes_waited:.1f} minutes of waiting. Proceeding with PlexCache run.")
 
             # Load configuration
             logging.debug("Loading configuration...")
@@ -157,7 +157,7 @@ class PlexCacheApp:
 
             # Log hard-linked files handling mode
             if self.config_manager.cache.hardlinked_files == "move":
-                logging.info("Hard-linked files mode: MOVE - Hard-linked files will be cached (seed copies preserved via remaining hard links)")
+                logging.info("[CONFIG] Hard-linked files mode: MOVE - Hard-linked files will be cached (seed copies preserved via remaining hard links)")
 
             # Clean up stale exclude list entries (self-healing)
             # Skip in dry-run mode to avoid modifying tracking files
@@ -233,7 +233,7 @@ class PlexCacheApp:
         if old_exists and not new_exists:
             try:
                 os.rename(old_exclude_file, new_cached_file)
-                logging.info(f"Migrated {old_exclude_file} -> {new_cached_file}")
+                logging.info(f"[MIGRATION] Migrated {old_exclude_file} -> {new_cached_file}")
             except OSError as e:
                 logging.error(f"Failed to migrate exclude file: {e}")
                 logging.error(f"Please manually rename '{old_exclude_file}' to '{new_cached_file}'")
@@ -241,7 +241,7 @@ class PlexCacheApp:
         elif old_exists and new_exists:
             try:
                 os.remove(old_exclude_file)
-                logging.info(f"Removed legacy exclude file: {old_exclude_file}")
+                logging.info(f"[MIGRATION] Removed legacy exclude file: {old_exclude_file}")
             except OSError as e:
                 logging.warning(f"Could not remove legacy exclude file: {e}")
     
@@ -371,16 +371,16 @@ class PlexCacheApp:
         actually_moved = getattr(self.file_mover, 'last_cache_moves_count', 0) if self.file_mover else 0
         moved_to_array = len(self.media_to_array)
 
-        logging.info(f"Already cached: {already_cached} files")
+        logging.info(f"[RESULTS] Already cached: {already_cached} files")
         move_verb = "Would move" if self.dry_run else "Moved"
-        logging.info(f"{move_verb} to cache: {actually_moved} files")
-        logging.info(f"{move_verb} to array: {moved_to_array} files")
+        logging.info(f"[RESULTS] {move_verb} to cache: {actually_moved} files")
+        logging.info(f"[RESULTS] {move_verb} to array: {moved_to_array} files")
 
         # Show eviction stats if any files were evicted
         if self.evicted_count > 0:
             evict_verb = "Would evict" if self.dry_run else "Evicted"
             evicted_size = self.evicted_bytes / (1024**3)  # Convert to GB
-            logging.info(f"{evict_verb}: {self.evicted_count} files ({evicted_size:.2f} GB freed)")
+            logging.info(f"[RESULTS] {evict_verb}: {self.evicted_count} files ({evicted_size:.2f} GB freed)")
 
         # Additional detail at DEBUG level
         # Note: Empty folder cleanup now happens immediately during file operations
@@ -408,7 +408,7 @@ class PlexCacheApp:
         # On host:   /var/run/mover.pid
         for pid_path in ['/host_var_run/mover.pid', '/var/run/mover.pid']:
             if os.path.exists(pid_path):
-                logging.info(f"Unraid mover detected via PID file: {pid_path}")
+                logging.info(f"[MOVER] Unraid mover detected via PID file: {pid_path}")
                 return True
 
         try:
@@ -420,7 +420,7 @@ class PlexCacheApp:
                 text=True
             )
             if result.returncode == 0 and result.stdout.strip():
-                logging.info("Unraid mover detected via pgrep (mover)")
+                logging.info("[MOVER] Unraid mover detected via pgrep (mover)")
                 return True
 
             # Also check for the age_mover script (CA Mover Tuning plugin)
@@ -430,7 +430,7 @@ class PlexCacheApp:
                 text=True
             )
             if result.returncode == 0 and result.stdout.strip() != '':
-                logging.info("Unraid mover detected via pgrep (age_mover)")
+                logging.info("[MOVER] Unraid mover detected via pgrep (age_mover)")
                 return True
 
         except (subprocess.SubprocessError, FileNotFoundError):
@@ -458,14 +458,14 @@ class PlexCacheApp:
 
         all_mappings = self.config_manager.paths.path_mappings or []
         enabled_mappings = [m for m in all_mappings if m.enabled]
-        logging.info(f"Using multi-path mode with {len(all_mappings)} mappings ({len(enabled_mappings)} enabled)")
+        logging.info(f"[CONFIG] Using multi-path mode with {len(all_mappings)} mappings ({len(enabled_mappings)} enabled)")
         self.file_path_modifier = MultiPathModifier(mappings=all_mappings)
 
         if self.config_manager.has_legacy_path_arrays():
             legacy_info = self.config_manager.get_legacy_array_info()
-            logging.info(f"Legacy path arrays detected: {legacy_info}")
-            logging.info("These are deprecated and can be removed from your settings file.")
-            logging.info("Path conversion now uses path_mappings exclusively.")
+            logging.info(f"[CONFIG] Legacy path arrays detected: {legacy_info}")
+            logging.info("[CONFIG] These are deprecated and can be removed from your settings file.")
+            logging.info("[CONFIG] Path conversion now uses path_mappings exclusively.")
 
         self.subtitle_finder = SubtitleFinder()
 
@@ -483,7 +483,7 @@ class PlexCacheApp:
             is_docker=self.system_detector.is_docker
         )
         if migration.needs_migration():
-            logging.info("Running one-time migration for .plexcached backups...")
+            logging.info("[MIGRATION] Running one-time migration for .plexcached backups...")
             max_concurrent = self.config_manager.performance.max_concurrent_moves_array
             migration.run_migration(dry_run=self.dry_run, max_concurrent=max_concurrent)
 
@@ -588,14 +588,14 @@ class PlexCacheApp:
 
                         if user0_has_files:
                             logging.info(
-                                f"ZFS cache detected for: {real_path}, but array files also exist "
+                                f"[CONFIG] ZFS cache detected for: {real_path}, but array files also exist "
                                 f"at {user0_path} — hybrid share (likely shareUseCache=yes/prefer). "
                                 f"Array-direct conversion remains enabled."
                             )
                         else:
                             prefix = real_path.rstrip('/') + '/'
                             zfs_prefixes.add(prefix)
-                            logging.info(f"ZFS pool-only detected for: {real_path} (array-direct conversion disabled)")
+                            logging.info(f"[CONFIG] ZFS pool-only detected for: {real_path} (array-direct conversion disabled)")
                     else:
                         # /mnt/user0 not accessible — cannot verify, assume pool-only
                         prefix = real_path.rstrip('/') + '/'
@@ -609,7 +609,7 @@ class PlexCacheApp:
 
         if zfs_prefixes:
             set_zfs_prefixes(zfs_prefixes)
-            logging.info(f"ZFS prefixes configured: {zfs_prefixes}")
+            logging.info(f"[CONFIG] ZFS prefixes configured: {zfs_prefixes}")
         else:
             logging.debug("No ZFS-backed paths found — all paths use standard array-direct conversion")
 
@@ -673,7 +673,7 @@ class PlexCacheApp:
                 with open(exclude_file, 'w') as f:
                     for entry in translated_entries:
                         f.write(f"{entry}\n")
-                logging.info(f"Migrated {migrated_count} exclude file entries to host paths")
+                logging.info(f"[MIGRATION] Migrated {migrated_count} exclude file entries to host paths")
                 for container_prefix, host_prefix in translations.items():
                     logging.debug(f"  Translated: {container_prefix} -> {host_prefix}")
             except (IOError, OSError) as e:
@@ -701,7 +701,7 @@ class PlexCacheApp:
         # Create exclude file on startup if it doesn't exist
         if not mover_exclude.exists():
             mover_exclude.touch()
-            logging.info(f"Created mover exclude file: {mover_exclude}")
+            logging.info(f"[CONFIG] Created mover exclude file: {mover_exclude}")
 
         # Migrate exclude file paths from container to host paths (Docker only)
         self._migrate_exclude_file_paths(mover_exclude)
@@ -722,7 +722,7 @@ class PlexCacheApp:
         if not os.path.exists(cache_path):
             try:
                 os.makedirs(cache_path, exist_ok=True)
-                logging.info(f"Created missing cache directory: {cache_path}")
+                logging.info(f"[CONFIG] Created missing cache directory: {cache_path}")
             except OSError as e:
                 raise FileNotFoundError(f"Cannot create cache directory {cache_path}: {e}")
 
@@ -871,7 +871,7 @@ class PlexCacheApp:
             else:
                 self._process_active_sessions(sessions)
                 if self.files_to_skip:
-                    logging.info(f"Skipped {len(self.files_to_skip)} active session(s)")
+                    logging.info(f"[FILTER] Skipped {len(self.files_to_skip)} active session(s)")
     
     def _process_active_sessions(self, sessions: List) -> None:
         """Process active sessions and add files to skip list."""
@@ -959,9 +959,9 @@ class PlexCacheApp:
         # Log OnDeck summary (count users with items)
         ondeck_users = set(item.username for item in ondeck_items_list)
         if ondeck_items_list:
-            logging.info(f"OnDeck: {len(ondeck_items_list)} items from {len(ondeck_users)} users")
+            logging.info(f"[FETCH] OnDeck: {len(ondeck_items_list)} items from {len(ondeck_users)} users")
         else:
-            logging.info("OnDeck: 0 items")
+            logging.info("[FETCH] OnDeck: 0 items")
 
         # Edit file paths for OnDeck media (convert plex paths to real paths)
         logging.debug("Modifying file paths for OnDeck media...")
@@ -1002,7 +1002,7 @@ class PlexCacheApp:
                     expired.add(real_path)
             if expired:
                 modified_ondeck = [p for p in modified_ondeck if p not in expired]
-                logging.info(f"Skipped {len(expired)} OnDeck items due to retention expiry ({ondeck_retention_days} days)")
+                logging.info(f"[FILTER] Skipped {len(expired)} OnDeck items due to retention expiry ({ondeck_retention_days} days)")
 
         # Cleanup entries no longer on any user's OnDeck
         self.ondeck_tracker.cleanup_unseen()
@@ -1100,7 +1100,7 @@ class PlexCacheApp:
         total = len(self.all_active_media)
         cached = len(already_cached)
         to_cache = len(needs_caching)
-        logging.info(f"Media: {total} total ({cached} already cached, {to_cache} to cache)")
+        logging.info(f"[FETCH] Media: {total} total ({cached} already cached, {to_cache} to cache)")
 
         if self.should_stop:
             logging.info("Operation stopped during media processing")
@@ -1208,7 +1208,7 @@ class PlexCacheApp:
             total_watchlist = len(result_set)
             has_remote = 'remote_items' in locals() and len(remote_items) > 0
             source_info = " (local + remote)" if has_remote else ""
-            logging.info(f"Watchlist: {total_watchlist} items{source_info}")
+            logging.info(f"[FETCH] Watchlist: {total_watchlist} items{source_info}")
 
             # Modify file paths and build plex→real mapping for media_info_map
             plex_paths = list(result_set)
@@ -1503,7 +1503,7 @@ class PlexCacheApp:
             # These files have .plexcached backups on array - instant restore via rename
             count = len(files_to_restore)
             unit = "episode" if count == 1 else "episodes"
-            logging.info(f"Returning to array ({count} {unit}, instant via .plexcached):")
+            logging.info(f"[RESTORE] Returning to array ({count} {unit}, instant via .plexcached):")
             for f in files_to_restore[:6]:  # Show first 6
                 display_name = self._extract_display_name(f)
                 logging.info(f"  {display_name}")
@@ -1534,7 +1534,7 @@ class PlexCacheApp:
             unit = "episode" if count == 1 else "episodes"
             size_str = f"{total_size / (1024**3):.2f} GB" if total_size > 0 else ""
             size_part = f", {size_str}" if size_str else ""
-            logging.info(f"Copying to array ({count} {unit}{size_part}):")
+            logging.info(f"[RESTORE] Copying to array ({count} {unit}{size_part}):")
             for f in files_to_move[:6]:  # Show first 6
                 display_name = self._extract_display_name(f)
                 logging.info(f"  {display_name}")
@@ -1587,7 +1587,7 @@ class PlexCacheApp:
         if self.media_to_cache:
             count = len(self.media_to_cache)
             unit = "file" if count == 1 else "files"
-            logging.info(f"Caching to cache drive ({count} {unit}):")
+            logging.info(f"[CACHE] Caching to cache drive ({count} {unit}):")
             for f in self.media_to_cache[:6]:
                 display_name = self._extract_display_name(f)
                 logging.info(f"  {display_name}")
@@ -1845,12 +1845,12 @@ class PlexCacheApp:
             return media_files
 
         if cache_limit_bytes > 0:
-            logging.info(f"Cache limit: {limit_readable}")
+            logging.info(f"[QUOTA] Cache limit: {limit_readable}")
         if min_free_bytes > 0:
-            logging.info(f"Min free space: {min_free_readable}")
+            logging.info(f"[QUOTA] Min free space: {min_free_readable}")
         if plexcache_quota_bytes > 0:
-            logging.info(f"PlexCache quota: {quota_readable}")
-        logging.info(f"Cache drive usage: {drive_usage_gb:.2f}GB (free: {disk_usage.free / (1024**3):.2f}GB)")
+            logging.info(f"[QUOTA] PlexCache quota: {quota_readable}")
+        logging.info(f"[QUOTA] Cache drive usage: {drive_usage_gb:.2f}GB (free: {disk_usage.free / (1024**3):.2f}GB)")
 
         # Calculate available space from each constraint
         available_space = None
@@ -1871,7 +1871,7 @@ class PlexCacheApp:
         if plexcache_quota_bytes > 0:
             plexcache_tracked, _ = self._get_plexcache_tracked_size()
             quota_available = plexcache_quota_bytes - plexcache_tracked
-            logging.info(f"PlexCache quota: {plexcache_quota_bytes / (1024**3):.1f}GB (tracked: {plexcache_tracked / (1024**3):.2f}GB, available: {quota_available / (1024**3):.2f}GB)")
+            logging.info(f"[QUOTA] PlexCache quota: {plexcache_quota_bytes / (1024**3):.1f}GB (tracked: {plexcache_tracked / (1024**3):.2f}GB, available: {quota_available / (1024**3):.2f}GB)")
             if available_space is None or quota_available < available_space:
                 available_space = quota_available
                 bottleneck = "plexcache_quota"
@@ -1882,7 +1882,7 @@ class PlexCacheApp:
         # Log which constraint is the bottleneck when multiple are active
         active_count = sum(1 for v in [cache_limit_bytes, min_free_bytes, plexcache_quota_bytes] if v > 0)
         if active_count > 1:
-            logging.info(f"Active constraint: {bottleneck.replace('_', ' ')} (available: {available_space / (1024**3):.2f}GB)")
+            logging.info(f"[QUOTA] Active constraint: {bottleneck.replace('_', ' ')} (available: {available_space / (1024**3):.2f}GB)")
 
         if available_space <= 0:
             if bottleneck == "min_free_space":
@@ -2089,7 +2089,7 @@ class PlexCacheApp:
                 )
             else:
                 logging.info(
-                    f"Skipped {skipped_count} files below minimum priority ({eviction_min_priority}): {breakdown}. "
+                    f"[FILTER] Skipped {skipped_count} files below minimum priority ({eviction_min_priority}): {breakdown}. "
                     f"These would be evicted when threshold is reached."
                 )
 
@@ -2144,9 +2144,9 @@ class PlexCacheApp:
             return (0, 0)
 
         if needed_space_bytes > 0:
-            logging.info(f"Smart eviction: drive over limit, need to free {space_to_free/1e9:.2f}GB")
+            logging.info(f"[EVICTION] Smart eviction: drive over limit, need to free {space_to_free/1e9:.2f}GB")
         else:
-            logging.info(f"Smart eviction: drive usage ({total_drive_usage/1e9:.1f}GB) over threshold ({threshold_bytes/1e9:.1f}GB), need to free {space_to_free/1e9:.2f}GB")
+            logging.info(f"[EVICTION] Smart eviction: drive usage ({total_drive_usage/1e9:.1f}GB) over threshold ({threshold_bytes/1e9:.1f}GB), need to free {space_to_free/1e9:.2f}GB")
             logging.debug(f"PlexCache-tracked: {plexcache_tracked/1e9:.1f}GB, Other files: {(total_drive_usage-plexcache_tracked)/1e9:.1f}GB")
 
         # Get eviction candidates based on mode
@@ -2159,7 +2159,7 @@ class PlexCacheApp:
             return (0, 0)
 
         if not candidates:
-            logging.info("No low-priority items available for eviction")
+            logging.info("[EVICTION] No low-priority items available for eviction")
             return (0, 0)
 
         # Filter out files that are active media (prevents evict-then-recache loop)
@@ -2180,7 +2180,7 @@ class PlexCacheApp:
             logging.debug(f"Skipped {skipped} eviction candidate(s) that would be immediately re-cached")
 
         if not candidates:
-            logging.info("No eviction candidates after filtering (all would be re-cached)")
+            logging.info("[EVICTION] No eviction candidates after filtering (all would be re-cached)")
             return (0, 0)
 
         # Check if candidates can free enough space
@@ -2199,10 +2199,10 @@ class PlexCacheApp:
                 size_mb = os.path.getsize(cache_path) / (1024**2)
             except (OSError, FileNotFoundError):
                 size_mb = 0
-            logging.info(f"Evicting ({priority_info}): {os.path.basename(cache_path)} ({size_mb:.1f}MB)")
+            logging.info(f"[EVICTION] Evicting ({priority_info}): {os.path.basename(cache_path)} ({size_mb:.1f}MB)")
 
         if self.dry_run:
-            logging.info(f"DRY-RUN: Would evict {len(candidates)} files")
+            logging.info(f"[EVICTION] DRY-RUN: Would evict {len(candidates)} files")
             return (0, 0)
 
         # Perform eviction: restore .plexcached files, remove from exclude list
@@ -2253,7 +2253,7 @@ class PlexCacheApp:
                         # IMPORTANT: Copy upgraded file FIRST, then delete old backup
                         old_name = os.path.basename(old_plexcached).replace(".plexcached", "")
                         new_name = os.path.basename(cache_path)
-                        logging.info(f"Eviction upgrade detected: {old_name} -> {new_name}")
+                        logging.info(f"[EVICTION] Eviction upgrade detected: {old_name} -> {new_name}")
 
                         # Copy the upgraded cache file to array BEFORE deleting old backup
                         # CRITICAL: Copy to /mnt/user0/ (array direct), NOT /mnt/user/ (FUSE)
@@ -2302,7 +2302,7 @@ class PlexCacheApp:
                                     array_direct_dir = os.path.dirname(array_direct_path)
                                     os.makedirs(array_direct_dir, exist_ok=True)
                                     shutil.copy2(cache_path, array_direct_path)
-                                    logging.info(f"Created array copy before eviction: {os.path.basename(array_direct_path)}")
+                                    logging.info(f"[EVICTION] Created array copy before eviction: {os.path.basename(array_direct_path)}")
                                     # Verify copy succeeded using array-direct path
                                     if os.path.exists(array_direct_path):
                                         cache_size = os.path.getsize(cache_path)
@@ -2358,7 +2358,7 @@ class PlexCacheApp:
             except Exception as e:
                 logging.warning(f"Failed to evict {cache_path}: {e}")
 
-        logging.info(f"Smart eviction complete: freed {bytes_freed/1e9:.2f}GB from {files_evicted} files")
+        logging.info(f"[EVICTION] Smart eviction complete: freed {bytes_freed/1e9:.2f}GB from {files_evicted} files")
         return (files_evicted, bytes_freed)
 
     def _get_fifo_eviction_candidates(self, cached_files: List[str], target_bytes: int) -> List[str]:
@@ -2570,7 +2570,7 @@ class PlexCacheApp:
         self._log_results_summary()
 
         logging.info("")
-        logging.info(f"Completed in {execution_time}")
+        logging.info(f"[RESULTS] Completed in {execution_time}")
         logging.info("===================")
 
         self.logging_manager.shutdown()
@@ -2634,8 +2634,8 @@ def _run_plexcached_restore(config_file: str, dry_run: bool, verbose: bool = Fal
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
 
-    logging.info("*** PlexCache Emergency Restore Mode ***")
-    logging.info("This will restore all .plexcached files back to their original names.")
+    logging.info("[RESTORE] *** PlexCache Emergency Restore Mode ***")
+    logging.info("[RESTORE] This will restore all .plexcached files back to their original names.")
 
     # Load config to get the real_source path
     config_manager = ConfigManager(config_file)
@@ -2655,7 +2655,7 @@ def _run_plexcached_restore(config_file: str, dry_run: bool, verbose: bool = Fal
         logging.error("No search paths configured. Check your settings.")
         return
 
-    logging.info(f"Searching for .plexcached files in: {search_paths}")
+    logging.info(f"[RESTORE] Searching for .plexcached files in: {search_paths}")
 
     restorer = PlexcachedRestorer(search_paths)
 
@@ -2683,11 +2683,11 @@ def _run_plexcached_restore(config_file: str, dry_run: bool, verbose: bool = Fal
     response = input("Type 'RESTORE' to proceed: ")
 
     if response.strip() == "RESTORE":
-        logging.info("=== Performing restore ===")
+        logging.info("[RESTORE] === Performing restore ===")
         success, errors = restorer.restore_all(dry_run=False)
-        logging.info(f"Restore complete: {success} files restored, {errors} errors")
+        logging.info(f"[RESTORE] Restore complete: {success} files restored, {errors} errors")
     else:
-        logging.info("Restore cancelled.")
+        logging.info("[RESTORE] Restore cancelled.")
 
 
 def _run_show_priorities(config_file: str, verbose: bool = False) -> None:
