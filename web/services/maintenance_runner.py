@@ -215,6 +215,30 @@ def get_maintenance_history() -> MaintenanceHistory:
 
 
 @dataclass
+class QueuedAction:
+    """A maintenance action waiting in the queue"""
+    id: str                          # uuid4 for removal
+    action_name: str                 # e.g. "protect-with-backup"
+    display_name: str                # From ACTION_HISTORY_LABELS
+    service_method: Callable
+    method_args: tuple
+    method_kwargs: dict              # Original kwargs (before callback injection)
+    file_count: int
+    max_workers: int
+    on_complete: Optional[Callable]
+    queued_at: datetime
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "action_name": self.action_name,
+            "display_name": self.display_name,
+            "file_count": self.file_count,
+            "queued_at": self.queued_at.isoformat(),
+        }
+
+
+@dataclass
 class MaintenanceResult:
     """Result of a maintenance action"""
     state: MaintenanceState
@@ -250,6 +274,12 @@ class MaintenanceRunner:
         self._result: Optional[MaintenanceResult] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_requested = False
+        # Queue state
+        self._queue: List[QueuedAction] = []
+        self._max_queue_size = 5
+        self._queue_paused = False
+        self._dequeue_timer: Optional[threading.Timer] = None
+        self._countdown_started_at: Optional[datetime] = None
 
     @property
     def state(self) -> MaintenanceState:
@@ -411,6 +441,165 @@ class MaintenanceRunner:
                 if self._result:
                     self._result.state = MaintenanceState.IDLE
 
+    # ── Queue management ────────────────────────────────────────
+
+    @property
+    def queue_count(self) -> int:
+        with self._lock:
+            return len(self._queue)
+
+    @property
+    def queue(self) -> List[dict]:
+        """Serialized queue for API/templates."""
+        with self._lock:
+            return [item.to_dict() for item in self._queue]
+
+    @property
+    def queue_paused(self) -> bool:
+        with self._lock:
+            return self._queue_paused
+
+    def enqueue_action(
+        self,
+        action_name: str,
+        service_method: Callable,
+        method_args: tuple = (),
+        method_kwargs: Optional[dict] = None,
+        file_count: int = 0,
+        on_complete: Optional[Callable] = None,
+        max_workers: int = 1,
+    ) -> Optional[str]:
+        """Add an action to the queue. Returns queue item ID or None if full."""
+        with self._lock:
+            if len(self._queue) >= self._max_queue_size:
+                return None
+
+            item_id = str(uuid.uuid4())
+            display_name = ACTION_HISTORY_LABELS.get(action_name, action_name)
+            item = QueuedAction(
+                id=item_id,
+                action_name=action_name,
+                display_name=display_name,
+                service_method=service_method,
+                method_args=method_args,
+                method_kwargs=method_kwargs or {},
+                file_count=file_count,
+                max_workers=max_workers,
+                on_complete=on_complete,
+                queued_at=datetime.now(),
+            )
+            self._queue.append(item)
+            logger.info(f"Queued maintenance action: {display_name} (#{len(self._queue)})")
+            return item_id
+
+    def remove_from_queue(self, item_id: str) -> bool:
+        """Remove an item from the queue by ID."""
+        with self._lock:
+            for i, item in enumerate(self._queue):
+                if item.id == item_id:
+                    removed = self._queue.pop(i)
+                    logger.info(f"Removed from queue: {removed.display_name}")
+                    return True
+            return False
+
+    def clear_queue(self) -> int:
+        """Clear all queued items. Returns count cleared."""
+        with self._lock:
+            count = len(self._queue)
+            self._queue.clear()
+            if count > 0:
+                logger.info(f"Cleared {count} item(s) from maintenance queue")
+            return count
+
+    def pause_queue(self):
+        """Pause the queue — items remain but won't auto-start."""
+        with self._lock:
+            self._queue_paused = True
+            if self._dequeue_timer:
+                self._dequeue_timer.cancel()
+                self._dequeue_timer = None
+                self._countdown_started_at = None
+        logger.info("Maintenance queue paused")
+
+    def resume_queue(self):
+        """Resume the queue and try to start the next action."""
+        with self._lock:
+            self._queue_paused = False
+        logger.info("Maintenance queue resumed")
+        self._try_dequeue()
+
+    def _try_dequeue(self):
+        """Start a 10-second countdown before executing the next queued action."""
+        with self._lock:
+            if self._queue_paused:
+                return
+            if self._state == MaintenanceState.RUNNING:
+                return
+            if not self._queue:
+                return
+            # Check OperationRunner
+            from web.services.operation_runner import get_operation_runner
+            if get_operation_runner().is_running:
+                return
+            # Cancel existing timer if any
+            if self._dequeue_timer:
+                self._dequeue_timer.cancel()
+
+            # Auto-dismiss completed/failed state so the countdown pill shows
+            if self._state in (MaintenanceState.COMPLETED, MaintenanceState.FAILED):
+                self._state = MaintenanceState.IDLE
+                if self._result:
+                    self._result.state = MaintenanceState.IDLE
+
+            self._countdown_started_at = datetime.now()
+            self._dequeue_timer = threading.Timer(10.0, self._execute_next_queued)
+            self._dequeue_timer.daemon = True
+            self._dequeue_timer.start()
+            logger.info(f"Queue countdown started — next action in 10s: {self._queue[0].display_name}")
+
+    def _execute_next_queued(self):
+        """Pop the next item from the queue and start it."""
+        with self._lock:
+            self._dequeue_timer = None
+            self._countdown_started_at = None
+            if not self._queue:
+                return
+            item = self._queue.pop(0)
+
+        logger.info(f"Auto-starting queued action: {item.display_name}")
+        started = self.start_action(
+            action_name=item.action_name,
+            service_method=item.service_method,
+            method_args=item.method_args,
+            method_kwargs=item.method_kwargs,
+            file_count=item.file_count,
+            on_complete=item.on_complete,
+            max_workers=item.max_workers,
+        )
+        if not started:
+            logger.warning(f"Failed to auto-start queued action: {item.display_name}")
+
+    def skip_next_queued(self):
+        """Cancel countdown, discard the next item, try the following one."""
+        with self._lock:
+            if self._dequeue_timer:
+                self._dequeue_timer.cancel()
+                self._dequeue_timer = None
+                self._countdown_started_at = None
+            if self._queue:
+                skipped = self._queue.pop(0)
+                logger.info(f"Skipped queued action: {skipped.display_name}")
+        self._try_dequeue()
+
+    def start_next_now(self):
+        """Cancel countdown and immediately execute the next queued action."""
+        with self._lock:
+            if self._dequeue_timer:
+                self._dequeue_timer.cancel()
+                self._dequeue_timer = None
+                self._countdown_started_at = None
+        self._execute_next_queued()
+
     # Maps action names to activity feed display strings
     ACTION_ACTIVITY_LABELS = {
         "protect-with-backup": "Protected",
@@ -565,15 +754,35 @@ class MaintenanceRunner:
                 except Exception as e:
                     logger.error(f"on_complete callback failed: {e}")
 
+            # Queue management: pause on stop, try dequeue on normal completion
+            if self._stop_requested:
+                self.pause_queue()
+            else:
+                self._try_dequeue()
+
     def get_status_dict(self) -> dict:
         """Get status as a dictionary for banner rendering."""
         result = self.result
 
         if result is None or self.state == MaintenanceState.IDLE:
-            return {
+            status = {
                 "state": MaintenanceState.IDLE.value,
                 "is_running": False,
             }
+            # Always include queue info even when idle
+            with self._lock:
+                status["queue_count"] = len(self._queue)
+                status["queue"] = [item.to_dict() for item in self._queue]
+                status["queue_paused"] = self._queue_paused
+                # Countdown state
+                if self._dequeue_timer and self._countdown_started_at:
+                    status["queue_countdown"] = True
+                    status["queue_next_action"] = self._queue[0].display_name if self._queue else ""
+                    status["queue_countdown_started"] = self._countdown_started_at.isoformat()
+                    status["queue_countdown_seconds"] = 10
+                else:
+                    status["queue_countdown"] = False
+            return status
 
         status = {
             "state": result.state.value,
@@ -654,6 +863,19 @@ class MaintenanceRunner:
             status["affected_files"] = [
                 os.path.basename(p) for p in (result.action_result.affected_paths or [])[:8]
             ]
+
+        # Always include queue info
+        with self._lock:
+            status["queue_count"] = len(self._queue)
+            status["queue"] = [item.to_dict() for item in self._queue]
+            status["queue_paused"] = self._queue_paused
+            if self._dequeue_timer and self._countdown_started_at:
+                status["queue_countdown"] = True
+                status["queue_next_action"] = self._queue[0].display_name if self._queue else ""
+                status["queue_countdown_started"] = self._countdown_started_at.isoformat()
+                status["queue_countdown_seconds"] = 10
+            else:
+                status["queue_countdown"] = False
 
         return status
 

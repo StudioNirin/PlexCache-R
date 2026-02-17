@@ -779,6 +779,13 @@ class OperationRunner:
             except Exception:
                 pass
 
+            # After operation completes, check if maintenance actions are queued
+            try:
+                from web.services.maintenance_runner import get_maintenance_runner
+                get_maintenance_runner()._try_dequeue()
+            except Exception:
+                pass
+
     def get_status_dict(self) -> dict:
         """Get status as a dictionary for API responses"""
         result = self.current_result

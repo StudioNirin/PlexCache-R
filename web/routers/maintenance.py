@@ -126,11 +126,45 @@ def _get_max_workers() -> int:
 def _start_async_action(action_name: str, service_method, method_args=(), method_kwargs=None, file_count=0, max_workers=1) -> Optional[str]:
     """Start an async maintenance action via the runner.
 
-    Returns HTML response string if started or blocked, None if couldn't start.
+    Returns HTML response string if started, queued, or blocked.
     """
     blocked = _check_blocked(action_name)
     if blocked:
-        return blocked
+        # Try to queue instead of showing a blocked warning
+        runner = get_maintenance_runner()
+        if runner.queue_count >= runner._max_queue_size:
+            return (
+                '<div class="alert alert-warning maintenance-action-blocked" style="margin-bottom: 1rem;">'
+                '<i data-lucide="alert-triangle"></i>'
+                '<span>Queue is full (max 5). Please wait for current actions to complete.</span>'
+                '</div><script>lucide.createIcons();</script>'
+            )
+
+        item_id = runner.enqueue_action(
+            action_name=action_name,
+            service_method=service_method,
+            method_args=method_args,
+            method_kwargs=method_kwargs or {},
+            file_count=file_count,
+            on_complete=_invalidate_caches,
+            max_workers=max_workers,
+        )
+        if item_id:
+            count = runner.queue_count
+            return (
+                '<div class="alert alert-info maintenance-action-queued" style="margin-bottom: 1rem;">'
+                '<i data-lucide="list-plus"></i>'
+                f'<span>Action queued (#{count}). Starts automatically after current action completes.</span>'
+                '</div><script>lucide.createIcons();'
+                'htmx.ajax("GET","/api/operation-banner",{target:"#global-operation-banner",swap:"innerHTML"});'
+                '</script>'
+            )
+        return (
+            '<div class="alert alert-warning maintenance-action-blocked" style="margin-bottom: 1rem;">'
+            '<i data-lucide="alert-triangle"></i>'
+            '<span>Could not queue action.</span>'
+            '</div><script>lucide.createIcons();</script>'
+        )
 
     runner = get_maintenance_runner()
     started = runner.start_action(
@@ -620,6 +654,56 @@ def resolve_duplicate(
             "dry_run": dry_run
         }
     )
+
+
+# === Queue Management Routes ===
+
+@router.get("/check-blocked")
+def check_blocked_status():
+    """Check if actions would be blocked/queued (for modal button state)."""
+    runner = get_maintenance_runner()
+    op_runner = get_operation_runner()
+    is_blocked = runner.is_running or op_runner.is_running
+    return JSONResponse({
+        "blocked": is_blocked,
+        "can_queue": is_blocked and runner.queue_count < runner._max_queue_size,
+        "queue_count": runner.queue_count,
+        "queue_full": runner.queue_count >= runner._max_queue_size,
+    })
+
+
+@router.post("/queue/remove/{item_id}")
+def remove_from_queue(item_id: str):
+    """Remove an item from the maintenance queue."""
+    return JSONResponse({"ok": get_maintenance_runner().remove_from_queue(item_id)})
+
+
+@router.post("/queue/clear")
+def clear_queue():
+    """Clear all queued maintenance actions."""
+    count = get_maintenance_runner().clear_queue()
+    return JSONResponse({"ok": True, "cleared": count})
+
+
+@router.post("/queue/resume")
+def resume_queue():
+    """Resume a paused maintenance queue."""
+    get_maintenance_runner().resume_queue()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/queue/skip")
+def skip_next_queued():
+    """Skip the next queued action during countdown."""
+    get_maintenance_runner().skip_next_queued()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/queue/start-now")
+def start_next_now():
+    """Cancel countdown and immediately start the next queued action."""
+    get_maintenance_runner().start_next_now()
+    return JSONResponse({"ok": True})
 
 
 # === Preview Routes (always dry_run) ===

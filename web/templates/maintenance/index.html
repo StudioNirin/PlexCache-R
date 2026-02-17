@@ -204,8 +204,25 @@ function showConfirmModal(title, message, action, formData, isDryRun = false) {
     actionBtn.textContent = btnText;
     actionBtn.onclick = function() {
         executeAction(action, formData, isDryRun);
-        // Note: modal is closed by executeAction after fetch completes
     };
+
+    // For non-dry-run actions, check if blocked and update button to "Queue Action"
+    if (!isDryRun) {
+        fetch('/maintenance/check-blocked')
+            .then(r => r.json())
+            .then(data => {
+                if (data.blocked && data.can_queue) {
+                    actionBtn.className = 'btn btn-primary';
+                    actionBtn.textContent = 'Queue Action';
+                    actionBtn.style.background = '#5AC8FA';
+                    actionBtn.style.borderColor = '#5AC8FA';
+                } else if (data.blocked && data.queue_full) {
+                    actionBtn.disabled = true;
+                    actionBtn.textContent = 'Queue Full';
+                }
+            })
+            .catch(() => {}); // Ignore errors, keep default button
+    }
 
     modal.style.display = 'flex';
     lucide.createIcons();
@@ -273,6 +290,15 @@ function executeAction(action, formData, isDryRun) {
             if (typeof showBannerWarning === 'function') {
                 showBannerWarning(message);
             }
+        } else if (html.includes('maintenance-action-queued')) {
+            // Queued — show the alert at top of audit content
+            const alertContainer = document.createElement('div');
+            alertContainer.innerHTML = html;
+            const auditContent = document.getElementById('audit-content');
+            auditContent.insertBefore(alertContainer, auditContent.firstChild);
+            lucide.createIcons();
+            // Auto-remove after 5s
+            setTimeout(() => { if (alertContainer.parentNode) alertContainer.remove(); }, 5000);
         } else if (html.includes('maintenance-async-started')) {
             // Show the alert at top of audit content
             const alertContainer = document.createElement('div');

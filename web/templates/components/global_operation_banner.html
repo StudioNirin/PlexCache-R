@@ -311,6 +311,9 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             <div class="di-icon"><i data-lucide="wrench" style="width: 14px; height: 14px;"></i></div>
             <span class="di-label">{{ maint_status.action_display|truncate(32, True, '...') }}</span>
             <div class="di-spinner"></div>
+            {% if maint_status.queue_count is defined and maint_status.queue_count > 0 %}
+            <span class="di-queue-badge">+{{ maint_status.queue_count }}</span>
+            {% endif %}
         </div>
         <div class="di-pill__right">
             {% if maint_status.file_count and maint_status.file_count > 0 %}
@@ -350,14 +353,15 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 {%- if maint_status.eta_display %} | ~{{ maint_status.eta_display }} left{% endif %}</span>
         </div>
         {% endif %}
-        {%- if maint_status.active_files %}
+        {% if maint_status.active_files or (maint_status.queue_count is defined and maint_status.queue_count > 0) %}
         <!-- Tier 2 hint: click to expand detail panel -->
         <div class="di-expand-hint">
             <span>Click for details</span>
             <i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i>
         </div>
-        <!-- Detail: active files (Tier 3) -->
+        <!-- Detail: active files + queue (Tier 3) -->
         <div class="di-pill__detail">
+            {%- if maint_status.active_files %}
             <div class="di-divider"></div>
             {%- for f in maint_status.active_files %}
             <div class="di-file-row">
@@ -365,8 +369,31 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 <span class="di-file-row__name">{{ f|truncate(65, True, '...') }}</span>
             </div>
             {%- endfor %}
+            {%- endif %}
+            {%- if maint_status.queue_count is defined and maint_status.queue_count > 0 %}
+            <div class="di-divider"></div>
+            <div class="di-queue-section">
+                <div class="di-queue-header">
+                    <span class="di-queue-header__label">Queue ({{ maint_status.queue_count }})</span>
+                    <button class="di-queue-header__clear" title="Clear queue"
+                            onclick="event.stopPropagation(); fetch('/maintenance/queue/clear',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                        Clear
+                    </button>
+                </div>
+                {%- for item in maint_status.queue %}
+                <div class="di-queue-item">
+                    <span class="di-queue-item__name">{{ item.display_name }}</span>
+                    {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
+                    <button class="di-queue-item__remove" title="Remove"
+                            onclick="event.stopPropagation(); fetch('/maintenance/queue/remove/{{ item.id }}',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                        &times;
+                    </button>
+                </div>
+                {%- endfor %}
+            </div>
+            {%- endif %}
         </div>
-        {%- endif %}
+        {% endif %}
         <!-- Warning row -->
         <div id="di-warning" class="di-warning">
             <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
@@ -593,6 +620,9 @@ function dismissMaintCompletionBanner() {
             {% if status.error_count is defined and status.error_count > 0 %}
             <span class="di-error-badge">{{ status.error_count }}</span>
             {% endif %}
+            {% if maint_status is defined and maint_status.queue_count is defined and maint_status.queue_count > 0 %}
+            <span class="di-queue-badge">+{{ maint_status.queue_count }}</span>
+            {% endif %}
         </div>
         <div class="di-pill__right">
             {% if status.total_files is defined and status.total_files > 0 %}
@@ -675,6 +705,28 @@ function dismissMaintCompletionBanner() {
                 {%- endfor %}
                 {%- endif %}
             </div>
+            {%- if maint_status is defined and maint_status.queue_count is defined and maint_status.queue_count > 0 %}
+            <div class="di-divider"></div>
+            <div class="di-queue-section">
+                <div class="di-queue-header">
+                    <span class="di-queue-header__label">Maintenance Queue ({{ maint_status.queue_count }})</span>
+                    <button class="di-queue-header__clear" title="Clear queue"
+                            onclick="event.stopPropagation(); fetch('/maintenance/queue/clear',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                        Clear
+                    </button>
+                </div>
+                {%- for item in maint_status.queue %}
+                <div class="di-queue-item">
+                    <span class="di-queue-item__name">{{ item.display_name }}</span>
+                    {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
+                    <button class="di-queue-item__remove" title="Remove"
+                            onclick="event.stopPropagation(); fetch('/maintenance/queue/remove/{{ item.id }}',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                        &times;
+                    </button>
+                </div>
+                {%- endfor %}
+            </div>
+            {%- endif %}
         </div>
         <!-- Warning row -->
         <div id="di-warning" class="di-warning">
@@ -896,6 +948,155 @@ function dismissCompletionBanner() {
     </div>
 </div>
 <script>lucide.createIcons(); if (window.BannerLogStream) BannerLogStream.disconnect();</script>
+
+{% elif maint_status is defined and maint_status.queue_countdown is defined and maint_status.queue_countdown %}
+{# ═══════════════════════════════════════════════════════════
+   QUEUE COUNTDOWN — Cyan pill, 10s countdown before next queued action
+   ═══════════════════════════════════════════════════════════ #}
+<div class="di-pill di-pill--maintenance" data-state="queue-countdown"
+     hx-get="/api/operation-banner" hx-trigger="every 2s" hx-swap="innerHTML" hx-target="#global-operation-banner"
+     onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+    <div class="di-pill__compact">
+        <div class="di-pill__left">
+            <div class="di-icon"><i data-lucide="list-ordered" style="width: 14px; height: 14px;"></i></div>
+            <span class="di-label">Next: {{ maint_status.queue_next_action|truncate(22, True, '...') }}</span>
+        </div>
+        <div class="di-pill__right">
+            <span class="di-countdown__timer" data-countdown-start="{{ maint_status.queue_countdown_started }}" data-countdown-duration="{{ maint_status.queue_countdown_seconds }}"></span>
+        </div>
+    </div>
+    <div class="di-pill__expanded">
+        <div class="di-expanded__header">
+            <div class="di-expanded__header-left">
+                <div class="di-icon"><i data-lucide="list-ordered" style="width: 14px; height: 14px;"></i></div>
+                <span class="di-label">Next queued action</span>
+            </div>
+            <div class="di-expanded__header-right">
+                <button class="di-dismiss" title="Minimize" onclick="event.stopPropagation(); diMinimize();">&minus;</button>
+            </div>
+        </div>
+        <div class="di-countdown">
+            <span class="di-countdown__text">{{ maint_status.queue_next_action }} starting in</span>
+            <span class="di-countdown__timer" data-countdown-start="{{ maint_status.queue_countdown_started }}" data-countdown-duration="{{ maint_status.queue_countdown_seconds }}"></span>
+        </div>
+        <div class="di-countdown__actions">
+            <button class="di-btn di-btn--primary" style="background: #5AC8FA; color: #000;"
+                    onclick="event.stopPropagation(); fetch('/maintenance/queue/start-now',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                <i data-lucide="play" style="width: 14px; height: 14px;"></i>
+                Start Now
+            </button>
+            <button class="di-btn di-btn--secondary"
+                    onclick="event.stopPropagation(); fetch('/maintenance/queue/skip',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                <i data-lucide="skip-forward" style="width: 14px; height: 14px;"></i>
+                Skip
+            </button>
+        </div>
+        {% if maint_status.queue|length > 1 %}
+        <div class="di-expand-hint">
+            <span>Click for details</span>
+            <i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i>
+        </div>
+        <div class="di-pill__detail">
+            <div class="di-divider"></div>
+            <div class="di-queue-section">
+                <div class="di-queue-header">
+                    <span class="di-queue-header__label">Queue ({{ maint_status.queue_count }})</span>
+                    <button class="di-queue-header__clear" title="Clear queue"
+                            onclick="event.stopPropagation(); fetch('/maintenance/queue/clear',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                        Clear
+                    </button>
+                </div>
+                {%- for item in maint_status.queue %}
+                <div class="di-queue-item">
+                    <span class="di-queue-item__name">{{ item.display_name }}</span>
+                    {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
+                    <button class="di-queue-item__remove" title="Remove"
+                            onclick="event.stopPropagation(); fetch('/maintenance/queue/remove/{{ item.id }}',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                        &times;
+                    </button>
+                </div>
+                {%- endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+<script>
+(function() {
+    lucide.createIcons();
+    // Drive countdown timers
+    document.querySelectorAll('.di-countdown__timer[data-countdown-start]').forEach(function(el) {
+        var started = new Date(el.dataset.countdownStart).getTime();
+        var duration = parseInt(el.dataset.countdownDuration, 10) * 1000;
+        function tick() {
+            var remaining = Math.max(0, Math.ceil((started + duration - Date.now()) / 1000));
+            el.textContent = remaining + 's';
+            if (remaining > 0) requestAnimationFrame(tick);
+        }
+        tick();
+    });
+})();
+</script>
+
+{% elif maint_status is defined and maint_status.queue_paused is defined and maint_status.queue_paused and maint_status.queue_count is defined and maint_status.queue_count > 0 %}
+{# ═══════════════════════════════════════════════════════════
+   QUEUE PAUSED — Amber pill, queue paused after stop
+   ═══════════════════════════════════════════════════════════ #}
+<div class="di-pill di-pill--idle" data-state="queue-paused"
+     hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"
+     onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
+    <div class="di-pill__compact">
+        <div class="di-pill__left">
+            <div class="di-icon" style="background: rgba(255,149,0,0.15); color: #FF9500;"><i data-lucide="pause" style="width: 14px; height: 14px;"></i></div>
+            <span class="di-label" style="color: rgba(255,255,255,0.6);">Queue paused</span>
+            <span class="di-queue-badge" style="background: rgba(255,149,0,0.2); color: #FF9500;">{{ maint_status.queue_count }}</span>
+        </div>
+        <div class="di-pill__right">
+            <button class="di-btn di-btn--secondary" style="height: 26px; font-size: 0.72rem; padding: 0 0.6rem;"
+                    onclick="event.stopPropagation(); fetch('/maintenance/queue/resume',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                Resume
+            </button>
+        </div>
+    </div>
+    <div class="di-pill__expanded">
+        <div class="di-expanded__header">
+            <div class="di-expanded__header-left">
+                <div class="di-icon" style="background: rgba(255,149,0,0.15); color: #FF9500;"><i data-lucide="pause" style="width: 14px; height: 14px;"></i></div>
+                <span class="di-label">Queue Paused</span>
+                <span style="font-size: 0.78rem; color: rgba(255,255,255,0.4);">({{ maint_status.queue_count }} action{{ 's' if maint_status.queue_count != 1 }})</span>
+            </div>
+            <div class="di-expanded__header-right">
+                <button class="di-btn di-btn--primary" style="background: #FF9500; color: #000; height: 28px;"
+                        onclick="event.stopPropagation(); fetch('/maintenance/queue/resume',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                    <i data-lucide="play" style="width: 14px; height: 14px;"></i>
+                    Resume
+                </button>
+                <button class="di-dismiss" title="Clear queue"
+                        onclick="event.stopPropagation(); fetch('/maintenance/queue/clear',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">&times;</button>
+            </div>
+        </div>
+        <div class="di-expand-hint">
+            <span>Click for details</span>
+            <i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i>
+        </div>
+        <div class="di-pill__detail">
+            <div class="di-divider"></div>
+            <div class="di-queue-section">
+                {%- for item in maint_status.queue %}
+                <div class="di-queue-item">
+                    <span class="di-queue-item__name">{{ item.display_name }}</span>
+                    {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
+                    <button class="di-queue-item__remove" title="Remove"
+                            onclick="event.stopPropagation(); fetch('/maintenance/queue/remove/{{ item.id }}',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
+                        &times;
+                    </button>
+                </div>
+                {%- endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+<script>lucide.createIcons();</script>
 
 {% else %}
 {# ═══════════════════════════════════════════════════════════

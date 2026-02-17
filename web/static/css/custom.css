@@ -875,6 +875,125 @@ footer {
     margin-top: 0.15rem;
 }
 
+/* ── Queue badge (compact pill) ──────────────────────── */
+.di-queue-badge {
+    background: rgba(90,200,250,0.2);
+    color: #5AC8FA;
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 8px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* ── Queue section (tier3 detail) ────────────────────── */
+.di-queue-section {
+    padding: 0.15rem 0;
+}
+
+.di-queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.25rem;
+}
+
+.di-queue-header__label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.di-queue-header__clear {
+    background: transparent;
+    border: 1px solid rgba(255,59,48,0.25);
+    color: rgba(255,59,48,0.7);
+    font-size: 0.65rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+.di-queue-header__clear:hover {
+    background: rgba(255,59,48,0.15);
+    color: #FF3B30;
+}
+
+.di-queue-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+    font-size: 0.72rem;
+}
+
+.di-queue-item__name {
+    color: rgba(255,255,255,0.6);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.di-queue-item__count {
+    color: rgba(255,255,255,0.25);
+    font-size: 0.65rem;
+    flex-shrink: 0;
+}
+
+.di-queue-item__remove {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.25);
+    font-size: 0.85rem;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: background 0.2s, color 0.2s;
+}
+.di-queue-item__remove:hover {
+    background: rgba(255,59,48,0.15);
+    color: #FF3B30;
+}
+
+/* ── Queue countdown ─────────────────────────────────── */
+.di-countdown {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+}
+
+.di-countdown__text {
+    font-size: 0.78rem;
+    color: rgba(255,255,255,0.5);
+}
+
+.di-countdown__timer {
+    font-family: var(--pico-font-family-monospace, monospace);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #5AC8FA;
+    font-variant-numeric: tabular-nums;
+}
+
+.di-countdown__actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
 /* ── Mobile responsive ───────────────────────────────── */
 @media (max-width: 768px) {
     #global-operation-banner {
