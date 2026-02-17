@@ -235,6 +235,7 @@ var LogViewer = (function() {
         var phaseFilter = els.phaseFilter.value;
         var timeFrom = els.timeFrom.value;
         var timeTo = els.timeTo.value;
+        var visibleCount = 0;
 
         lines.forEach(function(line) {
             var visible = true;
@@ -265,7 +266,24 @@ var LogViewer = (function() {
             }
 
             line.style.display = visible ? '' : 'none';
+            if (visible) visibleCount++;
         });
+
+        // Show empty state when filters hide all lines
+        var emptyMsg = els.logContent.querySelector('.log-filter-empty');
+        var hasFilters = levelFilter !== 'all' || phaseFilter !== 'all' || timeFrom || timeTo;
+        if (visibleCount === 0 && lines.length > 0 && hasFilters) {
+            if (!emptyMsg) {
+                emptyMsg = document.createElement('div');
+                emptyMsg.className = 'log-filter-empty';
+                emptyMsg.style.cssText = 'text-align:center; padding:2rem; color:var(--plex-text-muted);';
+                emptyMsg.textContent = 'No log lines match the current filters';
+                els.logContent.appendChild(emptyMsg);
+            }
+            emptyMsg.style.display = '';
+        } else if (emptyMsg) {
+            emptyMsg.style.display = 'none';
+        }
     }
 
     function normalizeTimeTo24h(ts) {
