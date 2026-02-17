@@ -315,9 +315,12 @@ function executeAction(action, formData, isDryRun) {
             lucide.createIcons();
         }
 
-        // Reset selections
+        // Reset selections (Sets + DOM checkboxes + bulk action bars)
         selectedUntrackedFiles.clear();
         selectedOrphanedBackups.clear();
+        document.querySelectorAll('.untracked-checkbox, .orphaned-checkbox, [onclick*="toggleSelectAll"]').forEach(cb => cb.checked = false);
+        updateUntrackedActions();
+        updateOrphanedActions();
 
         // Scroll to top to see the result alert
         document.getElementById('audit-content').scrollIntoView({ behavior: 'smooth', block: 'start' });
