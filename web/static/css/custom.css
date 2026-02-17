@@ -888,31 +888,28 @@ footer {
 
 /* ── Queue section (tier3 detail) ────────────────────── */
 .di-queue-section {
-    padding: 0.15rem 0;
+    padding: 0.1rem 0;
 }
 
 .di-queue-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 0.25rem;
+    padding: 0.1rem 0 0.2rem;
 }
 
 .di-queue-header__label {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: rgba(255,255,255,0.5);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 0.65rem;
+    color: rgba(255,255,255,0.25);
 }
 
 .di-queue-header__clear {
-    background: transparent;
-    border: 1px solid rgba(255,59,48,0.25);
-    color: rgba(255,59,48,0.7);
-    font-size: 0.65rem;
-    padding: 0.1rem 0.5rem;
-    border-radius: 6px;
+    background: rgba(255,255,255,0.06);
+    border: none;
+    color: rgba(255,255,255,0.35);
+    font-size: 0.6rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
     cursor: pointer;
     transition: background 0.2s, color 0.2s;
 }
@@ -921,16 +918,17 @@ footer {
     color: #FF3B30;
 }
 
+/* Queue items use the same .di-file-row layout */
 .di-queue-item {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.2rem 0;
     font-size: 0.72rem;
+    color: rgba(255,255,255,0.45);
+    padding: 2px 0;
 }
 
 .di-queue-item__name {
-    color: rgba(255,255,255,0.6);
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -939,14 +937,21 @@ footer {
 }
 
 .di-queue-item__count {
-    color: rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.2);
     font-size: 0.65rem;
     flex-shrink: 0;
+    margin-left: auto;
+}
+
+/* Queued action tag — muted cyan, matches maintenance accent */
+.di-action-tag--queued {
+    background: rgba(90,200,250,0.1);
+    color: rgba(90,200,250,0.6);
 }
 
 .di-queue-item__remove {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: transparent;
     border: none;
@@ -954,8 +959,8 @@ footer {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: rgba(255,255,255,0.25);
-    font-size: 0.85rem;
+    color: rgba(255,255,255,0.15);
+    font-size: 0.8rem;
     line-height: 1;
     flex-shrink: 0;
     transition: background 0.2s, color 0.2s;

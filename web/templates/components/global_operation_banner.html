@@ -382,6 +382,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 </div>
                 {%- for item in maint_status.queue %}
                 <div class="di-queue-item">
+                    <span class="di-action-tag di-action-tag--queued">QUEUED</span>
                     <span class="di-queue-item__name">{{ item.display_name }}</span>
                     {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
                     <button class="di-queue-item__remove" title="Remove"
@@ -709,7 +710,7 @@ function dismissMaintCompletionBanner() {
             <div class="di-divider"></div>
             <div class="di-queue-section">
                 <div class="di-queue-header">
-                    <span class="di-queue-header__label">Maintenance Queue ({{ maint_status.queue_count }})</span>
+                    <span class="di-queue-header__label">Queue ({{ maint_status.queue_count }})</span>
                     <button class="di-queue-header__clear" title="Clear queue"
                             onclick="event.stopPropagation(); fetch('/maintenance/queue/clear',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
                         Clear
@@ -717,6 +718,7 @@ function dismissMaintCompletionBanner() {
                 </div>
                 {%- for item in maint_status.queue %}
                 <div class="di-queue-item">
+                    <span class="di-action-tag di-action-tag--queued">QUEUED</span>
                     <span class="di-queue-item__name">{{ item.display_name }}</span>
                     {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
                     <button class="di-queue-item__remove" title="Remove"
@@ -1008,6 +1010,7 @@ function dismissCompletionBanner() {
                 </div>
                 {%- for item in maint_status.queue %}
                 <div class="di-queue-item">
+                    <span class="di-action-tag di-action-tag--queued">QUEUED</span>
                     <span class="di-queue-item__name">{{ item.display_name }}</span>
                     {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
                     <button class="di-queue-item__remove" title="Remove"
@@ -1084,6 +1087,7 @@ function dismissCompletionBanner() {
             <div class="di-queue-section">
                 {%- for item in maint_status.queue %}
                 <div class="di-queue-item">
+                    <span class="di-action-tag di-action-tag--queued">QUEUED</span>
                     <span class="di-queue-item__name">{{ item.display_name }}</span>
                     {% if item.file_count %}<span class="di-queue-item__count">{{ item.file_count }} files</span>{% endif %}
                     <button class="di-queue-item__remove" title="Remove"
