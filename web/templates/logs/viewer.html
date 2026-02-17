@@ -531,7 +531,7 @@ var LogViewer = (function() {
                         ' data-level="' + (line.level || '') + '"' +
                         ' data-timestamp="' + (line.timestamp || '') + '"' +
                         ' data-phase="' + (line.phase || '') + '">' +
-                        escapeHtml(line.raw) + '</span>\n';
+                        escapeHtml(line.raw) + '\n</span>';
             });
             html += '</pre>';
             if (els.logContent.classList.contains('log-wrapped')) {
@@ -549,9 +549,8 @@ var LogViewer = (function() {
                 span.dataset.level = line.level || '';
                 span.dataset.timestamp = line.timestamp || '';
                 span.dataset.phase = line.phase || '';
-                span.textContent = line.raw;
+                span.textContent = line.raw + '\n';
                 fragment.appendChild(span);
-                fragment.appendChild(document.createTextNode('\n'));
             });
             container.appendChild(fragment);
 
