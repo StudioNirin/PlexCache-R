@@ -1098,11 +1098,14 @@ class SettingsService:
 
 # Singleton instance
 _settings_service: Optional[SettingsService] = None
+_settings_service_lock = threading.Lock()
 
 
 def get_settings_service() -> SettingsService:
     """Get or create the settings service singleton"""
     global _settings_service
     if _settings_service is None:
-        _settings_service = SettingsService()
+        with _settings_service_lock:
+            if _settings_service is None:
+                _settings_service = SettingsService()
     return _settings_service

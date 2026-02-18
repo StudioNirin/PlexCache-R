@@ -1606,11 +1606,14 @@ class MaintenanceService:
 
 # Singleton instance
 _maintenance_service: Optional[MaintenanceService] = None
+_maintenance_service_lock = threading.Lock()
 
 
 def get_maintenance_service() -> MaintenanceService:
     """Get or create the maintenance service singleton"""
     global _maintenance_service
     if _maintenance_service is None:
-        _maintenance_service = MaintenanceService()
+        with _maintenance_service_lock:
+            if _maintenance_service is None:
+                _maintenance_service = MaintenanceService()
     return _maintenance_service

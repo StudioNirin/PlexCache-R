@@ -180,6 +180,7 @@ class PlexManager:
         self._token_cache = UserTokenCache(cache_file=token_cache_file, cache_expiry_hours=24)
         self._rss_cache_file = rss_cache_file  # Path to RSS cache file
         self._user_tokens: Dict[str, str] = {}  # username -> token (populated at startup)
+        self._token_lock = threading.Lock()  # Protects _user_tokens dict access
         self._user_id_to_name: Dict[str, str] = {}  # user_id (str) -> username (for RSS author lookup)
         self._resolved_uuids: Set[str] = set()  # UUIDs we've tried to resolve (avoid repeated API calls)
         self._newly_discovered_users: List[dict] = []  # Users found on plex.tv but not in settings
@@ -249,7 +250,8 @@ class PlexManager:
                 logging.debug(f"[USER:{username}] Skipping (in skip list)")
                 continue
 
-            self._user_tokens[username] = token
+            with self._token_lock:
+                self._user_tokens[username] = token
             self._token_cache.set_token(username, token, machine_id)
             user_type = "home" if is_local else "remote"
             logging.debug(f"[USER:{username}] Loaded from settings ({user_type})")
@@ -274,9 +276,10 @@ class PlexManager:
 
             # Update main account token with actual username from plex.tv
             if actual_main_username != main_username:
-                if main_username and main_username in self._user_tokens:
-                    del self._user_tokens[main_username]
-                self._user_tokens[actual_main_username] = self.plex_token
+                with self._token_lock:
+                    if main_username and main_username in self._user_tokens:
+                        del self._user_tokens[main_username]
+                    self._user_tokens[actual_main_username] = self.plex_token
                 logging.debug(f"[PLEX API] Main account: {actual_main_username}")
             return account
         except Exception as e:
@@ -351,7 +354,8 @@ class PlexManager:
                     if cached_token in skip_users:
                         logging.debug(f"[USER:{username}] Skipping (token in skip list)")
                         continue
-                    self._user_tokens[username] = cached_token
+                    with self._token_lock:
+                        self._user_tokens[username] = cached_token
                     logging.debug(f"[USER:{username}] Using cached token")
                     self._newly_discovered_users.append(build_user_info(cached_token))
                     continue
@@ -364,7 +368,8 @@ class PlexManager:
                         if token in skip_users:
                             logging.debug(f"[USER:{username}] Skipping (token in skip list)")
                             continue
-                        self._user_tokens[username] = token
+                        with self._token_lock:
+                            self._user_tokens[username] = token
                         self._token_cache.set_token(username, token, machine_id)
                         logging.debug(f"[USER:{username}] Fetched fresh token")
                         self._newly_discovered_users.append(build_user_info(token))
@@ -406,7 +411,8 @@ class PlexManager:
         """
         if self._users_loaded:
             logging.debug("[PLEX API] User tokens already loaded, using cached values")
-            return self._user_tokens
+            with self._token_lock:
+                return dict(self._user_tokens)
 
         skip_users = skip_users or []
         settings_users = settings_users or []
@@ -418,7 +424,8 @@ class PlexManager:
 
         # Add main account token from settings as fallback
         if main_username and main_username not in skip_users:
-            self._user_tokens[main_username] = self.plex_token
+            with self._token_lock:
+                self._user_tokens[main_username] = self.plex_token
             logging.debug(f"[PLEX API] Added main account from settings: {main_username}")
 
         # Step 2: Try to get main account info from plex.tv
@@ -429,21 +436,24 @@ class PlexManager:
             self._discover_new_users(account, settings_usernames, skip_users, machine_id)
 
         self._users_loaded = True
-        total_users = len(self._user_tokens)
-        logging.info(f"Connected to Plex ({total_users} users)")
-        if self._user_tokens:
-            user_names = sorted(self._user_tokens.keys(), key=str.lower)
-            logging.info(f"USERS: {', '.join(user_names)}")
-        return self._user_tokens
+        with self._token_lock:
+            total_users = len(self._user_tokens)
+            logging.info(f"Connected to Plex ({total_users} users)")
+            if self._user_tokens:
+                user_names = sorted(self._user_tokens.keys(), key=str.lower)
+                logging.info(f"USERS: {', '.join(user_names)}")
+            return dict(self._user_tokens)
 
     def get_user_token(self, username: str) -> Optional[str]:
         """Get a cached token for a user (must call load_user_tokens first)."""
-        return self._user_tokens.get(username)
+        with self._token_lock:
+            return self._user_tokens.get(username)
 
     def invalidate_user_token(self, username: str) -> None:
         """Invalidate a user's token (e.g., after auth failure)."""
-        if username in self._user_tokens:
-            del self._user_tokens[username]
+        with self._token_lock:
+            if username in self._user_tokens:
+                del self._user_tokens[username]
         self._token_cache.invalidate(username)
 
     def is_plex_tv_reachable(self) -> bool:
@@ -510,7 +520,8 @@ class PlexManager:
         if user:
             username = user.title
             # Use cached token if available
-            token = self._user_tokens.get(username)
+            with self._token_lock:
+                token = self._user_tokens.get(username)
             if not token:
                 # Fall back to fetching token (shouldn't happen if load_user_tokens was called)
                 logging.warning(f"[PLEX API] No cached token for {username}, fetching fresh...")
@@ -518,7 +529,8 @@ class PlexManager:
                     self._rate_limited_api_call()
                     token = user.get_token(self.plex.machineIdentifier)
                     if token:
-                        self._user_tokens[username] = token
+                        with self._token_lock:
+                            self._user_tokens[username] = token
                         self._token_cache.set_token(username, token, self.plex.machineIdentifier)
                 except Exception as e:
                     _log_api_error(f"get token for {username}", e)
@@ -601,7 +613,9 @@ class PlexManager:
         users_to_fetch = [None]  # Always include main local account
         if users_toggle:
             # Use cached tokens - no API calls to plex.tv here
-            for username, token in self._user_tokens.items():
+            with self._token_lock:
+                token_items = list(self._user_tokens.items())
+            for username, token in token_items:
                 # Skip main account (already added as None)
                 if token == self.plex_token:
                     continue
@@ -976,7 +990,8 @@ class PlexManager:
 
         # Skip users in the skip list (use cached tokens)
         if user:
-            token = self._user_tokens.get(current_username)
+            with self._token_lock:
+                token = self._user_tokens.get(current_username)
             if not token:
                 logging.warning(f"[USER:{current_username}] No cached token; skipping watchlist")
                 return
@@ -1158,7 +1173,9 @@ class PlexManager:
         users_to_fetch = [None]  # always include the main local account
 
         if users_toggle:
-            for username, token in self._user_tokens.items():
+            with self._token_lock:
+                token_items = list(self._user_tokens.items())
+            for username, token in token_items:
                 if token == self.plex_token:
                     continue
                 if username in skip_watchlist or token in skip_watchlist:

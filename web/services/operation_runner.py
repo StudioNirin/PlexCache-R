@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
 from core.system_utils import format_bytes, format_duration
+from core.file_operations import save_json_atomically
 
 # Activity persistence settings - use DATA_DIR for Docker compatibility
 ACTIVITY_FILE = DATA_DIR / "recent_activity.json"
@@ -21,6 +22,7 @@ LAST_RUN_FILE = DATA_DIR / "last_run.txt"
 LAST_RUN_SUMMARY_FILE = DATA_DIR / "last_run_summary.json"
 SETTINGS_FILE = CONFIG_SETTINGS_FILE
 DEFAULT_ACTIVITY_RETENTION_HOURS = 24
+_activity_file_lock = threading.Lock()
 
 
 def save_last_run_time():
@@ -113,11 +115,11 @@ MAX_RECENT_ACTIVITY = 500
 def load_activity() -> List[FileActivity]:
     """Load activity from disk, filtering out entries older than retention period."""
     try:
-        if not ACTIVITY_FILE.exists():
-            return []
-
-        with open(ACTIVITY_FILE, 'r') as f:
-            data = json.load(f)
+        with _activity_file_lock:
+            if not ACTIVITY_FILE.exists():
+                return []
+            with open(ACTIVITY_FILE, 'r') as f:
+                data = json.load(f)
 
         cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
         activities = []
@@ -165,8 +167,8 @@ def save_activity(activities: List[FileActivity]) -> None:
                     'users': activity.users
                 })
 
-        with open(ACTIVITY_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
+        with _activity_file_lock:
+            save_json_atomically(str(ACTIVITY_FILE), data, label="activity")
 
     except Exception as e:
         logging.debug(f"Could not save activity history: {e}")
@@ -569,13 +571,14 @@ class OperationRunner:
             # Keep only last N messages
             if len(self._log_messages) > self._max_log_messages:
                 self._log_messages = self._log_messages[-self._max_log_messages:]
+            subscribers = list(self._subscribers)  # snapshot under lock
 
         # Try to parse file operations and phase transitions from log message
         self._parse_file_operation(msg)
         self._parse_phase(msg)
 
-        # Notify async subscribers
-        for queue in self._subscribers:
+        # Notify async subscribers (iterate snapshot, not live list)
+        for queue in subscribers:
             try:
                 queue.put_nowait(msg)
             except asyncio.QueueFull:
@@ -584,13 +587,15 @@ class OperationRunner:
     def subscribe_logs(self) -> asyncio.Queue:
         """Subscribe to log messages (for WebSocket streaming)"""
         queue = asyncio.Queue(maxsize=100)
-        self._subscribers.append(queue)
+        with self._lock:
+            self._subscribers.append(queue)
         return queue
 
     def unsubscribe_logs(self, queue: asyncio.Queue):
         """Unsubscribe from log messages"""
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
+        with self._lock:
+            if queue in self._subscribers:
+                self._subscribers.remove(queue)
 
     def start_operation(self, dry_run: bool = False, verbose: bool = False) -> bool:
         """
@@ -936,11 +941,14 @@ class OperationRunner:
 
 # Singleton instance
 _operation_runner: Optional[OperationRunner] = None
+_operation_runner_lock = threading.Lock()
 
 
 def get_operation_runner() -> OperationRunner:
     """Get or create the operation runner singleton"""
     global _operation_runner
     if _operation_runner is None:
-        _operation_runner = OperationRunner()
+        with _operation_runner_lock:
+            if _operation_runner is None:
+                _operation_runner = OperationRunner()
     return _operation_runner

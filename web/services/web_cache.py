@@ -241,13 +241,16 @@ CACHE_KEY_MAINTENANCE_HEALTH = "maintenance_health"
 
 # Singleton instance
 _web_cache_service: Optional[WebCacheService] = None
+_web_cache_service_lock = threading.Lock()
 
 
 def get_web_cache_service() -> WebCacheService:
     """Get or create the web cache service singleton"""
     global _web_cache_service
     if _web_cache_service is None:
-        _web_cache_service = WebCacheService()
+        with _web_cache_service_lock:
+            if _web_cache_service is None:
+                _web_cache_service = WebCacheService()
     return _web_cache_service
 
 

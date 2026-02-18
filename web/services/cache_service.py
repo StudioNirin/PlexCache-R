@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -1568,11 +1569,14 @@ class CacheService:
 
 # Singleton instance
 _cache_service: Optional[CacheService] = None
+_cache_service_lock = threading.Lock()
 
 
 def get_cache_service() -> CacheService:
     """Get or create the cache service singleton"""
     global _cache_service
     if _cache_service is None:
-        _cache_service = CacheService()
+        with _cache_service_lock:
+            if _cache_service is None:
+                _cache_service = CacheService()
     return _cache_service

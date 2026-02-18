@@ -204,13 +204,16 @@ class MaintenanceHistory:
 
 # Singleton
 _maintenance_history: Optional[MaintenanceHistory] = None
+_maintenance_history_lock = threading.Lock()
 
 
 def get_maintenance_history() -> MaintenanceHistory:
     """Get or create the maintenance history singleton"""
     global _maintenance_history
     if _maintenance_history is None:
-        _maintenance_history = MaintenanceHistory()
+        with _maintenance_history_lock:
+            if _maintenance_history is None:
+                _maintenance_history = MaintenanceHistory()
     return _maintenance_history
 
 
@@ -882,11 +885,14 @@ class MaintenanceRunner:
 
 # Singleton instance
 _maintenance_runner: Optional[MaintenanceRunner] = None
+_maintenance_runner_lock = threading.Lock()
 
 
 def get_maintenance_runner() -> MaintenanceRunner:
     """Get or create the maintenance runner singleton"""
     global _maintenance_runner
     if _maintenance_runner is None:
-        _maintenance_runner = MaintenanceRunner()
+        with _maintenance_runner_lock:
+            if _maintenance_runner is None:
+                _maintenance_runner = MaintenanceRunner()
     return _maintenance_runner
