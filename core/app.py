@@ -1515,10 +1515,15 @@ class PlexCacheApp:
             total_size = 0
             for f in files_to_move:
                 # For moves, the file is on cache - need to get cache path
-                cache_path = f.replace(
-                    self.config_manager.paths.real_source,
-                    self.config_manager.paths.cache_dir, 1
-                )
+                cache_path = None
+                if hasattr(self, 'file_path_modifier') and self.file_path_modifier:
+                    cache_path, _ = self.file_path_modifier.convert_real_to_cache(f)
+                if cache_path is None:
+                    # Legacy fallback for single-path mode
+                    cache_path = f.replace(
+                        self.config_manager.paths.real_source,
+                        self.config_manager.paths.cache_dir, 1
+                    )
                 if os.path.exists(cache_path):
                     try:
                         total_size += os.path.getsize(cache_path)
