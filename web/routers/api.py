@@ -595,3 +595,25 @@ def dismiss_operation():
     """Dismiss a completed/failed operation banner, resetting state to idle."""
     get_operation_runner().dismiss()
     return JSONResponse({"ok": True})
+
+
+@router.post("/check-upgrades")
+def check_upgrades():
+    """Check for and resolve media file upgrades (Sonarr/Radarr swaps).
+
+    Examines stale exclude entries to see if they represent upgraded files.
+    For each stale entry with a rating_key in the OnDeck tracker, queries Plex
+    to detect file path changes and transfers tracking data accordingly.
+    """
+    cache_service = get_cache_service()
+    maintenance_service = get_maintenance_service()
+
+    # Get current stale entries to scope the check
+    exclude_files = maintenance_service.get_exclude_files()
+    cache_files = maintenance_service.get_cache_files()
+    stale = sorted(list(exclude_files - cache_files))
+
+    if not stale:
+        return {"upgrades_found": 0, "upgrades_resolved": 0, "details": []}
+
+    return cache_service.check_for_upgrades(stale)

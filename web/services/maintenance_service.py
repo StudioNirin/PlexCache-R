@@ -524,6 +524,20 @@ class MaintenanceService:
         # Find stale exclude entries (in exclude but not on cache)
         results.stale_exclude_entries = sorted(list(exclude_files - cache_files))
 
+        # Check if stale entries are actually media upgrades (Sonarr/Radarr file swaps)
+        if results.stale_exclude_entries:
+            try:
+                from web.services.cache_service import get_cache_service
+                cache_service = get_cache_service()
+                upgrade_result = cache_service.check_for_upgrades(results.stale_exclude_entries)
+                if upgrade_result.get("upgrades_resolved", 0) > 0:
+                    # Recompute stale entries after upgrade resolution
+                    exclude_files = self.get_exclude_files()
+                    timestamp_files = self.get_timestamp_files()
+                    results.stale_exclude_entries = sorted(list(exclude_files - cache_files))
+            except Exception as e:
+                logging.warning(f"Upgrade check during audit failed (non-fatal): {e}")
+
         # Find stale timestamp entries (in timestamps but not on cache)
         results.stale_timestamp_entries = sorted(list(timestamp_files - cache_files))
 
