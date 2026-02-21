@@ -229,6 +229,150 @@ class TestShouldAddToCache:
 
 
 # ============================================================================
+# dry-run safety tests
+# ============================================================================
+
+class TestDryRunProtection:
+    """Dry-run mode must NEVER perform destructive file operations.
+
+    Bug: protect_cached_file() was unconditionally renaming array files to
+    .plexcached during dry-run, hiding them from Plex (data loss).
+    """
+
+    def test_dry_run_does_not_rename_to_plexcached(self, tmp_path):
+        """In dry-run, array files must NOT be renamed to .plexcached."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = create_test_file(os.path.join(array_dir, "Movie.mkv"), "array data")
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=os.path.join(str(tmp_path), "exclude.txt"),
+            dry_run=True,
+        )
+        with open(os.path.join(str(tmp_path), "exclude.txt"), "w"):
+            pass
+
+        result = filt.protect_cached_file(array_file, cache_file)
+
+        assert result is True
+        # Array file must still exist (NOT renamed)
+        assert os.path.isfile(array_file), "Array file was renamed during dry-run!"
+        # .plexcached must NOT have been created
+        plexcached = array_file + PLEXCACHED_EXTENSION
+        assert not os.path.isfile(plexcached), ".plexcached created during dry-run!"
+
+    def test_dry_run_does_not_delete_array_file(self, tmp_path):
+        """In dry-run, redundant array files must NOT be deleted."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = create_test_file(os.path.join(array_dir, "Movie.mkv"), "array data")
+        # Pre-existing .plexcached backup triggers the delete path
+        create_test_file(array_file + PLEXCACHED_EXTENSION, "backup data")
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=os.path.join(str(tmp_path), "exclude.txt"),
+            dry_run=True,
+        )
+        with open(os.path.join(str(tmp_path), "exclude.txt"), "w"):
+            pass
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        # Array file must still exist (NOT deleted)
+        assert os.path.isfile(array_file), "Array file was deleted during dry-run!"
+
+    def test_dry_run_does_not_modify_exclude_file(self, tmp_path):
+        """In dry-run, exclude file must NOT be modified."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(array_dir, "Movie.mkv")  # no array copy
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "w"):
+            pass
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=exclude_file,
+            dry_run=True,
+        )
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        # Exclude file must remain empty
+        with open(exclude_file) as f:
+            assert f.read().strip() == "", "Exclude file modified during dry-run!"
+
+    def test_dry_run_does_not_record_timestamps(self, tmp_path):
+        """In dry-run, timestamps must NOT be recorded."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(array_dir, "Movie.mkv")
+
+        ts_file = os.path.join(str(tmp_path), "timestamps.json")
+        tracker = CacheTimestampTracker(ts_file)
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "w"):
+            pass
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=exclude_file,
+            timestamp_tracker=tracker,
+            dry_run=True,
+        )
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        # Timestamp tracker must not have an entry for this file
+        # (get_source returns "unknown" for missing entries AND for recorded entries
+        # with no explicit source, so check the internal data directly)
+        assert cache_file not in tracker._timestamps, "Timestamp recorded during dry-run!"
+
+    def test_dry_run_still_counts_cached_files(self, tmp_path):
+        """In dry-run, already-cached count must still be tracked for summary."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(str(tmp_path), "array", "media", "Movies", "Movie.mkv")
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "w"):
+            pass
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=exclude_file,
+            dry_run=True,
+        )
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        assert filt.last_already_cached_count == 1
+
+
+# ============================================================================
 # _move_to_cache FUSE path safety tests
 # ============================================================================
 

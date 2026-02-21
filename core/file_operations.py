@@ -2680,7 +2680,8 @@ class FileFilter:
                  watchlist_tracker: Optional['WatchlistTracker'] = None,
                  path_modifier: Optional['MultiPathModifier'] = None,
                  is_docker: bool = False,
-                 use_symlinks: bool = False):
+                 use_symlinks: bool = False,
+                 dry_run: bool = False):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
@@ -2692,6 +2693,7 @@ class FileFilter:
         self.path_modifier = path_modifier  # For multi-path support
         self.is_docker = is_docker  # For path translation in Docker
         self.use_symlinks = use_symlinks  # Whether to create/preserve symlinks at original locations
+        self.dry_run = dry_run  # Skip all file operations when True
         self.last_already_cached_count = 0  # Track files already on cache during filtering
         self._media_info_map = {}  # Plex media type info (set via set_media_info_map)
 
@@ -2985,6 +2987,14 @@ class FileFilter:
 
         array_file = get_array_direct_path(file) if self.is_unraid else file
 
+        # Track count of files already on cache (always, even in dry-run)
+        self.last_already_cached_count += 1
+
+        # In dry-run mode, skip all file operations — only count and log
+        if self.dry_run:
+            logging.debug(f"[DRY RUN] File already on cache: {os.path.basename(cache_file_name)}")
+            return True
+
         # Add to exclude list so Unraid mover doesn't move it back
         self._add_to_exclude_file(cache_file_name)
 
@@ -2999,9 +3009,6 @@ class FileFilter:
             self.watchlist_tracker.mark_cached(file, "pre-existing")
 
         logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
-
-        # Track count of files already on cache
-        self.last_already_cached_count += 1
 
         # If array version also exists, rename it to .plexcached (preserve as backup)
         # This ensures we have a recovery option if the cache drive fails

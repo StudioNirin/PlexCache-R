@@ -508,7 +508,8 @@ class PlexCacheApp:
             watchlist_tracker=self.watchlist_tracker,
             path_modifier=self.file_path_modifier,
             is_docker=self.system_detector.is_docker,
-            use_symlinks=self.config_manager.cache.use_symlinks
+            use_symlinks=self.config_manager.cache.use_symlinks,
+            dry_run=self.dry_run
         )
 
         self.file_mover = FileMover(
