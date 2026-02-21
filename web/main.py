@@ -4,10 +4,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from urllib.parse import urlparse
+
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from web import __version__
 from web.config import templates, STATIC_DIR, PROJECT_ROOT, CONFIG_DIR, SETTINGS_FILE
 from web.routers import dashboard, cache, settings, operations, logs, api, maintenance, setup
 from web.services import get_scheduler_service, get_settings_service
@@ -150,7 +153,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="PlexCache-D",
     description="Web UI for PlexCache-D media cache management",
-    version="0.1.0",
+    version=__version__,
     lifespan=lifespan
 )
 
@@ -183,6 +186,50 @@ async def setup_redirect_middleware(request: Request, call_next):
     # Check if setup is complete
     if not setup.is_setup_complete():
         return RedirectResponse(url="/setup", status_code=307)
+
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def csrf_origin_check(request: Request, call_next):
+    """Block cross-origin mutating requests (CSRF hardening).
+
+    For POST/PUT/DELETE/PATCH, verifies the Origin or Referer header matches
+    the Host header. Requests with no origin header (curl, scripts, API tools)
+    are allowed — browsers always send Origin on cross-origin requests.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+
+    # No origin info = non-browser client (curl, scripts) — allow
+    if not origin and not referer:
+        return await call_next(request)
+
+    # Determine expected host (respect reverse proxy forwarding)
+    expected_host = (
+        request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        or request.headers.get("host", "")
+    )
+
+    # Extract host from Origin (preferred) or Referer
+    if origin and origin != "null":
+        source_host = urlparse(origin).netloc
+    elif referer and referer != "null":
+        source_host = urlparse(referer).netloc
+    else:
+        # Origin: null — sandboxed iframe, cross-origin redirect, not legitimate
+        logging.warning(f"CSRF blocked: null origin on {request.method} {request.url.path}")
+        return Response("Cross-origin request blocked", status_code=403)
+
+    if source_host != expected_host:
+        logging.warning(
+            f"CSRF blocked: {request.method} {request.url.path} "
+            f"(origin={source_host}, expected={expected_host})"
+        )
+        return Response("Cross-origin request blocked", status_code=403)
 
     return await call_next(request)
 

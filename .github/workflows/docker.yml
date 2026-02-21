@@ -23,6 +23,21 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Syntax check uncovered modules
+        run: |
+          python -c "
+          import py_compile, glob, sys
+          errors = []
+          for f in glob.glob('web/routers/*.py') + glob.glob('web/services/*.py'):
+              try:
+                  py_compile.compile(f, doraise=True)
+              except py_compile.PyCompileError as e:
+                  errors.append(str(e))
+          if errors:
+              print('\n'.join(errors))
+              sys.exit(1)
+          "
+
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 

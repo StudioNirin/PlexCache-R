@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -375,10 +376,14 @@ class ImportService:
 
 # Singleton instance
 _import_service = None
+_import_service_lock = threading.Lock()
+
 
 def get_import_service() -> ImportService:
     """Get the singleton import service instance"""
     global _import_service
     if _import_service is None:
-        _import_service = ImportService()
+        with _import_service_lock:
+            if _import_service is None:
+                _import_service = ImportService()
     return _import_service

@@ -13,12 +13,16 @@ from typing import Optional, List, Dict, Callable
 from dataclasses import dataclass, field
 
 from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
+from core.system_utils import format_bytes, format_duration
+from core.file_operations import save_json_atomically
 
 # Activity persistence settings - use DATA_DIR for Docker compatibility
 ACTIVITY_FILE = DATA_DIR / "recent_activity.json"
 LAST_RUN_FILE = DATA_DIR / "last_run.txt"
+LAST_RUN_SUMMARY_FILE = DATA_DIR / "last_run_summary.json"
 SETTINGS_FILE = CONFIG_SETTINGS_FILE
 DEFAULT_ACTIVITY_RETENTION_HOURS = 24
+_activity_file_lock = threading.Lock()
 
 
 def save_last_run_time():
@@ -29,6 +33,17 @@ def save_last_run_time():
             f.write(datetime.now().isoformat())
     except IOError:
         pass
+
+
+def load_last_run_summary() -> Optional[dict]:
+    """Load the last run summary from disk."""
+    try:
+        if LAST_RUN_SUMMARY_FILE.exists():
+            with open(LAST_RUN_SUMMARY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        pass
+    return None
 
 
 def _get_activity_retention_hours() -> int:
@@ -66,9 +81,22 @@ class FileActivity:
             time_display = self.timestamp.strftime("%-I:%M:%S %p")
         else:
             time_display = self.timestamp.strftime("%H:%M:%S")
+
+        # Date grouping fields (computed at render time, not stored on disk)
+        today = datetime.now().date()
+        entry_date = self.timestamp.date()
+        if entry_date == today:
+            date_display = "Today"
+        elif entry_date == today - timedelta(days=1):
+            date_display = "Yesterday"
+        else:
+            date_display = self.timestamp.strftime("%a, %b ") + str(self.timestamp.day)
+
         return {
             "timestamp": self.timestamp.isoformat(),
             "time_display": time_display,
+            "date_key": entry_date.isoformat(),
+            "date_display": date_display,
             "action": self.action,
             "filename": self.filename,
             "size": self._format_size(self.size_bytes),
@@ -78,11 +106,7 @@ class FileActivity:
     def _format_size(self, size_bytes: int) -> str:
         if size_bytes == 0:
             return "-"
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size_bytes < 1024:
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024
-        return f"{size_bytes:.2f} PB"
+        return format_bytes(size_bytes)
 
 
 MAX_RECENT_ACTIVITY = 500
@@ -91,11 +115,11 @@ MAX_RECENT_ACTIVITY = 500
 def load_activity() -> List[FileActivity]:
     """Load activity from disk, filtering out entries older than retention period."""
     try:
-        if not ACTIVITY_FILE.exists():
-            return []
-
-        with open(ACTIVITY_FILE, 'r') as f:
-            data = json.load(f)
+        with _activity_file_lock:
+            if not ACTIVITY_FILE.exists():
+                return []
+            with open(ACTIVITY_FILE, 'r') as f:
+                data = json.load(f)
 
         cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
         activities = []
@@ -143,8 +167,8 @@ def save_activity(activities: List[FileActivity]) -> None:
                     'users': activity.users
                 })
 
-        with open(ACTIVITY_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
+        with _activity_file_lock:
+            save_json_atomically(str(ACTIVITY_FILE), data, label="activity")
 
     except Exception as e:
         logging.debug(f"Could not save activity history: {e}")
@@ -320,6 +344,29 @@ class OperationRunner:
         else:
             save_activity(self._recent_activity)
 
+    def _save_last_run_summary(self):
+        """Save a summary of the completed operation to disk."""
+        try:
+            result = self._current_result
+            if not result:
+                return
+            LAST_RUN_SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            summary = {
+                "status": result.state.value,
+                "timestamp": datetime.now().isoformat(),
+                "files_cached": result.files_cached,
+                "files_restored": result.files_restored,
+                "bytes_cached": result.bytes_cached,
+                "bytes_restored": result.bytes_restored,
+                "duration_seconds": round(result.duration_seconds, 1),
+                "error_count": result.error_count,
+                "dry_run": result.dry_run,
+            }
+            with open(LAST_RUN_SUMMARY_FILE, 'w', encoding='utf-8') as f:
+                json.dump(summary, f, indent=2)
+        except IOError:
+            pass
+
     @property
     def state(self) -> OperationState:
         """Get current operation state"""
@@ -393,32 +440,11 @@ class OperationRunner:
 
     # Regex to extract file count from "Caching to cache drive (N file(s)):"
     _cache_count_re = re.compile(r'Caching to cache drive \((\d+)\s+\w+')
-    # Regex to extract file count from "Total media to cache: N files"
-    _total_media_re = re.compile(r'Total media to cache:\s*(\d+)')
 
-    @staticmethod
-    def _format_duration(seconds: float) -> str:
-        """Format seconds into human-readable duration like '1m 23s' or '45s'"""
-        seconds = max(0, seconds)
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        if minutes < 60:
-            return f"{minutes}m {secs:02d}s"
-        hours = int(minutes // 60)
-        mins = minutes % 60
-        return f"{hours}h {mins:02d}m"
 
-    @staticmethod
-    def _format_bytes(num_bytes: int) -> str:
-        """Format bytes into human-readable string like '2.1 GB' or '450 MB'"""
-        size = float(num_bytes)
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size < 1024 or unit == 'TB':
-                return f"{size:.1f} {unit}" if unit != 'B' else f"{int(size)} B"
-            size /= 1024
-        return f"{size:.1f} TB"
+    # Backward-compatible static method aliases for external callers
+    _format_duration = staticmethod(format_duration)
+    _format_bytes = staticmethod(format_bytes)
 
     def _parse_phase(self, msg: str):
         """Detect phase transitions and extract counts from log messages."""
@@ -458,16 +484,11 @@ class OperationRunner:
                 self._current_result.files_to_restore_total += int(m.group(1))
                 return
 
-            # "Caching to cache drive (N file(s)):"
+            # "Caching to cache drive (N file(s)):" — the actual move count
             m = self._cache_count_re.search(clean_msg)
             if m:
                 self._current_result.files_to_cache_total = int(m.group(1))
                 return
-
-            # "Total media to cache: N files" — only set if caching header hasn't set it yet
-            m = self._total_media_re.search(clean_msg)
-            if m and self._current_result.files_to_cache_total == 0:
-                self._current_result.files_to_cache_total = int(m.group(1))
 
     def _parse_file_operation(self, msg: str):
         """Parse log message to extract file operations"""
@@ -550,13 +571,14 @@ class OperationRunner:
             # Keep only last N messages
             if len(self._log_messages) > self._max_log_messages:
                 self._log_messages = self._log_messages[-self._max_log_messages:]
+            subscribers = list(self._subscribers)  # snapshot under lock
 
         # Try to parse file operations and phase transitions from log message
         self._parse_file_operation(msg)
         self._parse_phase(msg)
 
-        # Notify async subscribers
-        for queue in self._subscribers:
+        # Notify async subscribers (iterate snapshot, not live list)
+        for queue in subscribers:
             try:
                 queue.put_nowait(msg)
             except asyncio.QueueFull:
@@ -565,13 +587,15 @@ class OperationRunner:
     def subscribe_logs(self) -> asyncio.Queue:
         """Subscribe to log messages (for WebSocket streaming)"""
         queue = asyncio.Queue(maxsize=100)
-        self._subscribers.append(queue)
+        with self._lock:
+            self._subscribers.append(queue)
         return queue
 
     def unsubscribe_logs(self, queue: asyncio.Queue):
         """Unsubscribe from log messages"""
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
+        with self._lock:
+            if queue in self._subscribers:
+                self._subscribers.remove(queue)
 
     def start_operation(self, dry_run: bool = False, verbose: bool = False) -> bool:
         """
@@ -762,8 +786,23 @@ class OperationRunner:
                     self._current_result.state = OperationState.COMPLETED
                     self._state = OperationState.COMPLETED
 
-            # Always save last run time when operation finishes (success or failure)
+            # Always save last run time and summary when operation finishes
             save_last_run_time()
+            self._save_last_run_summary()
+
+            # Invalidate dashboard stats cache so summary shows on next poll
+            try:
+                from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS
+                get_web_cache_service().invalidate(CACHE_KEY_DASHBOARD_STATS)
+            except Exception:
+                pass
+
+            # After operation completes, check if maintenance actions are queued
+            try:
+                from web.services.maintenance_runner import get_maintenance_runner
+                get_maintenance_runner()._try_dequeue()
+            except Exception:
+                pass
 
     def get_status_dict(self) -> dict:
         """Get status as a dictionary for API responses"""
@@ -792,6 +831,7 @@ class OperationRunner:
 
         if result.state == OperationState.RUNNING:
             # Phase and progress fields
+            status["phase"] = result.current_phase
             status["current_phase"] = result.current_phase
             status["current_phase_display"] = result.current_phase_display
             status["files_to_cache_total"] = result.files_to_cache_total
@@ -852,8 +892,25 @@ class OperationRunner:
                             status["eta_display"] = self._format_duration(remaining / rate)
 
             # Recent log messages (last 5) for hover mini-log
+            # Files completed so far in this run for detail panel
             with self._lock:
                 status["recent_logs"] = list(self._log_messages[-5:])
+                status["recent_files"] = list(self._current_run_files[:8])
+
+            # Active files currently being copied (read from FileMover)
+            active_files = []
+            try:
+                app = self._app_instance
+                if app and getattr(app, 'file_mover', None):
+                    mover = app.file_mover
+                    lock = getattr(mover, '_progress_lock', None)
+                    af = getattr(mover, '_active_files', None)
+                    if lock and af:
+                        with lock:
+                            active_files = [(name, size) for name, size in af.values()]
+            except Exception:
+                pass
+            status["active_files"] = active_files
 
             status["message"] = result.current_phase_display
 
@@ -884,11 +941,14 @@ class OperationRunner:
 
 # Singleton instance
 _operation_runner: Optional[OperationRunner] = None
+_operation_runner_lock = threading.Lock()
 
 
 def get_operation_runner() -> OperationRunner:
     """Get or create the operation runner singleton"""
     global _operation_runner
     if _operation_runner is None:
-        _operation_runner = OperationRunner()
+        with _operation_runner_lock:
+            if _operation_runner is None:
+                _operation_runner = OperationRunner()
     return _operation_runner

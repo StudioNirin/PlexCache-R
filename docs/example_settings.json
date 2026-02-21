@@ -1,4 +1,6 @@
 {
+    "_comment": "PlexCache-R Example Settings — see docs for full details",
+
     "PLEX_URL": "http://192.168.1.100:32400/",
     "PLEX_TOKEN": "your-plex-token-here",
 
@@ -8,6 +10,7 @@
             "plex_path": "/media/movies/",
             "real_path": "/mnt/user/media/movies/",
             "cache_path": "/mnt/cache/media/movies/",
+            "host_cache_path": null,
             "cacheable": true,
             "enabled": true
         },
@@ -16,6 +19,7 @@
             "plex_path": "/media/tv/",
             "real_path": "/mnt/user/media/tv/",
             "cache_path": "/mnt/cache/media/tv/",
+            "host_cache_path": null,
             "cacheable": true,
             "enabled": true
         },
@@ -24,6 +28,7 @@
             "plex_path": "/media/movies-4k/",
             "real_path": "/mnt/user/media/movies-4k/",
             "cache_path": "/mnt/cache/media/movies-4k/",
+            "host_cache_path": null,
             "cacheable": true,
             "enabled": true
         },
@@ -32,6 +37,7 @@
             "plex_path": "/media/remote-nas/",
             "real_path": "/mnt/remotes/nas-share/",
             "cache_path": null,
+            "host_cache_path": null,
             "cacheable": false,
             "enabled": true
         }
@@ -65,19 +71,30 @@
         }
     ],
 
-    "skip_ondeck": [],
-    "skip_watchlist": [],
-
     "remote_watchlist_toggle": false,
     "remote_watchlist_rss_url": "",
 
     "watched_move": true,
     "cache_retention_hours": 12,
     "watchlist_retention_days": 0,
+    "ondeck_retention_days": 0,
+
+    "cache_drive_size": "",
+    "cache_limit": "80%",
+    "min_free_space": "50GB",
+    "plexcache_quota": "",
 
     "cache_eviction_mode": "none",
     "cache_eviction_threshold_percent": 90,
     "eviction_min_priority": 60,
+
+    "create_plexcached_backups": true,
+    "hardlinked_files": "skip",
+    "cleanup_empty_folders": true,
+    "use_symlinks": false,
+    "auto_transfer_upgrades": true,
+    "backup_upgraded_files": true,
+    "excluded_folders": [],
 
     "exit_if_active_session": false,
 
@@ -86,6 +103,12 @@
 
     "notification_type": "both",
     "unraid_level": "summary",
+    "unraid_levels": [],
     "webhook_url": "https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN",
-    "webhook_level": "summary"
+    "webhook_level": "summary",
+    "webhook_levels": [],
+
+    "max_log_files": 24,
+    "keep_error_logs_days": 7,
+    "activity_retention_hours": 24
 }

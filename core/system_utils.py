@@ -59,6 +59,11 @@ def resolve_user0_to_disk(user0_path: str) -> Optional[str]:
 # because that path only shows standard array disks. Using /mnt/user/ is safe for
 # these paths since there is no cache/array split — no FUSE ambiguity exists.
 # Populated at startup by detect_zfs() checks on each path_mapping's real_path.
+#
+# NOTE: This is a performance hint — get_array_direct_path() uses it to avoid
+# unnecessary /mnt/user0/ conversion for known pool-only shares. Safety-critical
+# operations (_move_to_cache, _move_to_array) also probe /mnt/user0/ directly
+# as defense in depth, so incorrect detection here won't cause data loss.
 _zfs_user_prefixes: set = set()
 
 
@@ -83,6 +88,10 @@ def get_array_direct_path(user_share_path: str) -> str:
     /mnt/user0/ — their files live on a ZFS pool, not array disks. For these
     paths, we skip the conversion and keep /mnt/user/ which is safe because
     there is no cache/array FUSE ambiguity.
+
+    NOTE: This function uses _zfs_user_prefixes as a performance hint. Safety-
+    critical callers (_move_to_cache, _move_to_array) also probe the filesystem
+    directly as defense in depth.
 
     Args:
         user_share_path: A path potentially starting with /mnt/user/
@@ -131,6 +140,185 @@ def parse_size_bytes(size_str: str) -> int:
             return int(float(size_str) * 1024**3)  # Default to GB
     except ValueError:
         return 0
+
+
+def format_bytes(bytes_value: int) -> str:
+    """Format bytes into human-readable string (e.g., '1.5 GB').
+
+    This is the canonical implementation — use this everywhere instead of
+    creating local _format_size / _format_bytes methods.
+
+    Args:
+        bytes_value: Size in bytes to format.
+
+    Returns:
+        Human-readable string with appropriate unit.
+    """
+    size = float(bytes_value)
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024 or unit == 'TB':
+            return f"{size:.2f} {unit}" if unit != 'B' else f"{int(size)} B"
+        size /= 1024
+    return f"{size:.2f} TB"
+
+
+def format_duration(seconds: float) -> str:
+    """Format seconds into human-readable duration like '1m 23s' or '45s'.
+
+    This is the canonical implementation — use this everywhere instead of
+    creating local _format_duration methods.
+
+    Args:
+        seconds: Duration in seconds.
+
+    Returns:
+        Human-readable duration string.
+    """
+    seconds = max(0, seconds)
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours = int(minutes // 60)
+    mins = minutes % 60
+    return f"{hours}h {mins:02d}m"
+
+
+def format_cache_age(updated_at) -> Optional[str]:
+    """Format a datetime as a human-readable cache age string.
+
+    Args:
+        updated_at: datetime when the cache was last updated, or None.
+
+    Returns:
+        String like 'just now', '5 min ago', '2 hr ago', or None if no timestamp.
+    """
+    if not updated_at:
+        return None
+
+    from datetime import datetime
+    age_seconds = (datetime.now() - updated_at).total_seconds()
+    if age_seconds < 60:
+        return "just now"
+    elif age_seconds < 3600:
+        return f"{int(age_seconds / 60)} min ago"
+    else:
+        return f"{int(age_seconds / 3600)} hr ago"
+
+
+def translate_container_to_host_path(path: str, path_mappings: list) -> str:
+    """Translate container cache path to host path for exclude file.
+
+    When Docker remaps cache paths, the exclude file needs host paths
+    so the Unraid mover can understand them.
+
+    Args:
+        path: Container-side file path.
+        path_mappings: List of path mapping dicts with 'host_cache_path' and 'cache_path'.
+
+    Returns:
+        Host-side path, or original path if no translation needed.
+    """
+    for mapping in path_mappings:
+        host_cache_path = mapping.get('host_cache_path', '')
+        cache_path = mapping.get('cache_path', '')
+
+        if not host_cache_path or not cache_path:
+            continue
+        if host_cache_path == cache_path:
+            continue  # No translation needed
+
+        container_prefix = cache_path.rstrip('/')
+        if path.startswith(container_prefix):
+            host_prefix = host_cache_path.rstrip('/')
+            return path.replace(container_prefix, host_prefix, 1)
+
+    return path
+
+
+def translate_host_to_container_path(path: str, path_mappings: list) -> str:
+    """Translate host cache path to container path.
+
+    When reading from the exclude file, paths are host paths but we need
+    container paths to check file existence inside Docker.
+
+    Args:
+        path: Host-side file path.
+        path_mappings: List of path mapping dicts with 'host_cache_path' and 'cache_path'.
+
+    Returns:
+        Container-side path, or original path if no translation needed.
+    """
+    for mapping in path_mappings:
+        host_cache_path = mapping.get('host_cache_path', '')
+        cache_path = mapping.get('cache_path', '')
+
+        if not host_cache_path or not cache_path:
+            continue
+        if host_cache_path == cache_path:
+            continue  # No translation needed
+
+        host_prefix = host_cache_path.rstrip('/')
+        if path.startswith(host_prefix):
+            container_prefix = cache_path.rstrip('/')
+            return path.replace(host_prefix, container_prefix, 1)
+
+    return path
+
+
+def remove_from_exclude_file(exclude_file_path, cache_path: str, path_mappings: list) -> None:
+    """Remove a path from the Unraid mover exclude file.
+
+    Args:
+        exclude_file_path: Path to the exclude file (str or Path).
+        cache_path: Container-side cache path to remove.
+        path_mappings: Path mapping dicts for host/container translation.
+    """
+    from pathlib import Path
+    exclude_file = Path(exclude_file_path) if not isinstance(exclude_file_path, Path) else exclude_file_path
+    if not exclude_file.exists():
+        return
+
+    try:
+        with open(exclude_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        host_path = translate_container_to_host_path(cache_path, path_mappings)
+        new_lines = [line for line in lines if line.strip() != host_path]
+
+        with open(exclude_file, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+    except IOError as e:
+        logging.warning(f"Could not update exclude file: {e}")
+
+
+def remove_from_timestamps_file(timestamps_file_path, cache_path: str) -> None:
+    """Remove a path from the timestamps JSON file.
+
+    Args:
+        timestamps_file_path: Path to timestamps.json (str or Path).
+        cache_path: Cache path key to remove.
+    """
+    import json
+    from pathlib import Path
+    ts_file = Path(timestamps_file_path) if not isinstance(timestamps_file_path, Path) else timestamps_file_path
+    if not ts_file.exists():
+        return
+
+    try:
+        with open(ts_file, 'r', encoding='utf-8') as f:
+            timestamps = json.load(f)
+
+        if cache_path in timestamps:
+            del timestamps[cache_path]
+            with open(ts_file, 'w', encoding='utf-8') as f:
+                json.dump(timestamps, f, indent=2)
+        else:
+            logging.debug(f"Path not found in timestamps (may already be removed): {cache_path}")
+    except (IOError, json.JSONDecodeError) as e:
+        logging.warning(f"Could not update timestamps file: {e}")
 
 
 def get_disk_free_space_bytes(path: str) -> int:
@@ -346,15 +534,18 @@ class SystemDetector:
         self.is_docker = self._detect_docker()
         
     def _detect_unraid(self) -> bool:
-        """Detect if running on Unraid system."""
-        os_info = {
-            'Linux': '/mnt/user0/',
-            'Darwin': None,
-            'Windows': None
-        }
-        
-        unraid_path = os_info.get(self.os_name)
-        return os.path.exists(unraid_path) if unraid_path else False
+        """Detect if running on Unraid system.
+
+        Primary check: kernel version string contains 'Unraid' (e.g., '6.12.54-Unraid').
+        Fallback: /mnt/user0/ exists (standard array systems).
+        The kernel check works for all Unraid setups including ZFS-only pools
+        where /mnt/user0/ doesn't exist.
+        """
+        if self.os_name != 'Linux':
+            return False
+        if 'unraid' in platform.release().lower():
+            return True
+        return os.path.exists('/mnt/user0/')
     
     def _detect_docker(self) -> bool:
         """Detect if running inside a Docker container."""

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -421,11 +422,14 @@ class SchedulerService:
 
 # Singleton instance
 _scheduler_service: Optional[SchedulerService] = None
+_scheduler_service_lock = threading.Lock()
 
 
 def get_scheduler_service() -> SchedulerService:
     """Get or create the scheduler service singleton"""
     global _scheduler_service
     if _scheduler_service is None:
-        _scheduler_service = SchedulerService()
+        with _scheduler_service_lock:
+            if _scheduler_service is None:
+                _scheduler_service = SchedulerService()
     return _scheduler_service

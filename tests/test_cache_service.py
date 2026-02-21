@@ -90,8 +90,8 @@ class TestParseSizeBytes:
 
     @staticmethod
     def _parse(value):
-        from web.services.cache_service import _parse_size_bytes
-        return _parse_size_bytes(value)
+        from core.system_utils import parse_size_bytes
+        return parse_size_bytes(value)
 
     # --- TB ---
 
@@ -440,22 +440,22 @@ class TestStorageDiskUsageErrorHandling:
 
 class TestFormatSize:
 
-    def test_zero(self, tmp_path):
-        svc = _make_service(tmp_path)
-        assert svc._format_size(0) == "0 B"
+    def test_zero(self):
+        from core.system_utils import format_bytes
+        assert format_bytes(0) == "0 B"
 
-    def test_bytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        assert svc._format_size(512) == "512 B"
+    def test_bytes(self):
+        from core.system_utils import format_bytes
+        assert format_bytes(512) == "512 B"
 
-    def test_megabytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        result = svc._format_size(5 * 1024 ** 2)
+    def test_megabytes(self):
+        from core.system_utils import format_bytes
+        result = format_bytes(5 * 1024 ** 2)
         assert "MB" in result
 
-    def test_terabytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        result = svc._format_size(3 * 1024 ** 4)
+    def test_terabytes(self):
+        from core.system_utils import format_bytes
+        result = format_bytes(3 * 1024 ** 4)
         assert "TB" in result
 
 

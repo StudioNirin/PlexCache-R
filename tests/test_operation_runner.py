@@ -22,52 +22,6 @@ from web.services.operation_runner import OperationRunner, OperationResult, Oper
 
 
 # ============================================================================
-# Format helpers
-# ============================================================================
-
-class TestFormatDuration:
-    def test_seconds_only(self):
-        assert OperationRunner._format_duration(0) == "0s"
-        assert OperationRunner._format_duration(45) == "45s"
-        assert OperationRunner._format_duration(59) == "59s"
-
-    def test_minutes_and_seconds(self):
-        assert OperationRunner._format_duration(60) == "1m 00s"
-        assert OperationRunner._format_duration(83) == "1m 23s"
-        assert OperationRunner._format_duration(3599) == "59m 59s"
-
-    def test_hours(self):
-        assert OperationRunner._format_duration(3600) == "1h 00m"
-        assert OperationRunner._format_duration(5400) == "1h 30m"
-        assert OperationRunner._format_duration(7261) == "2h 01m"
-
-    def test_negative_clamps_to_zero(self):
-        assert OperationRunner._format_duration(-10) == "0s"
-
-
-class TestFormatBytes:
-    def test_bytes(self):
-        assert OperationRunner._format_bytes(0) == "0 B"
-        assert OperationRunner._format_bytes(512) == "512 B"
-
-    def test_kilobytes(self):
-        assert OperationRunner._format_bytes(1024) == "1.0 KB"
-        assert OperationRunner._format_bytes(1536) == "1.5 KB"
-
-    def test_megabytes(self):
-        assert OperationRunner._format_bytes(1048576) == "1.0 MB"
-
-    def test_gigabytes(self):
-        assert OperationRunner._format_bytes(2 * 1024**3) == "2.0 GB"
-        # 2.3 GB
-        result = OperationRunner._format_bytes(int(2.3 * 1024**3))
-        assert result.startswith("2.3") and "GB" in result
-
-    def test_terabytes(self):
-        assert OperationRunner._format_bytes(1024**4) == "1.0 TB"
-
-
-# ============================================================================
 # Phase detection
 # ============================================================================
 
@@ -163,20 +117,15 @@ class TestCountExtraction:
         runner._parse_phase("10:00:00 - INFO - Caching to cache drive (5 files):")
         assert runner._current_result.files_to_cache_total == 5
 
-    def test_cache_count_from_total_media(self, runner):
-        runner._parse_phase("10:00:00 - INFO - Total media to cache: 8 files")
-        assert runner._current_result.files_to_cache_total == 8
+    def test_total_media_ignored_for_count(self, runner):
+        """'Total media to cache' is the protection list, not actual moves — should not set count."""
+        runner._parse_phase("10:00:00 - INFO - Total media to cache: 213 files")
+        assert runner._current_result.files_to_cache_total == 0
 
-    def test_caching_header_overrides_total_media(self, runner):
-        runner._parse_phase("10:00:00 - INFO - Total media to cache: 8 files")
-        assert runner._current_result.files_to_cache_total == 8
+    def test_cache_count_only_from_caching_header(self, runner):
+        """Only 'Caching to cache drive (N files)' sets the actual move count."""
+        runner._parse_phase("10:00:00 - INFO - Total media to cache: 213 files")
         runner._parse_phase("10:00:00 - INFO - Caching to cache drive (5 files):")
-        assert runner._current_result.files_to_cache_total == 5
-
-    def test_total_media_does_not_override_caching_header(self, runner):
-        runner._parse_phase("10:00:00 - INFO - Caching to cache drive (5 files):")
-        runner._parse_phase("10:00:00 - INFO - Total media to cache: 8 files")
-        # Should stay at 5 since caching header already set it
         assert runner._current_result.files_to_cache_total == 5
 
 

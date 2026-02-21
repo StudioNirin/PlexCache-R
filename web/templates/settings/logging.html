@@ -18,6 +18,7 @@
                 <div class="form-group">
                     <label for="max_log_files">Maximum Log Files</label>
                     <input type="number" id="max_log_files" name="max_log_files"
+                           class="input-narrow"
                            value="{{ settings.max_log_files | default(24) }}" min="1" max="100">
                     <div class="form-hint">Number of log files to keep (1 file created per run)</div>
                 </div>
@@ -25,6 +26,7 @@
                 <div class="form-group">
                     <label for="keep_error_logs_days">Error Log Retention (days)</label>
                     <input type="number" id="keep_error_logs_days" name="keep_error_logs_days"
+                           class="input-narrow"
                            value="{{ settings.keep_error_logs_days | default(7) }}" min="0" max="365">
                     <div class="form-hint">Days to keep logs containing warnings/errors (0 = disabled)</div>
                 </div>
@@ -50,6 +52,23 @@
                     <option value="12h" {% if settings.time_format == '12h' %}selected{% endif %}>12-hour (2:30:00 PM)</option>
                 </select>
                 <div class="form-hint">Controls how timestamps are displayed throughout the Web UI (dashboard, logs, schedule)</div>
+            </div>
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-top: 2rem; margin-bottom: 1rem;">
+                <i data-lucide="activity" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Dashboard
+            </h3>
+
+            <div class="form-group">
+                <label for="activity_retention_hours">Recent Activity Retention (hours)</label>
+                <select id="activity_retention_hours" name="activity_retention_hours">
+                    <option value="12" {% if settings.activity_retention_hours == 12 %}selected{% endif %}>12 hours</option>
+                    <option value="24" {% if settings.activity_retention_hours == 24 or not settings.activity_retention_hours %}selected{% endif %}>24 hours (default)</option>
+                    <option value="48" {% if settings.activity_retention_hours == 48 %}selected{% endif %}>48 hours</option>
+                    <option value="72" {% if settings.activity_retention_hours == 72 %}selected{% endif %}>3 days</option>
+                    <option value="168" {% if settings.activity_retention_hours == 168 %}selected{% endif %}>7 days</option>
+                </select>
+                <div class="form-hint">How long to keep Recent Activity entries on the Dashboard</div>
             </div>
 
             <div class="form-group mb-0" style="margin-top: 1.5rem;">

@@ -1369,15 +1369,18 @@ Example log format:
     <script>
         // Log section definitions for navigation
         const LOG_SECTIONS = [
-            { id: 'startup', name: 'Startup', patterns: [/=== PlexCache-D ===/i, /Loading configuration/i, /Initializing/i, /Connected to Plex/i] },
-            { id: 'ondeck', name: 'OnDeck', patterns: [/--- Fetching Media ---/i, /Fetching OnDeck/i, /OnDeck found/i, /OnDeck:.*items/i] },
+            { id: 'startup', name: 'Startup', patterns: [/=== PlexCache-D ===/i, /Loading configuration/i, /Initializing/i, /Connected to Plex/i, /\[CONFIG\]/i, /\[MOVER\]/i] },
+            { id: 'ondeck', name: 'OnDeck', patterns: [/--- Fetching Media ---/i, /Fetching OnDeck/i, /OnDeck found/i, /OnDeck:.*items/i, /\[FETCH\]/i] },
             { id: 'paths', name: 'Path Mapping', patterns: [/Converted path using/i, /Skipping disabled/i, /path mapping/i, /No matching library folder/i] },
             { id: 'subtitles', name: 'Subtitles', patterns: [/Finding subtitles/i, /subtitle.*found/i, /\.srt|\.ass|\.sub/i] },
             { id: 'watchlist', name: 'Watchlist', patterns: [/Processing watchlist/i, /watchlist items/i, /Watchlist:/i] },
             { id: 'retention', name: 'Retention', patterns: [/Watchlist retention expired/i, /retention.*days/i, /Cache retention/i, /expired.*items/i] },
             { id: 'rss', name: 'RSS Feed', patterns: [/RSS title/i, /RSS feed contains/i, /Fetching RSS/i, /RSS.*items/i] },
-            { id: 'cache', name: 'Cache Ops', patterns: [/File already on cache/i, /non-cacheable/i, /Moving.*to cache/i, /Moving.*to array/i, /evict/i] },
-            { id: 'summary', name: 'Summary', patterns: [/SUMMARY/i, /Completed in/i, /Finished moving/i, /Run complete/i, /--- Results ---/i, /Already cached:/i, /Moved to cache:/i, /Moved to array:/i] },
+            { id: 'cache', name: 'Cache Ops', patterns: [/File already on cache/i, /non-cacheable/i, /Moving.*to cache/i, /Moving.*to array/i, /evict/i, /\[CACHE\]/i, /\[RESTORE\]/i, /\[PLEXCACHED\]/i, /\[EVICTION\]/i] },
+            { id: 'quota', name: 'Quota', patterns: [/\[QUOTA\]/i, /Cache limit/i, /Min free space/i, /PlexCache quota/i] },
+            { id: 'filter', name: 'Filtering', patterns: [/\[FILTER\]/i, /\[EXCLUDE\]/i, /Skipped.*active session/i, /Skipped.*disabled libraries/i, /Skipped.*non-cacheable/i] },
+            { id: 'migration', name: 'Migration', patterns: [/\[MIGRATION\]/i, /migration/i, /\.plexcached/i] },
+            { id: 'summary', name: 'Summary', patterns: [/SUMMARY/i, /Completed in/i, /Finished moving/i, /Run complete/i, /--- Results ---/i, /Already cached:/i, /Moved to cache:/i, /Moved to array:/i, /\[RESULTS\]/i] },
             { id: 'errors', name: 'Errors', patterns: [/ERROR|CRITICAL/i] }
         ];
 
@@ -1548,6 +1551,8 @@ Example log format:
         const CONFIG_PATTERNS = [
             { pattern: /DRY-RUN MODE/i, key: "Dry Run", value: "Yes", class: "warning" },
             { pattern: /VERBOSE MODE/i, key: "Verbose", value: "Yes", class: "yes" },
+            { pattern: /\[CONFIG\] ZFS pool-only detected/i, key: "ZFS Pool-Only", value: "Yes", class: "yes" },
+            { pattern: /\[CONFIG\] ZFS prefixes configured/i, key: "ZFS Paths", value: "Configured", class: "yes" },
             { pattern: /Using multi-path mode with (\d+) mappings \((\d+) enabled\)/i, key: "Path Mappings", extract: (m) => `${m[2]}/${m[1]} enabled` },
             { pattern: /Connected to Plex \((\d+) users?\)/i, key: "Users", extract: (m) => m[1] },
             { pattern: /Watchlist retention enabled:\s*(\d+)\s*days/i, key: "Watchlist Retention", extract: (m) => `${m[1]} days` },
@@ -1572,6 +1577,7 @@ Example log format:
             { pattern: /evict.*?(\d+) files?.*?free.*?space/i, key: "Evicted", extract: (m) => m[1] },
             { pattern: /Cleaned up (\d+) stale/i, key: "Stale Entries Cleaned", extract: (m) => m[1] },
             { pattern: /Found (\d+) \.plexcached files/i, key: "Plexcached Files", extract: (m) => m[1] },
+            { pattern: /\[EVICTION\].*freed\s+([\d.]+)GB/i, key: "Evicted Space", extract: (m) => `${m[1]} GB` },
         ];
 
         // User extraction patterns
@@ -2444,6 +2450,8 @@ Example log format:
             { pattern: /Finished moving files/i, event: "File Operations Complete", type: "success" },
             { pattern: /--- Results ---/i, event: "Results Summary", type: "success" },
             { pattern: /SUMMARY/i, event: "Run Summary", type: "success" },
+            { pattern: /\[EVICTION\].*complete/i, event: "Eviction Complete", type: "success" },
+            { pattern: /\[QUOTA\].*Active constraint/i, event: "Space Constraint Active", type: "warning" },
         ];
 
         // Parse log into structured data

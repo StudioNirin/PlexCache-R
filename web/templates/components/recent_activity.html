@@ -1,7 +1,20 @@
-<!-- Recent Activity component - HTMX partial (last 24 hours) -->
+<!-- Recent Activity component - HTMX partial (grouped by date) -->
 {% if activity %}
-{% for item in activity %}
-<tr>
+{% for group in activity|groupby('date_key')|reverse %}
+<tr class="date-group-header" data-date-group="{{ group.grouper }}">
+    <td colspan="5">
+        <div class="date-group-inner">
+            <span class="date-group-label">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                {{ group.list[0].date_display }}
+            </span>
+            <span class="date-group-count">{{ group.list|length }} action{{ 's' if group.list|length != 1 else '' }}</span>
+            <span class="date-group-line"></span>
+        </div>
+    </td>
+</tr>
+{% for item in group.list %}
+<tr data-action="{{ item.action }}" data-date-group="{{ item.date_key }}">
     <td>{{ item.time_display }}</td>
     <td>
         {% if item.action in ('Cached', 'Protected', 'Fixed') %}
@@ -30,11 +43,21 @@
     <td>{{ item.size }}</td>
 </tr>
 {% endfor %}
+{% endfor %}
 {% else %}
 <tr>
     <td colspan="5" class="text-muted" style="text-align: center; padding: 2rem;">
-        <i data-lucide="inbox" style="width: 32px; height: 32px; margin-bottom: 0.5rem; display: block; margin: 0 auto 0.5rem;"></i>
-        No recent activity
+        {% if plex_connected is defined and not plex_connected %}
+        <i data-lucide="settings" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
+        <div>Set up your Plex connection to get started</div>
+        <a href="/settings" style="font-size: 0.85rem; margin-top: 0.5rem; display: inline-block;">Go to Settings</a>
+        {% elif last_run is defined and not last_run %}
+        <i data-lucide="play-circle" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
+        <div>Ready to go! Run your first cache operation.</div>
+        {% else %}
+        <i data-lucide="inbox" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
+        <div>No recent activity</div>
+        {% endif %}
     </td>
 </tr>
 {% endif %}

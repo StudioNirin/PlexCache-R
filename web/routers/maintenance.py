@@ -10,8 +10,9 @@ from web.config import templates, get_time_format
 from web.services.maintenance_service import get_maintenance_service
 from web.services.maintenance_runner import (
     get_maintenance_runner, ASYNC_ACTIONS, ACTION_HISTORY_LABELS,
-    MaintenanceHistoryEntry, get_maintenance_history, _format_duration,
+    MaintenanceHistoryEntry, get_maintenance_history,
 )
+from core.system_utils import format_duration, format_cache_age
 from web.services.operation_runner import get_operation_runner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_MAINTENANCE_AUDIT, CACHE_KEY_MAINTENANCE_HEALTH, CACHE_KEY_DASHBOARD_STATS
 
@@ -33,16 +34,7 @@ def _get_cache_age_display(key: str) -> Optional[str]:
     """Get human-readable cache age for a key"""
     web_cache = get_web_cache_service()
     _, updated_at = web_cache.get_with_age(key)
-    if not updated_at:
-        return None
-
-    age_seconds = (datetime.now() - updated_at).total_seconds()
-    if age_seconds < 60:
-        return "just now"
-    elif age_seconds < 3600:
-        return f"{int(age_seconds / 60)} min ago"
-    else:
-        return f"{int(age_seconds / 3600)} hr ago"
+    return format_cache_age(updated_at)
 
 
 def _invalidate_caches():
@@ -134,11 +126,45 @@ def _get_max_workers() -> int:
 def _start_async_action(action_name: str, service_method, method_args=(), method_kwargs=None, file_count=0, max_workers=1) -> Optional[str]:
     """Start an async maintenance action via the runner.
 
-    Returns HTML response string if started or blocked, None if couldn't start.
+    Returns HTML response string if started, queued, or blocked.
     """
     blocked = _check_blocked(action_name)
     if blocked:
-        return blocked
+        # Try to queue instead of showing a blocked warning
+        runner = get_maintenance_runner()
+        if runner.queue_count >= runner._max_queue_size:
+            return (
+                '<div class="alert alert-warning maintenance-action-blocked" style="margin-bottom: 1rem;">'
+                '<i data-lucide="alert-triangle"></i>'
+                '<span>Queue is full (max 5). Please wait for current actions to complete.</span>'
+                '</div><script>lucide.createIcons();</script>'
+            )
+
+        item_id = runner.enqueue_action(
+            action_name=action_name,
+            service_method=service_method,
+            method_args=method_args,
+            method_kwargs=method_kwargs or {},
+            file_count=file_count,
+            on_complete=_invalidate_caches,
+            max_workers=max_workers,
+        )
+        if item_id:
+            count = runner.queue_count
+            return (
+                '<div class="alert alert-info maintenance-action-queued" style="margin-bottom: 1rem;">'
+                '<i data-lucide="list-plus"></i>'
+                f'<span>Action queued (#{count}). Starts automatically after current action completes.</span>'
+                '</div><script>lucide.createIcons();'
+                'htmx.ajax("GET","/api/operation-banner",{target:"#global-operation-banner",swap:"innerHTML"});'
+                '</script>'
+            )
+        return (
+            '<div class="alert alert-warning maintenance-action-blocked" style="margin-bottom: 1rem;">'
+            '<i data-lucide="alert-triangle"></i>'
+            '<span>Could not queue action.</span>'
+            '</div><script>lucide.createIcons();</script>'
+        )
 
     runner = get_maintenance_runner()
     started = runner.start_action(
@@ -168,7 +194,7 @@ def _start_async_action(action_name: str, service_method, method_args=(), method
 
 
 @router.get("/", response_class=HTMLResponse)
-async def maintenance_page(request: Request):
+def maintenance_page(request: Request):
     """Main maintenance page - loads instantly with skeleton, audit fetched via HTMX"""
     return templates.TemplateResponse(
         "maintenance/index.html",
@@ -185,15 +211,7 @@ def run_audit(request: Request, refresh: bool = Query(default=False, description
     results, updated_at = _get_cached_audit_results(force_refresh=refresh)
 
     # Calculate cache age display
-    cache_age = None
-    if updated_at:
-        age_seconds = (datetime.now() - updated_at).total_seconds()
-        if age_seconds < 60:
-            cache_age = "just now"
-        elif age_seconds < 3600:
-            cache_age = f"{int(age_seconds / 60)} min ago"
-        else:
-            cache_age = f"{int(age_seconds / 3600)} hr ago"
+    cache_age = format_cache_age(updated_at)
 
     response = templates.TemplateResponse(
         "maintenance/partials/audit_results.html",
@@ -226,7 +244,7 @@ def health_summary(request: Request):
 # === Maintenance Runner Control Routes ===
 
 @router.post("/stop-action", response_class=HTMLResponse)
-async def stop_maintenance_action(request: Request):
+def stop_maintenance_action(request: Request):
     """Stop the current maintenance action"""
     from web.services.maintenance_runner import get_maintenance_runner
 
@@ -244,7 +262,7 @@ async def stop_maintenance_action(request: Request):
 
 
 @router.post("/dismiss-action")
-async def dismiss_maintenance_action():
+def dismiss_maintenance_action():
     """Dismiss a completed/failed maintenance action"""
     runner = get_maintenance_runner()
     runner.dismiss()
@@ -274,7 +292,7 @@ def _record_sync_action(
             timestamp=started_at.isoformat(),
             completed_at=completed_at.isoformat(),
             duration_seconds=round(duration, 1),
-            duration_display=_format_duration(duration),
+            duration_display=format_duration(duration),
             file_count=result.affected_count if hasattr(result, "affected_count") else 0,
             affected_count=result.affected_count if hasattr(result, "affected_count") else 0,
             success=result.success if hasattr(result, "success") else True,
@@ -636,6 +654,56 @@ def resolve_duplicate(
             "dry_run": dry_run
         }
     )
+
+
+# === Queue Management Routes ===
+
+@router.get("/check-blocked")
+def check_blocked_status():
+    """Check if actions would be blocked/queued (for modal button state)."""
+    runner = get_maintenance_runner()
+    op_runner = get_operation_runner()
+    is_blocked = runner.is_running or op_runner.is_running
+    return JSONResponse({
+        "blocked": is_blocked,
+        "can_queue": is_blocked and runner.queue_count < runner._max_queue_size,
+        "queue_count": runner.queue_count,
+        "queue_full": runner.queue_count >= runner._max_queue_size,
+    })
+
+
+@router.post("/queue/remove/{item_id}")
+def remove_from_queue(item_id: str):
+    """Remove an item from the maintenance queue."""
+    return JSONResponse({"ok": get_maintenance_runner().remove_from_queue(item_id)})
+
+
+@router.post("/queue/clear")
+def clear_queue():
+    """Clear all queued maintenance actions."""
+    count = get_maintenance_runner().clear_queue()
+    return JSONResponse({"ok": True, "cleared": count})
+
+
+@router.post("/queue/resume")
+def resume_queue():
+    """Resume a paused maintenance queue."""
+    get_maintenance_runner().resume_queue()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/queue/skip")
+def skip_next_queued():
+    """Skip the next queued action during countdown."""
+    get_maintenance_runner().skip_next_queued()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/queue/start-now")
+def start_next_now():
+    """Cancel countdown and immediately start the next queued action."""
+    get_maintenance_runner().start_next_now()
+    return JSONResponse({"ok": True})
 
 
 # === Preview Routes (always dry_run) ===

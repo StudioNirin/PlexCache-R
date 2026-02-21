@@ -496,8 +496,8 @@ th.sortable .sort-icon i {
 </style>
 
 <script>
-// Table sorting state
-const sortState = {
+// Table sorting state (var allows re-declaration on HTMX swaps)
+var sortState = sortState || {
     untracked: { column: 'filename', direction: 'asc' },
     orphaned: { column: 'filename', direction: 'asc' }
 };

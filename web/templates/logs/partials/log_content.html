@@ -1,15 +1,50 @@
-<!-- Log content partial with syntax highlighting -->
-{% if content %}
-<pre class="log-output">{% for line in content.split('\n') %}{% if line.strip() %}{% if 'ERROR' in line %}<span class="log-error">{{ line }}</span>
-{% elif 'WARNING' in line %}<span class="log-warning">{{ line }}</span>
-{% elif 'INFO' in line %}<span class="log-info">{{ line }}</span>
-{% elif 'DEBUG' in line %}<span class="log-debug">{{ line }}</span>
-{% else %}<span class="log-other">{{ line }}</span>
-{% endif %}{% endif %}{% endfor %}</pre>
+<!-- Log content partial with structured data attributes -->
+{% if lines %}
+<pre class="log-output">{% for line in lines %}<span class="log-line log-{{ line.level|lower }}" data-level="{{ line.level }}" data-timestamp="{{ line.timestamp }}" data-phase="{{ line.phase }}">{{ line.raw }}
+</span>{% endfor %}</pre>
+{% if capped %}
+<div class="log-capped-notice">
+    Showing last {{ lines|length }} of total lines.
+    <a href="/logs/download?filename={{ filename }}" class="btn btn-sm btn-secondary" style="margin-left: 0.5rem;">
+        <i data-lucide="download"></i> Download full log
+    </a>
+</div>
+{% endif %}
+<script>
+// Update badge counts from server-parsed data
+(function() {
+    var counts = {{ counts | tojson }};
+    var container = document.getElementById('log-level-badges');
+    if (container && counts) {
+        var html = '';
+        if (counts.ERROR || counts.CRITICAL) {
+            var errCount = (counts.ERROR || 0) + (counts.CRITICAL || 0);
+            html += '<span class="badge badge-error">' + errCount + ' error' + (errCount !== 1 ? 's' : '') + '</span>';
+        }
+        if (counts.WARNING) {
+            html += '<span class="badge badge-warning">' + counts.WARNING + ' warning' + (counts.WARNING !== 1 ? 's' : '') + '</span>';
+        }
+        if (counts.INFO) {
+            html += '<span class="badge badge-info">' + counts.INFO + ' info</span>';
+        }
+        if (counts.DEBUG) {
+            html += '<span class="badge badge-muted">' + counts.DEBUG + ' debug</span>';
+        }
+        if (counts.SUMMARY) {
+            html += '<span class="badge badge-info">' + counts.SUMMARY + ' summary</span>';
+        }
+        container.innerHTML = html;
+    }
+})();
+</script>
 {% else %}
 <div class="text-muted" style="text-align: center; padding: 2rem;">
     <i data-lucide="file-text" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
     No log content available
 </div>
-<script>lucide.createIcons();</script>
+<script>
+lucide.createIcons();
+var bc = document.getElementById('log-level-badges');
+if (bc) bc.innerHTML = '';
+</script>
 {% endif %}

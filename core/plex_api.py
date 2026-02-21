@@ -39,6 +39,7 @@ class OnDeckItem:
     username: str
     episode_info: Optional[Dict[str, any]] = None
     is_current_ondeck: bool = False
+    rating_key: Optional[str] = None
 
 
 # API delay between plex.tv calls (seconds)
@@ -161,7 +162,7 @@ class UserTokenCache:
             return
         try:
             with open(self._cache_file, 'w') as f:
-                json.dump({'tokens': self._memory_cache}, f)
+                json.dump({'tokens': self._memory_cache}, f, indent=2)
         except IOError as e:
             logging.warning(f"[TOKEN CACHE] Could not save cache file: {e}")
 
@@ -179,6 +180,7 @@ class PlexManager:
         self._token_cache = UserTokenCache(cache_file=token_cache_file, cache_expiry_hours=24)
         self._rss_cache_file = rss_cache_file  # Path to RSS cache file
         self._user_tokens: Dict[str, str] = {}  # username -> token (populated at startup)
+        self._token_lock = threading.Lock()  # Protects _user_tokens dict access
         self._user_id_to_name: Dict[str, str] = {}  # user_id (str) -> username (for RSS author lookup)
         self._resolved_uuids: Set[str] = set()  # UUIDs we've tried to resolve (avoid repeated API calls)
         self._newly_discovered_users: List[dict] = []  # Users found on plex.tv but not in settings
@@ -248,7 +250,8 @@ class PlexManager:
                 logging.debug(f"[USER:{username}] Skipping (in skip list)")
                 continue
 
-            self._user_tokens[username] = token
+            with self._token_lock:
+                self._user_tokens[username] = token
             self._token_cache.set_token(username, token, machine_id)
             user_type = "home" if is_local else "remote"
             logging.debug(f"[USER:{username}] Loaded from settings ({user_type})")
@@ -273,9 +276,10 @@ class PlexManager:
 
             # Update main account token with actual username from plex.tv
             if actual_main_username != main_username:
-                if main_username and main_username in self._user_tokens:
-                    del self._user_tokens[main_username]
-                self._user_tokens[actual_main_username] = self.plex_token
+                with self._token_lock:
+                    if main_username and main_username in self._user_tokens:
+                        del self._user_tokens[main_username]
+                    self._user_tokens[actual_main_username] = self.plex_token
                 logging.debug(f"[PLEX API] Main account: {actual_main_username}")
             return account
         except Exception as e:
@@ -350,7 +354,8 @@ class PlexManager:
                     if cached_token in skip_users:
                         logging.debug(f"[USER:{username}] Skipping (token in skip list)")
                         continue
-                    self._user_tokens[username] = cached_token
+                    with self._token_lock:
+                        self._user_tokens[username] = cached_token
                     logging.debug(f"[USER:{username}] Using cached token")
                     self._newly_discovered_users.append(build_user_info(cached_token))
                     continue
@@ -363,7 +368,8 @@ class PlexManager:
                         if token in skip_users:
                             logging.debug(f"[USER:{username}] Skipping (token in skip list)")
                             continue
-                        self._user_tokens[username] = token
+                        with self._token_lock:
+                            self._user_tokens[username] = token
                         self._token_cache.set_token(username, token, machine_id)
                         logging.debug(f"[USER:{username}] Fetched fresh token")
                         self._newly_discovered_users.append(build_user_info(token))
@@ -405,7 +411,8 @@ class PlexManager:
         """
         if self._users_loaded:
             logging.debug("[PLEX API] User tokens already loaded, using cached values")
-            return self._user_tokens
+            with self._token_lock:
+                return dict(self._user_tokens)
 
         skip_users = skip_users or []
         settings_users = settings_users or []
@@ -417,7 +424,8 @@ class PlexManager:
 
         # Add main account token from settings as fallback
         if main_username and main_username not in skip_users:
-            self._user_tokens[main_username] = self.plex_token
+            with self._token_lock:
+                self._user_tokens[main_username] = self.plex_token
             logging.debug(f"[PLEX API] Added main account from settings: {main_username}")
 
         # Step 2: Try to get main account info from plex.tv
@@ -428,21 +436,24 @@ class PlexManager:
             self._discover_new_users(account, settings_usernames, skip_users, machine_id)
 
         self._users_loaded = True
-        total_users = len(self._user_tokens)
-        logging.info(f"Connected to Plex ({total_users} users)")
-        if self._user_tokens:
-            user_names = sorted(self._user_tokens.keys(), key=str.lower)
-            logging.info(f"USERS: {', '.join(user_names)}")
-        return self._user_tokens
+        with self._token_lock:
+            total_users = len(self._user_tokens)
+            logging.info(f"Connected to Plex ({total_users} users)")
+            if self._user_tokens:
+                user_names = sorted(self._user_tokens.keys(), key=str.lower)
+                logging.info(f"USERS: {', '.join(user_names)}")
+            return dict(self._user_tokens)
 
     def get_user_token(self, username: str) -> Optional[str]:
         """Get a cached token for a user (must call load_user_tokens first)."""
-        return self._user_tokens.get(username)
+        with self._token_lock:
+            return self._user_tokens.get(username)
 
     def invalidate_user_token(self, username: str) -> None:
         """Invalidate a user's token (e.g., after auth failure)."""
-        if username in self._user_tokens:
-            del self._user_tokens[username]
+        with self._token_lock:
+            if username in self._user_tokens:
+                del self._user_tokens[username]
         self._token_cache.invalidate(username)
 
     def is_plex_tv_reachable(self) -> bool:
@@ -509,7 +520,8 @@ class PlexManager:
         if user:
             username = user.title
             # Use cached token if available
-            token = self._user_tokens.get(username)
+            with self._token_lock:
+                token = self._user_tokens.get(username)
             if not token:
                 # Fall back to fetching token (shouldn't happen if load_user_tokens was called)
                 logging.warning(f"[PLEX API] No cached token for {username}, fetching fresh...")
@@ -517,7 +529,8 @@ class PlexManager:
                     self._rate_limited_api_call()
                     token = user.get_token(self.plex.machineIdentifier)
                     if token:
-                        self._user_tokens[username] = token
+                        with self._token_lock:
+                            self._user_tokens[username] = token
                         self._token_cache.set_token(username, token, self.plex.machineIdentifier)
                 except Exception as e:
                     _log_api_error(f"get token for {username}", e)
@@ -600,7 +613,9 @@ class PlexManager:
         users_to_fetch = [None]  # Always include main local account
         if users_toggle:
             # Use cached tokens - no API calls to plex.tv here
-            for username, token in self._user_tokens.items():
+            with self._token_lock:
+                token_items = list(self._user_tokens.items())
+            for username, token in token_items:
                 # Skip main account (already added as None)
                 if token == self.plex_token:
                     continue
@@ -711,13 +726,15 @@ class PlexManager:
             }
 
         # Add the current OnDeck episode
+        video_rating_key = str(getattr(video, 'ratingKey', '') or '')
         for media in video.media:
             for part in media.parts:
                 on_deck_files.append(OnDeckItem(
                     file_path=part.file,
                     username=username,
                     episode_info=episode_info,
-                    is_current_ondeck=True  # This is the actual OnDeck episode
+                    is_current_ondeck=True,  # This is the actual OnDeck episode
+                    rating_key=video_rating_key or None
                 ))
 
         # Skip fetching next episodes if current episode has missing index data
@@ -736,13 +753,15 @@ class PlexManager:
                 'season': episode.parentIndex,
                 'episode': episode.index
             }
+            ep_rating_key = str(getattr(episode, 'ratingKey', '') or '')
             for media in episode.media:
                 for part in media.parts:
                     on_deck_files.append(OnDeckItem(
                         file_path=part.file,
                         username=username,
                         episode_info=next_ep_info,
-                        is_current_ondeck=False  # This is a prefetched next episode
+                        is_current_ondeck=False,  # This is a prefetched next episode
+                        rating_key=ep_rating_key or None
                     ))
     
     def _process_movie_ondeck(self, video: Movie, on_deck_files: List[OnDeckItem], username: str = "unknown") -> None:
@@ -753,13 +772,15 @@ class PlexManager:
             on_deck_files: List to append OnDeckItem objects to.
             username: The user who has this OnDeck.
         """
+        movie_rating_key = str(getattr(video, 'ratingKey', '') or '')
         for media in video.media:
             for part in media.parts:
                 on_deck_files.append(OnDeckItem(
                     file_path=part.file,
                     username=username,
                     episode_info=None,  # Movies don't have episode info
-                    is_current_ondeck=True
+                    is_current_ondeck=True,
+                    rating_key=movie_rating_key or None
                 ))
     
     def _get_next_episodes(self, episodes: List[Episode], current_season: int,
@@ -831,7 +852,7 @@ class PlexManager:
                 ]
             }
             with open(self._rss_cache_file, 'w') as f:
-                json.dump(cache_data, f)
+                json.dump(cache_data, f, indent=2)
             logging.debug(f"Saved {len(items)} RSS items to cache")
         except IOError as e:
             logging.debug(f"Failed to save RSS cache: {e}")
@@ -897,7 +918,7 @@ class PlexManager:
         return []
 
     def _process_watchlist_show(self, file, watchlist_episodes: int, username: str,
-                                 watchlisted_at: Optional[datetime]) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+                                 watchlisted_at: Optional[datetime]) -> Generator[Tuple[str, str, Optional[datetime], Optional[Dict]], None, None]:
         """Process a show and yield episode file paths with metadata."""
         episodes = file.episodes()
         episodes_to_process = episodes[:watchlist_episodes]
@@ -912,7 +933,17 @@ class PlexManager:
                 if not episode.isPlayed:
                     file_path = episode.media[0].parts[0].file
                     logging.debug(f"[USER:{username}] Watchlist found: {file_path}")
-                    yield (file_path, username, watchlisted_at)
+                    # Build episode_info from Plex metadata (same format as OnDeck)
+                    episode_info = None
+                    ep_season = getattr(episode, 'parentIndex', None)
+                    ep_index = getattr(episode, 'index', None)
+                    if ep_season is not None and ep_index is not None:
+                        episode_info = {
+                            'show': file.title,
+                            'season': ep_season,
+                            'episode': ep_index
+                        }
+                    yield (file_path, username, watchlisted_at, episode_info)
                     yielded_count += 1
                 else:
                     skipped_watched += 1
@@ -926,16 +957,16 @@ class PlexManager:
             logging.warning(f"  {file.title}: {skipped_no_media} episodes skipped (no media files)")
 
     def _process_watchlist_movie(self, file, username: str,
-                                  watchlisted_at: Optional[datetime]) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+                                  watchlisted_at: Optional[datetime]) -> Generator[Tuple[str, str, Optional[datetime], Optional[Dict]], None, None]:
         """Process a movie and yield file path with metadata."""
         if len(file.media) > 0 and len(file.media[0].parts) > 0:
             file_path = file.media[0].parts[0].file
             logging.debug(f"[USER:{username}] Watchlist found: {file_path}")
-            yield (file_path, username, watchlisted_at)
+            yield (file_path, username, watchlisted_at, None)
 
     def _fetch_user_watchlist(self, user, valid_sections: List[int], watchlist_episodes: int,
                                skip_watchlist: List[str], rss_url: Optional[str],
-                               filtered_sections: List[int]) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+                               filtered_sections: List[int]) -> Generator[Tuple[str, str, Optional[datetime], Optional[Dict]], None, None]:
         """Fetch watchlist media for a user, yielding file paths with metadata.
 
         Uses separate MyPlexAccount instances per user to avoid session state contamination.
@@ -959,7 +990,8 @@ class PlexManager:
 
         # Skip users in the skip list (use cached tokens)
         if user:
-            token = self._user_tokens.get(current_username)
+            with self._token_lock:
+                token = self._user_tokens.get(current_username)
             if not token:
                 logging.warning(f"[USER:{current_username}] No cached token; skipping watchlist")
                 return
@@ -1043,7 +1075,7 @@ class PlexManager:
 
     def _process_rss_watchlist(self, rss_url: str, current_username: str,
                                 filtered_sections: List[int], watchlist_episodes: int,
-                                skip_watchlist: List[str] = None) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+                                skip_watchlist: List[str] = None) -> Generator[Tuple[str, str, Optional[datetime], Optional[Dict]], None, None]:
         """Process RSS feed items and yield matching media files.
 
         Args:
@@ -1113,7 +1145,7 @@ class PlexManager:
 
     def get_watchlist_media(self, valid_sections: List[int], watchlist_episodes: int,
                             users_toggle: bool, skip_watchlist: List[str], rss_url: Optional[str] = None,
-                            home_users: Optional[List[str]] = None) -> Generator[Tuple[str, str, Optional[datetime]], None, None]:
+                            home_users: Optional[List[str]] = None) -> Generator[Tuple[str, str, Optional[datetime], Optional[Dict]], None, None]:
         """Get watchlist media files, optionally via RSS, with proper user filtering.
 
         Args:
@@ -1125,8 +1157,10 @@ class PlexManager:
             home_users: List of usernames that are home/managed users (can access watchlist).
 
         Yields:
-            Tuples of (file_path, username, watchlisted_at) where watchlisted_at is the
-            datetime when the item was added to the user's watchlist (None for RSS items).
+            Tuples of (file_path, username, watchlisted_at, episode_info) where watchlisted_at
+            is the datetime when the item was added to the user's watchlist (None for RSS items),
+            and episode_info is a dict with 'show', 'season', 'episode' keys for TV episodes
+            (None for movies).
         """
         if home_users is None:
             home_users = []
@@ -1139,7 +1173,9 @@ class PlexManager:
         users_to_fetch = [None]  # always include the main local account
 
         if users_toggle:
-            for username, token in self._user_tokens.items():
+            with self._token_lock:
+                token_items = list(self._user_tokens.items())
+            for username, token in token_items:
                 if token == self.plex_token:
                     continue
                 if username in skip_watchlist or token in skip_watchlist:

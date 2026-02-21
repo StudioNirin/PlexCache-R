@@ -171,6 +171,69 @@
 </div>
 {% endif %}
 
+<!-- PlexCache Quota Status -->
+{% if data.storage.plexcache_quota_bytes > 0 %}
+<div class="card mb-2">
+    <div class="card-header">
+        <i data-lucide="package"></i>
+        <h2>PlexCache Quota</h2>
+        <span class="text-muted" style="font-size: 0.8rem; margin-left: auto;">PlexCache-managed files only</span>
+    </div>
+    <div class="card-body">
+        <div class="cache-limit-info">
+            <!-- Stats Grid -->
+            <div class="cache-limit-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                <div class="cache-limit-stat">
+                    <span class="cache-limit-label" title="Total size of all PlexCache-managed files (from the exclude list)">Tracked Size:</span>
+                    <span class="cache-limit-value">{{ data.storage.cached_size_display }}</span>
+                </div>
+                <div class="cache-limit-stat">
+                    <span class="cache-limit-label">Quota:</span>
+                    <span class="cache-limit-value">{{ data.storage.plexcache_quota_display }}</span>
+                </div>
+                <div class="cache-limit-stat">
+                    <span class="cache-limit-label" title="Remaining space before the quota is reached">Available:</span>
+                    <span class="cache-limit-value {% if data.storage.plexcache_quota_available <= 0 %}text-error{% elif data.storage.plexcache_quota_used_percent >= 90 %}text-warning{% else %}text-success{% endif %}">
+                        {{ data.storage.plexcache_quota_available_display }}
+                    </span>
+                </div>
+            </div>
+
+            <div style="font-size: 0.8rem; color: var(--plex-text-muted); margin-bottom: 0.75rem;">
+                <i data-lucide="info" style="width: 13px; height: 13px; vertical-align: middle;"></i>
+                Unlike Cache Limit, this only counts <strong>PlexCache-managed files</strong> — other apps on the drive don't count toward this quota.
+            </div>
+
+            <!-- Simple progress bar: tracked_size / quota -->
+            <div style="position: relative; margin-bottom: 0.5rem;">
+                <div style="height: 24px; background: var(--plex-card-bg); border-radius: 4px; overflow: hidden; border: 1px solid var(--plex-border);">
+                    <div style="width: {{ [data.storage.plexcache_quota_used_percent, 100] | min }}%; height: 100%; transition: width 0.3s ease;
+                        {% if data.storage.plexcache_quota_used_percent >= 100 %}
+                        background: #e74c3c;
+                        {% elif data.storage.plexcache_quota_used_percent >= 80 %}
+                        background: #e67e22;
+                        {% else %}
+                        background: #27ae60;
+                        {% endif %}
+                    " title="PlexCache: {{ data.storage.cached_size_display }}"></div>
+                </div>
+            </div>
+
+            <!-- Status Label -->
+            <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; font-size: 0.85rem;">
+                <span>{{ data.storage.plexcache_quota_used_percent }}% of quota used ({{ data.storage.cached_size_display }} / {{ data.storage.plexcache_quota_display }})</span>
+                {% if data.storage.plexcache_quota_warning %}
+                <span class="text-error" style="font-weight: 500;">
+                    <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                    Over quota!
+                </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Breakdown by Source -->
 <div class="card mb-2">
     <div class="card-header">

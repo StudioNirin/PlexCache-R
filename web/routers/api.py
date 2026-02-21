@@ -7,8 +7,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from typing import List
 from urllib.parse import unquote
 
-from web.config import templates
+from web.config import templates, PLEXCACHE_PRODUCT_VERSION
+from core.system_utils import format_bytes, format_duration, format_cache_age
 from web.services import get_cache_service, get_settings_service, get_operation_runner, get_scheduler_service, ScheduleConfig, get_maintenance_service
+from web.services.operation_runner import load_last_run_summary, OperationRunner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 router = APIRouter()
@@ -29,15 +31,7 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         if cached_stats:
             # Calculate cache age
             _, updated_at = web_cache.get_with_age(CACHE_KEY_DASHBOARD_STATS)
-            cache_age = None
-            if updated_at:
-                age_seconds = (datetime.now() - updated_at).total_seconds()
-                if age_seconds < 60:
-                    cache_age = "just now"
-                elif age_seconds < 3600:
-                    cache_age = f"{int(age_seconds / 60)} min ago"
-                else:
-                    cache_age = f"{int(age_seconds / 3600)} hr ago"
+            cache_age = format_cache_age(updated_at)
 
             # Update dynamic fields that shouldn't be cached
             cached_stats["is_running"] = operation_runner.is_running
@@ -70,8 +64,24 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         "next_run_relative": schedule_status.get("next_run_relative"),
         "health_status": health["status"],
         "health_issues": health["orphaned_count"],
-        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"]
+        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"],
+        "health_orphaned_count": health["orphaned_count"],
+        "health_stale_exclude_count": health["stale_exclude_count"],
+        "health_stale_timestamp_count": health["stale_timestamp_count"],
+        "last_run_summary": None,
     }
+
+    # Load last run summary
+    summary = load_last_run_summary()
+    if summary:
+        stats["last_run_summary"] = {
+            "status": summary.get("status", "unknown"),
+            "bytes_cached_display": format_bytes(summary["bytes_cached"]) if summary.get("bytes_cached") else "",
+            "bytes_restored_display": format_bytes(summary["bytes_restored"]) if summary.get("bytes_restored") else "",
+            "duration_display": format_duration(summary.get("duration_seconds", 0)),
+            "error_count": summary.get("error_count", 0),
+            "dry_run": summary.get("dry_run", False),
+        }
 
     # Cache the results
     web_cache.set(CACHE_KEY_DASHBOARD_STATS, stats)
@@ -152,9 +162,9 @@ def cache_files_table(
     if totals["total_size"] >= 1024 ** 3:
         totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 3):.2f} GB"
     elif totals["total_size"] >= 1024 ** 2:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.1f} MB"
+        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.2f} MB"
     else:
-        totals["total_size_display"] = f"{totals['total_size'] / 1024:.0f} KB"
+        totals["total_size_display"] = f"{totals['total_size'] / 1024:.2f} KB"
 
     # Get eviction mode setting
     settings_service = get_settings_service()
@@ -312,7 +322,7 @@ async def save_schedule_settings(request: Request):
 
 
 @router.get("/settings/schedule/status")
-async def get_schedule_status():
+def get_schedule_status():
     """Get current scheduler status (JSON for polling)"""
     scheduler_service = get_scheduler_service()
     return scheduler_service.get_status()
@@ -403,7 +413,7 @@ def simulate_eviction(request: Request, threshold: int = 95):
 
 
 @router.get("/settings/schedule/validate-cron")
-async def validate_cron_expression(expression: str):
+def validate_cron_expression(expression: str):
     """Validate a cron expression (JSON)"""
     scheduler_service = get_scheduler_service()
     return scheduler_service.validate_cron(expression)
@@ -414,7 +424,7 @@ async def validate_cron_expression(expression: str):
 # =============================================================================
 
 @router.get("/health")
-async def health_check():
+def health_check():
     """
     Health check endpoint for Docker container monitoring.
 
@@ -433,7 +443,7 @@ async def health_check():
 
     return {
         "status": "healthy",
-        "version": "3.0.0",
+        "version": PLEXCACHE_PRODUCT_VERSION,
         "plex_connected": plex_connected,
         "scheduler_running": schedule_status.get("running", False),
         "operation_running": operation_runner.is_running,
@@ -487,7 +497,7 @@ def detailed_status():
 
 
 @router.post("/run")
-async def trigger_run(dry_run: bool = False, verbose: bool = False):
+def trigger_run(dry_run: bool = False, verbose: bool = False):
     """
     Trigger an immediate PlexCache operation.
 
@@ -535,7 +545,7 @@ async def trigger_run(dry_run: bool = False, verbose: bool = False):
 
 
 @router.get("/operation-indicator", response_class=HTMLResponse)
-async def get_operation_indicator(request: Request):
+def get_operation_indicator(request: Request):
     """Return global operation indicator HTML - used for header status across all pages"""
     operation_runner = get_operation_runner()
     is_running = operation_runner.is_running
@@ -585,3 +595,25 @@ def dismiss_operation():
     """Dismiss a completed/failed operation banner, resetting state to idle."""
     get_operation_runner().dismiss()
     return JSONResponse({"ok": True})
+
+
+@router.post("/check-upgrades")
+def check_upgrades():
+    """Check for and resolve media file upgrades (Sonarr/Radarr swaps).
+
+    Examines stale exclude entries to see if they represent upgraded files.
+    For each stale entry with a rating_key in the OnDeck tracker, queries Plex
+    to detect file path changes and transfers tracking data accordingly.
+    """
+    cache_service = get_cache_service()
+    maintenance_service = get_maintenance_service()
+
+    # Get current stale entries to scope the check
+    exclude_files = maintenance_service.get_exclude_files()
+    cache_files = maintenance_service.get_cache_files()
+    stale = sorted(list(exclude_files - cache_files))
+
+    if not stale:
+        return {"upgrades_found": 0, "upgrades_resolved": 0, "details": []}
+
+    return cache_service.check_for_upgrades(stale)

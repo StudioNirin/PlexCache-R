@@ -585,32 +585,32 @@ class TestPathTranslation:
 
 
 # ============================================================================
-# _format_size() tests
+# format_bytes() tests (was _format_size, now consolidated in system_utils)
 # ============================================================================
 
 class TestFormatSize:
 
-    def test_zero_bytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        assert svc._format_size(0) == "0 B"
+    def test_zero_bytes(self):
+        from core.system_utils import format_bytes
+        assert format_bytes(0) == "0 B"
 
-    def test_bytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        assert svc._format_size(512) == "512 B"
+    def test_bytes(self):
+        from core.system_utils import format_bytes
+        assert format_bytes(512) == "512 B"
 
-    def test_kilobytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        result = svc._format_size(2048)
+    def test_kilobytes(self):
+        from core.system_utils import format_bytes
+        result = format_bytes(2048)
         assert "KB" in result
 
-    def test_gigabytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        result = svc._format_size(5 * 1024 ** 3)
+    def test_gigabytes(self):
+        from core.system_utils import format_bytes
+        result = format_bytes(5 * 1024 ** 3)
         assert "GB" in result
 
-    def test_terabytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        result = svc._format_size(2 * 1024 ** 4)
+    def test_terabytes(self):
+        from core.system_utils import format_bytes
+        result = format_bytes(2 * 1024 ** 4)
         assert "TB" in result
 
 
