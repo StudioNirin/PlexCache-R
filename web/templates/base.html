@@ -147,9 +147,13 @@
         // Initialize Lucide icons
         lucide.createIcons();
 
-        // Re-initialize icons after HTMX swaps
-        document.addEventListener('htmx:afterSwap', function() {
+        // Re-initialize icons after HTMX swaps + scroll to alert if populated
+        document.addEventListener('htmx:afterSwap', function(e) {
             lucide.createIcons();
+            var id = e.detail.target.id;
+            if ((id === 'settings-alert-container' || id === 'alert-container') && e.detail.target.innerHTML.trim()) {
+                e.detail.target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         });
 
         // Theme toggle
