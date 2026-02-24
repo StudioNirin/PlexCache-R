@@ -14,6 +14,31 @@ from typing import Callable, Dict, List, Optional, Set, Any, Tuple
 
 from web.config import PROJECT_ROOT, DATA_DIR, CONFIG_DIR, SETTINGS_FILE
 from core.system_utils import get_array_direct_path, format_bytes, translate_container_to_host_path, translate_host_to_container_path, remove_from_exclude_file, remove_from_timestamps_file
+from core.file_operations import PLEXCACHED_EXTENSION
+
+# Common media extensions for validation
+_MEDIA_EXTENSIONS = {
+    '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.ts',
+    '.mpg', '.mpeg', '.webm', '.ogv', '.3gp', '.divx', '.vob',
+}
+
+
+def _strip_plexcached(path: str) -> str:
+    """Safely strip .plexcached suffix from a path.
+
+    Returns the original path (with media extension intact).
+    Raises ValueError if the result would lack a media extension,
+    which indicates a malformed .plexcached file.
+    """
+    if not path.endswith(PLEXCACHED_EXTENSION):
+        raise ValueError(f"Not a .plexcached file: {path}")
+    original = path[:-len(PLEXCACHED_EXTENSION)]
+    _, ext = os.path.splitext(original)
+    if ext.lower() not in _MEDIA_EXTENSIONS:
+        raise ValueError(
+            f"Malformed .plexcached file (no media extension): {os.path.basename(path)}"
+        )
+    return original
 
 
 @dataclass
@@ -590,7 +615,11 @@ class MaintenanceService:
                 for f in files:
                     if f.endswith('.plexcached'):
                         plexcached_path = os.path.join(root, f)
-                        original_name = f[:-11]  # Remove .plexcached suffix
+                        try:
+                            original_name = _strip_plexcached(f)
+                        except ValueError:
+                            logging.warning(f"Skipping malformed .plexcached file: {f}")
+                            continue
                         original_array_path = os.path.join(root, original_name)
 
                         # Find corresponding cache path
@@ -743,7 +772,10 @@ class MaintenanceService:
                 if not plexcached_path.endswith('.plexcached'):
                     return (plexcached_path, False, f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
                 try:
-                    original_path = plexcached_path[:-11]
+                    original_path = _strip_plexcached(plexcached_path)
+                except ValueError as e:
+                    return (plexcached_path, False, str(e))
+                try:
                     if os.path.islink(original_path):
                         # Symlink at original location (from use_symlinks mode) - remove it, then restore
                         os.remove(original_path)
@@ -783,7 +815,11 @@ class MaintenanceService:
                 errors.append(f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
                 continue
 
-            original_path = plexcached_path[:-11]  # Remove .plexcached suffix
+            try:
+                original_path = _strip_plexcached(plexcached_path)
+            except ValueError as e:
+                errors.append(str(e))
+                continue
 
             if dry_run:
                 affected += 1
@@ -930,7 +966,10 @@ class MaintenanceService:
                         return (cache_path, False, f"{os.path.basename(cache_path)}: No backup or array copy found")
 
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            return (cache_path, False, str(e))
                         os.rename(backup_path, original_array_path)
 
                     if os.path.exists(cache_path):
@@ -978,7 +1017,11 @@ class MaintenanceService:
                 try:
                     # If it's a .plexcached backup, rename it back FIRST (safer order)
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            errors.append(str(e))
+                            continue
                         os.rename(backup_path, original_array_path)
 
                     # Delete cache copy
@@ -1048,7 +1091,10 @@ class MaintenanceService:
                     has_dup, _ = self._check_array_duplicate(cache_path)
 
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            return (cache_path, False, str(e))
                         if os.path.exists(original_array_path):
                             os.remove(backup_path)
                         else:
@@ -1122,7 +1168,11 @@ class MaintenanceService:
             else:
                 try:
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]  # Remove .plexcached suffix
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            errors.append(str(e))
+                            continue
 
                         # Check if original already exists (redundant backup scenario)
                         if os.path.exists(original_array_path):
