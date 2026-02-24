@@ -66,10 +66,11 @@ class OrphanedBackup:
     size: int
     size_display: str
     restore_path: str
-    backup_type: str = "orphaned"  # "orphaned", "redundant", or "superseded"
+    backup_type: str = "orphaned"  # "orphaned", "redundant", "superseded", or "malformed"
     # "orphaned" = no cache file AND no original on array (needs restore or delete)
     # "redundant" = no cache file BUT original exists on array (safe to delete)
     # "superseded" = old backup replaced by upgraded version on cache (safe to delete after review)
+    # "malformed" = .plexcached without valid media extension (delete only — cannot restore)
     replacement_file: Optional[str] = None  # Path to the replacement file (for superseded backups)
 
 
@@ -618,7 +619,20 @@ class MaintenanceService:
                         try:
                             original_name = _strip_plexcached(f)
                         except ValueError:
-                            logging.warning(f"Skipping malformed .plexcached file: {f}")
+                            # Malformed .plexcached (no media extension) — show in UI for deletion
+                            logging.warning(f"Malformed .plexcached file (no media extension): {f}")
+                            try:
+                                size = os.path.getsize(plexcached_path)
+                            except OSError:
+                                size = 0
+                            backups_to_cleanup.append(OrphanedBackup(
+                                plexcached_path=plexcached_path,
+                                original_filename=f,
+                                size=size,
+                                size_display=format_bytes(size),
+                                restore_path="",
+                                backup_type="malformed"
+                            ))
                             continue
                         original_array_path = os.path.join(root, original_name)
 
