@@ -807,7 +807,7 @@ class MaintenanceService:
 
         action = "Would restore" if dry_run else "Restored"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} backup file(s)",
             affected_count=affected,
             errors=errors,
@@ -896,7 +896,7 @@ class MaintenanceService:
 
         action = "Would delete" if dry_run else "Deleted"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} backup file(s)",
             affected_count=affected,
             errors=errors,
@@ -995,7 +995,7 @@ class MaintenanceService:
 
         action = "Would fix" if dry_run else "Fixed"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} file(s) with backup",
             affected_count=affected,
             errors=errors,
@@ -1176,7 +1176,7 @@ class MaintenanceService:
 
         action = "Would move" if dry_run else "Moved"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} file(s) to array",
             affected_count=affected,
             errors=errors,
@@ -1296,7 +1296,7 @@ class MaintenanceService:
             if errors:
                 logging.warning(f"protect_with_backup errors: {errors}")
             return ActionResult(
-                success=affected > 0,
+                success=len(errors) == 0,
                 message=f"Protected {affected} file(s) with array backup",
                 affected_count=affected,
                 errors=errors,
@@ -1379,7 +1379,7 @@ class MaintenanceService:
         if errors:
             logging.warning(f"protect_with_backup errors: {errors}")
         return ActionResult(
-            success=affected > 0 or (dry_run and not errors),
+            success=len(errors) == 0,
             message=f"{action} {affected} file(s) with array backup",
             affected_count=affected,
             errors=errors,
@@ -1538,7 +1538,7 @@ class MaintenanceService:
 
         action = "Would fix" if dry_run else "Fixed"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} timestamps on {affected} file(s)",
             affected_count=affected,
             errors=errors
