@@ -330,15 +330,15 @@ class SchedulerService:
         total_minutes = total_seconds // 60
 
         if total_minutes < 1:
-            return "in <1m"
+            return "<1m"
         elif total_minutes < 60:
-            return f"in {total_minutes}m"
+            return f"{total_minutes}m"
         else:
             hours = total_minutes // 60
             minutes = total_minutes % 60
             if minutes == 0:
-                return f"in {hours}h"
-            return f"in {hours}h {minutes}m"
+                return f"{hours}h"
+            return f"{hours}h {minutes}m"
 
     def get_status(self) -> Dict[str, Any]:
         """Get scheduler status"""

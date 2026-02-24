@@ -429,6 +429,49 @@ def delete_plexcached(
     return HTMLResponse(response)
 
 
+@router.post("/delete-extensionless", response_class=HTMLResponse)
+def delete_extensionless(
+    request: Request,
+    paths: List[str] = Form(default=[]),
+    delete_all: bool = Form(default=False),
+    dry_run: bool = Form(default=True)
+):
+    """Delete extensionless duplicate files (from malformed .plexcached restores)"""
+    service = get_maintenance_service()
+
+    if dry_run:
+        if delete_all:
+            result = service.delete_all_extensionless(dry_run=True)
+        else:
+            result = service.delete_extensionless_files(paths, dry_run=True)
+
+        audit_results = service.run_full_audit()
+        return templates.TemplateResponse(
+            "maintenance/partials/action_result.html",
+            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+        )
+
+    # Async path
+    max_workers = _get_max_workers()
+    if delete_all:
+        response = _start_async_action(
+            "delete-extensionless",
+            service.delete_all_extensionless,
+            method_kwargs={"dry_run": False},
+            max_workers=max_workers,
+        )
+    else:
+        response = _start_async_action(
+            "delete-extensionless",
+            service.delete_extensionless_files,
+            method_args=(paths,),
+            method_kwargs={"dry_run": False},
+            file_count=len(paths),
+            max_workers=max_workers,
+        )
+    return HTMLResponse(response)
+
+
 @router.post("/fix-with-backup", response_class=HTMLResponse)
 def fix_with_backup(
     request: Request,

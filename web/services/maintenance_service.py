@@ -75,6 +75,19 @@ class OrphanedBackup:
 
 
 @dataclass
+class ExtensionlessFile:
+    """File without media extension found alongside its media counterpart.
+    Likely created by a malformed .plexcached restore that stripped the extension."""
+    file_path: str
+    filename: str
+    size: int
+    size_display: str
+    matching_media_file: str
+    matching_media_path: str
+    size_match: bool  # True if sizes match (strong indicator of exact duplicate)
+
+
+@dataclass
 class DuplicateFile:
     """File existing on both cache AND array"""
     cache_path: str
@@ -94,6 +107,7 @@ class AuditResults:
     # Issues
     unprotected_files: List[UnprotectedFile] = field(default_factory=list)
     orphaned_plexcached: List[OrphanedBackup] = field(default_factory=list)
+    extensionless_files: List[ExtensionlessFile] = field(default_factory=list)
     stale_exclude_entries: List[str] = field(default_factory=list)
     stale_timestamp_entries: List[str] = field(default_factory=list)
     duplicates: List[DuplicateFile] = field(default_factory=list)
@@ -113,7 +127,7 @@ class AuditResults:
         if truly_orphaned:
             self.health_status = "critical"
         # Warnings: stale entries need cleanup, superseded/redundant backups can be cleaned
-        elif self.stale_exclude_entries or self.stale_timestamp_entries or self.orphaned_plexcached:
+        elif self.stale_exclude_entries or self.stale_timestamp_entries or self.orphaned_plexcached or self.extensionless_files:
             self.health_status = "warnings"
         else:
             self.health_status = "healthy"
@@ -122,6 +136,7 @@ class AuditResults:
     def total_issues(self) -> int:
         """Count of issues needing attention (excludes untracked files which are informational)"""
         return (len(self.orphaned_plexcached) +
+                len(self.extensionless_files) +
                 len(self.stale_exclude_entries) +
                 len(self.stale_timestamp_entries))
 
@@ -544,8 +559,8 @@ class MaintenanceService:
         # Sort unprotected files by filename (default)
         results.unprotected_files.sort(key=lambda f: f.filename.lower())
 
-        # Find orphaned .plexcached files
-        results.orphaned_plexcached = self._get_orphaned_plexcached()
+        # Find orphaned .plexcached files and extensionless duplicates
+        results.orphaned_plexcached, results.extensionless_files = self._get_orphaned_plexcached()
 
         # Find stale exclude entries (in exclude but not on cache)
         results.stale_exclude_entries = sorted(list(exclude_files - cache_files))
@@ -592,17 +607,17 @@ class MaintenanceService:
 
         return results
 
-    def _get_orphaned_plexcached(self) -> List[OrphanedBackup]:
-        """Find .plexcached files on array that need cleanup.
+    def _get_orphaned_plexcached(self) -> Tuple[List[OrphanedBackup], List[ExtensionlessFile]]:
+        """Find .plexcached files on array that need cleanup, plus extensionless duplicates.
 
-        Returns three types of backups:
-        - "orphaned": No cache file AND no original on array (needs restore or delete)
-        - "redundant": No cache file BUT original exists on array (safe to delete)
-        - "superseded": Old backup replaced by an upgraded version on cache (safe to delete after review)
+        Returns a tuple of:
+        1. Backup list with types: "orphaned", "redundant", "superseded", "malformed"
+        2. Extensionless files (from malformed .plexcached restores) with matching media siblings
         """
         cache_dirs, array_dirs = self._get_paths()
         cache_files = self.get_cache_files()
         backups_to_cleanup = []
+        extensionless_files = []
 
         for i, array_dir in enumerate(array_dirs):
             if not os.path.exists(array_dir):
@@ -613,6 +628,7 @@ class MaintenanceService:
             for root, dirs, files in os.walk(array_dir):
                 # Prune excluded directories
                 dirs[:] = [d for d in dirs if not self._should_skip_directory(d)]
+                file_set = set(files)  # O(1) sibling lookups
                 for f in files:
                     if f.endswith('.plexcached'):
                         plexcached_path = os.path.join(root, f)
@@ -699,9 +715,38 @@ class MaintenanceService:
                                     restore_path=original_array_path,
                                     backup_type="orphaned"
                                 ))
+                    else:
+                        # Check for extensionless files with matching media siblings
+                        # (created by malformed .plexcached restores that stripped the extension)
+                        _, ext = os.path.splitext(f)
+                        if ext.lower() not in _MEDIA_EXTENSIONS:
+                            for media_ext in _MEDIA_EXTENSIONS:
+                                sibling_name = f + media_ext
+                                if sibling_name in file_set:
+                                    file_path = os.path.join(root, f)
+                                    sibling_path = os.path.join(root, sibling_name)
+                                    try:
+                                        size = os.path.getsize(file_path)
+                                        sibling_size = os.path.getsize(sibling_path)
+                                    except OSError:
+                                        size = 0
+                                        sibling_size = 0
+                                    # Only flag files >= 1MB to avoid noise from small metadata files
+                                    if size >= 1_000_000:
+                                        extensionless_files.append(ExtensionlessFile(
+                                            file_path=file_path,
+                                            filename=f,
+                                            size=size,
+                                            size_display=format_bytes(size),
+                                            matching_media_file=sibling_name,
+                                            matching_media_path=sibling_path,
+                                            size_match=size == sibling_size and size > 0,
+                                        ))
+                                    break
 
         backups_to_cleanup.sort(key=lambda f: f.size, reverse=True)
-        return backups_to_cleanup
+        extensionless_files.sort(key=lambda f: f.size, reverse=True)
+        return backups_to_cleanup, extensionless_files
 
     def _find_replacement_file(self, original_name: str, cache_directory: str,
                                cache_files: Set[str]) -> Optional[str]:
@@ -871,7 +916,7 @@ class MaintenanceService:
             dry_run: If True, only simulate the restore
             orphaned_only: If True, only restore truly orphaned backups (not redundant ones)
         """
-        backups = self._get_orphaned_plexcached()
+        backups, _ = self._get_orphaned_plexcached()
 
         if orphaned_only:
             # Filter to only include truly orphaned backups (not redundant)
@@ -955,9 +1000,80 @@ class MaintenanceService:
 
     def delete_all_plexcached(self, dry_run: bool = True, **kwargs) -> ActionResult:
         """Delete all orphaned .plexcached files"""
-        orphaned = self._get_orphaned_plexcached()
+        orphaned, _ = self._get_orphaned_plexcached()
         paths = [o.plexcached_path for o in orphaned]
         return self.delete_plexcached(paths, dry_run, **kwargs)
+
+    def delete_extensionless_files(self, paths: List[str], dry_run: bool = True,
+                                   stop_check: Optional[Callable[[], bool]] = None,
+                                   progress_callback: Optional[Callable] = None,
+                                   bytes_progress_callback: Optional[Callable] = None,
+                                   max_workers: int = 1,
+                                   active_callback: Optional[Callable] = None) -> ActionResult:
+        """Delete extensionless duplicate files (from malformed .plexcached restores).
+
+        Safety: Only deletes files that have no media extension AND have a matching
+        media file sibling in the same directory.
+        """
+        if not paths:
+            return ActionResult(success=False, message="No paths provided")
+
+        affected = 0
+        errors = []
+        affected_paths = []
+
+        for i, file_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(file_path))
+
+            filename = os.path.basename(file_path)
+            _, ext = os.path.splitext(filename)
+
+            # Safety check 1: Must not have a media extension
+            if ext.lower() in _MEDIA_EXTENSIONS:
+                errors.append(f"{filename}: Has media extension, refusing to delete")
+                continue
+
+            # Safety check 2: Must have a matching media sibling
+            has_sibling = False
+            for media_ext in _MEDIA_EXTENSIONS:
+                if os.path.exists(file_path + media_ext):
+                    has_sibling = True
+                    break
+
+            if not has_sibling:
+                errors.append(f"{filename}: No matching media file found, refusing to delete")
+                continue
+
+            if dry_run:
+                affected += 1
+            else:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        affected += 1
+                        affected_paths.append(file_path)
+                    else:
+                        errors.append(f"{filename}: File not found")
+                except OSError as e:
+                    errors.append(f"{filename}: {str(e)}")
+
+        action = "Would delete" if dry_run else "Deleted"
+        return ActionResult(
+            success=len(errors) == 0,
+            message=f"{action} {affected} extensionless file(s)",
+            affected_count=affected,
+            errors=errors,
+            affected_paths=affected_paths
+        )
+
+    def delete_all_extensionless(self, dry_run: bool = True, **kwargs) -> ActionResult:
+        """Delete all extensionless duplicate files found on array"""
+        _, extensionless = self._get_orphaned_plexcached()
+        paths = [f.file_path for f in extensionless]
+        return self.delete_extensionless_files(paths, dry_run, **kwargs)
 
     def fix_with_backup(self, paths: List[str], dry_run: bool = True,
                         stop_check: Optional[Callable[[], bool]] = None,

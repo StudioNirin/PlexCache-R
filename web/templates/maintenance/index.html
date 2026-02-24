@@ -195,7 +195,7 @@ function showConfirmModal(title, message, action, formData, isDryRun = false) {
     } else if (action === 'restore-plexcached') {
         btnClass = 'btn btn-primary';
         btnText = 'Restore';
-    } else if (action === 'delete-plexcached' || action === 'delete-duplicates') {
+    } else if (action === 'delete-plexcached' || action === 'delete-duplicates' || action === 'delete-extensionless') {
         btnClass = 'btn btn-danger';
         btnText = 'Delete';
     } else if (action === 'scan-duplicates') {
@@ -434,6 +434,20 @@ function deleteAllOrphaned(isDryRun = false) {
     `;
 
     showConfirmModal(`${action} All Backups`, message, 'delete-plexcached', formData, isDryRun);
+}
+
+function deleteAllExtensionless(isDryRun = false) {
+    const formData = new FormData();
+    formData.append('delete_all', 'true');
+
+    const action = isDryRun ? 'Preview' : 'Delete';
+    const message = `
+        <p>You are about to <strong style="color: var(--danger);">permanently delete ALL</strong> extensionless duplicate files.</p>
+        <p>These files have no media extension and exist alongside their <code>.mkv</code> counterpart on the array.</p>
+        <p class="text-muted" style="margin-top: 0.5rem;"><em>The media files with proper extensions are not affected.</em></p>
+    `;
+
+    showConfirmModal(`${action} Extensionless Files`, message, 'delete-extensionless', formData, isDryRun);
 }
 
 function cleanExclude(isDryRun = false) {
