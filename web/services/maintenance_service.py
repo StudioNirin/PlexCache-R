@@ -1494,6 +1494,44 @@ class MaintenanceService:
             affected_paths=affected_paths
         )
 
+    def evict_files(self, cache_paths: List[str], dry_run: bool = False,
+                    stop_check: Optional[Callable[[], bool]] = None,
+                    progress_callback: Optional[Callable] = None,
+                    bytes_progress_callback: Optional[Callable] = None,
+                    max_workers: int = 1,
+                    active_callback: Optional[Callable] = None) -> 'ActionResult':
+        """Evict files from cache via the background runner.
+
+        Delegates to CacheService.evict_file() per file, reporting progress.
+        """
+        from web.services import get_cache_service
+        cache_service = get_cache_service()
+
+        affected = 0
+        errors = []
+        affected_paths = []
+
+        for i, cache_path in enumerate(cache_paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(cache_paths), os.path.basename(cache_path))
+
+            result = cache_service.evict_file(cache_path)
+            if result.get("success"):
+                affected += 1
+                affected_paths.append(cache_path)
+            else:
+                errors.append(f"{os.path.basename(cache_path)}: {result.get('message', 'Unknown error')}")
+
+        return ActionResult(
+            success=affected > 0,
+            message=f"Evicted {affected} of {len(cache_paths)} file(s) from cache",
+            affected_count=affected,
+            errors=errors,
+            affected_paths=affected_paths,
+        )
+
     def add_to_exclude(self, paths: List[str], dry_run: bool = True) -> ActionResult:
         """Add unprotected cache files to exclude list (no backup created)"""
         if not paths:

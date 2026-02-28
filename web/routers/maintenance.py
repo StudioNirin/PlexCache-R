@@ -573,6 +573,31 @@ def sync_to_array(
     return HTMLResponse(response)
 
 
+@router.post("/evict-files", response_class=HTMLResponse)
+async def evict_files(request: Request):
+    """Evict file(s) from cache — runs in background via maintenance runner."""
+    form = await request.form()
+    paths = form.getlist("paths")
+
+    if not paths:
+        return HTMLResponse(
+            '<div class="alert alert-warning"><i data-lucide="alert-triangle"></i>'
+            '<span>No files selected</span></div><script>lucide.createIcons();</script>'
+        )
+
+    service = get_maintenance_service()
+    max_workers = _get_max_workers()
+    response = _start_async_action(
+        "evict-files",
+        service.evict_files,
+        method_args=(paths,),
+        method_kwargs={"dry_run": False},
+        file_count=len(paths),
+        max_workers=max_workers,
+    )
+    return HTMLResponse(response)
+
+
 @router.post("/protect-with-backup", response_class=HTMLResponse)
 def protect_with_backup(
     request: Request,

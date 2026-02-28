@@ -33,6 +33,7 @@ ASYNC_ACTIONS = {
     "scan-duplicates",
     "delete-duplicates",
     "delete-extensionless",
+    "evict-files",
 }
 
 # Human-readable display names for actions (progress messages)
@@ -46,6 +47,7 @@ ACTION_DISPLAY = {
     "scan-duplicates": "Scanning Plex libraries...",
     "delete-duplicates": "Deleting {count} duplicate(s)...",
     "delete-extensionless": "Deleting {count} extensionless file(s)...",
+    "evict-files": "Evicting {count} file(s) from cache...",
 }
 
 # Outcome-oriented labels for history entries
@@ -64,6 +66,7 @@ ACTION_HISTORY_LABELS = {
     "scan-duplicates": "Duplicate Scan",
     "delete-duplicates": "Delete Duplicates",
     "delete-extensionless": "Delete Extensionless",
+    "evict-files": "Evict from Cache",
 }
 
 

@@ -196,36 +196,24 @@ def evict_file(request: Request, file_path: str):
     # URL decode the path and validate
     decoded_path = unquote(file_path)
     if not decoded_path or not decoded_path.startswith("/"):
-        return '''<div class="alert alert-error" id="evict-alert">
-            <i data-lucide="alert-circle"></i>
-            <span>Invalid file path</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
-        </script>'''
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "error", "message": "Invalid file path"
+        }).body.decode()
 
     result = cache_service.evict_file(decoded_path)
 
-    # Return an alert message
     if result.get("success"):
-        message = html.escape(result.get("message", "File evicted"))
-        return f'''<div class="alert alert-success" id="evict-alert">
-            <i data-lucide="check-circle"></i>
-            <span>{message}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 3000);
-            htmx.trigger('#cache-table-body', 'refresh');
-        </script>'''
+        message = result.get("message", "File evicted")
+        resp = templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "success", "message": message
+        }).body.decode()
+        resp += "<script>htmx.trigger('#cache-table-body', 'refresh');</script>"
+        return resp
     else:
-        message = html.escape(result.get("message", "Eviction failed"))
-        return f'''<div class="alert alert-error" id="evict-alert">
-            <i data-lucide="alert-circle"></i>
-            <span>{message}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
-        </script>'''
+        message = result.get("message", "Eviction failed")
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "error", "message": message
+        }).body.decode()
 
 
 @router.post("/cache/evict-bulk", response_class=HTMLResponse)
@@ -238,13 +226,9 @@ async def evict_bulk(request: Request):
     paths = form.getlist("paths")
 
     if not paths:
-        return '''<div class="alert alert-warning" id="evict-alert">
-            <i data-lucide="alert-triangle"></i>
-            <span>No files selected</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 3000);
-        </script>'''
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "warning", "message": "No files selected"
+        }).body.decode()
 
     # URL decode paths
     decoded_paths = [unquote(p) for p in paths]
@@ -252,30 +236,26 @@ async def evict_bulk(request: Request):
     result = cache_service.evict_files(decoded_paths)
 
     if result["success"]:
-        msg = html.escape(f"Evicted {result['evicted_count']} of {result['total_count']} files")
+        msg = f"Evicted {result['evicted_count']} of {result['total_count']} files"
         if result["errors"]:
-            msg += html.escape(f" ({len(result['errors'])} errors)")
+            msg += f" ({len(result['errors'])} errors)"
 
-        return f'''<div class="alert alert-success" id="evict-alert">
-            <i data-lucide="check-circle"></i>
-            <span>{msg}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 3000);
+        resp = templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "success", "message": msg
+        }).body.decode()
+        resp += """<script>
             htmx.trigger('#cache-table-body', 'refresh');
             document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = false);
             document.getElementById('select-all')?.checked && (document.getElementById('select-all').checked = false);
             updateBulkActions();
-        </script>'''
+        </script>"""
+        return resp
     else:
-        errors_str = html.escape("; ".join(result["errors"][:3]))
-        return f'''<div class="alert alert-error" id="evict-alert">
-            <i data-lucide="alert-circle"></i>
-            <span>Failed to evict files: {errors_str}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
-        </script>'''
+        errors_str = "; ".join(result["errors"][:3])
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "error",
+            "message": f"Failed to evict files: {errors_str}"
+        }).body.decode()
 
 
 @router.post("/settings/schedule", response_class=HTMLResponse)

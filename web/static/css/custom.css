@@ -558,8 +558,8 @@ footer {
     position: absolute;
     inset: -1px;
     border-radius: 28px;
-    background: linear-gradient(90deg, transparent, var(--accent-glow, transparent), transparent);
-    opacity: 0.6;
+    background: var(--accent-glow, transparent);
+    opacity: 0.4;
     pointer-events: none;
     z-index: 0;
     transition: opacity 0.3s ease;
@@ -648,7 +648,7 @@ footer {
     left: 0;
     height: 3px;
     border-radius: 0 0 28px 28px;
-    background: linear-gradient(90deg, var(--accent), var(--accent));
+    background: var(--accent);
     transition: width 0.5s ease;
     z-index: 1;
 }
@@ -753,7 +753,7 @@ footer {
 .di-progress-fill {
     height: 100%;
     border-radius: 2px;
-    background: linear-gradient(90deg, var(--accent), var(--accent));
+    background: var(--accent);
     transition: width 0.5s ease;
 }
 

@@ -117,13 +117,13 @@ body {
     gap: 0.75rem;
     padding: 1.25rem;
     border-bottom: 1px solid var(--plex-border);
-    background: linear-gradient(180deg, rgba(229,160,13,0.04) 0%, transparent 100%);
+    background: transparent;
 }
 
 .sidebar-brand-icon {
     width: 32px;
     height: 32px;
-    background: linear-gradient(135deg, var(--plex-orange) 0%, var(--plex-orange-dark) 100%);
+    background: var(--plex-orange);
     border-radius: var(--plex-radius-sm);
     display: flex;
     align-items: center;
@@ -383,7 +383,7 @@ body {
 .page-title-icon {
     width: 48px;
     height: 48px;
-    background: linear-gradient(135deg, var(--plex-orange) 0%, var(--plex-orange-dark) 100%);
+    background: var(--plex-orange);
     border-radius: 12px;
     display: flex;
     align-items: center;
@@ -439,13 +439,13 @@ body {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, var(--plex-orange) 0%, var(--plex-orange-dark) 100%);
+    background: var(--plex-orange);
     color: var(--plex-bg-darker);
     box-shadow: 0 2px 8px rgba(229,160,13,0.25);
 }
 
 .btn-primary:hover {
-    background: linear-gradient(135deg, var(--plex-orange-light) 0%, var(--plex-orange) 100%);
+    background: var(--plex-orange-light);
     transform: translateY(-1px);
     box-shadow: 0 4px 16px rgba(229,160,13,0.35);
 }
@@ -681,7 +681,7 @@ body {
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--plex-orange) 0%, var(--plex-orange-dark) 100%);
+    background: var(--plex-orange);
     border-radius: 3px;
     transition: width 0.3s ease;
 }
@@ -1734,11 +1734,11 @@ pre.log-output-wrapped {
 
 /* Progress bar color variants */
 .progress-fill.progress-warning {
-    background: linear-gradient(90deg, var(--plex-warning) 0%, #e68900 100%);
+    background: var(--plex-warning);
 }
 
 .progress-fill.progress-danger {
-    background: linear-gradient(90deg, var(--plex-error) 0%, #d32f2f 100%);
+    background: var(--plex-error);
 }
 
 /* Cache Limit Section */
@@ -1786,17 +1786,17 @@ pre.log-output-wrapped {
 
 .cache-limit-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--plex-orange) 0%, var(--plex-orange-dark) 100%);
+    background: var(--plex-orange);
     border-radius: 5px;
     transition: width 0.3s ease;
 }
 
 .cache-limit-fill.progress-warning {
-    background: linear-gradient(90deg, var(--plex-warning) 0%, #e68900 100%);
+    background: var(--plex-warning);
 }
 
 .cache-limit-fill.progress-danger {
-    background: linear-gradient(90deg, var(--plex-error) 0%, #d32f2f 100%);
+    background: var(--plex-error);
 }
 
 .cache-limit-labels {
@@ -2306,6 +2306,11 @@ td.user-badges .badge {
     border-top-color: var(--plex-orange);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
+}
+
+.btn-danger .spinner {
+    border-color: rgba(255,255,255,0.3);
+    border-top-color: #fff;
 }
 
 /* Animate Lucide loader icons */
