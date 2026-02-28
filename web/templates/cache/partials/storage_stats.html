@@ -92,22 +92,22 @@
             <!-- Visual Bar with Markers - Stacked Bar Design -->
             <div class="drive-usage-bar-container" style="position: relative; margin-bottom: 0.5rem;">
                 <!-- The bar background represents total drive capacity -->
-                <div class="drive-usage-bar" style="height: 24px; background: var(--plex-card-bg); border-radius: 4px; position: relative; overflow: visible; border: 1px solid var(--plex-border);">
+                <div class="drive-usage-bar" style="height: 24px; background: var(--plex-bg-card); border-radius: 4px; position: relative; overflow: visible; border: 1px solid var(--plex-border);">
                     <!-- Stacked bar: Other files (gray) + PlexCache (context-aware color) -->
                     <div style="display: flex; height: 100%; border-radius: 3px; overflow: hidden;">
                         <!-- Other files segment (gray) -->
                         {% if data.storage.other_drive_percent > 0 %}
-                        <div class="other-files-fill" style="width: {{ data.storage.other_drive_percent }}%; height: 100%; background: #555; transition: width 0.3s ease;" title="Other files: {{ data.storage.other_drive_size_display }}"></div>
+                        <div class="other-files-fill" style="width: {{ data.storage.other_drive_percent }}%; height: 100%; background: var(--plex-text-muted); transition: width 0.3s ease;" title="Other files: {{ data.storage.other_drive_size_display }}"></div>
                         {% endif %}
                         <!-- PlexCache segment (context-aware color) -->
                         {% if data.storage.cached_percent > 0 %}
                         <div class="plexcache-fill" style="width: {{ data.storage.cached_percent }}%; height: 100%; transition: width 0.3s ease;
                             {% if data.storage.cache_bar_status == 'over' %}
-                            background: #e74c3c;
+                            background: var(--plex-error);
                             {% elif data.storage.cache_bar_status == 'approaching' %}
-                            background: #e67e22;
+                            background: var(--plex-warning);
                             {% else %}
-                            background: #27ae60;
+                            background: var(--plex-success);
                             {% endif %}
                         " title="PlexCache: {{ data.storage.cached_size_display }}"></div>
                         {% endif %}
@@ -115,15 +115,15 @@
 
                     {% if data.config.eviction_enabled and data.storage.eviction_threshold_percent_of_drive > 0 %}
                     <!-- Eviction threshold marker -->
-                    <div class="threshold-marker" style="position: absolute; top: -4px; bottom: -4px; width: 3px; background: #e67e22; left: {{ data.storage.eviction_threshold_percent_of_drive }}%; z-index: 2;" title="Eviction starts at {{ data.storage.eviction_threshold_display }}">
-                        <div style="position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 0.7rem; color: #e67e22; white-space: nowrap;">Evict</div>
+                    <div class="threshold-marker" style="position: absolute; top: -4px; bottom: -4px; width: 3px; background: var(--plex-warning); left: {{ data.storage.eviction_threshold_percent_of_drive }}%; z-index: 2;" title="Eviction starts at {{ data.storage.eviction_threshold_display }}">
+                        <div style="position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 0.7rem; color: var(--plex-warning); white-space: nowrap;">Evict</div>
                     </div>
                     {% endif %}
 
                     {% if data.storage.cache_limit_percent %}
                     <!-- Cache limit marker -->
-                    <div class="limit-marker" style="position: absolute; top: -4px; bottom: -4px; width: 3px; background: #e74c3c; left: {{ data.storage.cache_limit_percent }}%; z-index: 2;" title="Cache limit: {{ data.storage.cache_limit_display }}">
-                        <div style="position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 0.7rem; color: #e74c3c; white-space: nowrap;">Limit</div>
+                    <div class="limit-marker" style="position: absolute; top: -4px; bottom: -4px; width: 3px; background: var(--plex-error); left: {{ data.storage.cache_limit_percent }}%; z-index: 2;" title="Cache limit: {{ data.storage.cache_limit_display }}">
+                        <div style="position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 0.7rem; color: var(--plex-error); white-space: nowrap;">Limit</div>
                     </div>
                     {% endif %}
                 </div>
@@ -150,17 +150,17 @@
             <!-- Legend -->
             <div class="stacked-bar-legend" style="display: flex; gap: 1.5rem; margin-top: 0.75rem; font-size: 0.8rem;">
                 <div style="display: flex; align-items: center; gap: 0.4rem;">
-                    <div style="width: 12px; height: 12px; background: #555; border-radius: 2px;"></div>
+                    <div style="width: 12px; height: 12px; background: var(--plex-text-muted); border-radius: 2px;"></div>
                     <span>Other files ({{ data.storage.other_drive_size_display }})</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.4rem;">
                     <div style="width: 12px; height: 12px; border-radius: 2px;
                         {% if data.storage.cache_bar_status == 'over' %}
-                        background: #e74c3c;
+                        background: var(--plex-error);
                         {% elif data.storage.cache_bar_status == 'approaching' %}
-                        background: #e67e22;
+                        background: var(--plex-warning);
                         {% else %}
-                        background: #27ae60;
+                        background: var(--plex-success);
                         {% endif %}
                     "></div>
                     <span>PlexCache ({{ data.storage.cached_size_display }})</span>
@@ -206,14 +206,14 @@
 
             <!-- Simple progress bar: tracked_size / quota -->
             <div style="position: relative; margin-bottom: 0.5rem;">
-                <div style="height: 24px; background: var(--plex-card-bg); border-radius: 4px; overflow: hidden; border: 1px solid var(--plex-border);">
+                <div style="height: 24px; background: var(--plex-bg-card); border-radius: 4px; overflow: hidden; border: 1px solid var(--plex-border);">
                     <div style="width: {{ [data.storage.plexcache_quota_used_percent, 100] | min }}%; height: 100%; transition: width 0.3s ease;
                         {% if data.storage.plexcache_quota_used_percent >= 100 %}
-                        background: #e74c3c;
+                        background: var(--plex-error);
                         {% elif data.storage.plexcache_quota_used_percent >= 80 %}
-                        background: #e67e22;
+                        background: var(--plex-warning);
                         {% else %}
-                        background: #27ae60;
+                        background: var(--plex-success);
                         {% endif %}
                     " title="PlexCache: {{ data.storage.cached_size_display }}"></div>
                 </div>

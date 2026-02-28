@@ -2,19 +2,19 @@
 
 /* Status indicators */
 .status-ok {
-    color: var(--pico-ins-color, #2ecc71);
+    color: var(--plex-success);
 }
 
 .status-warn {
-    color: var(--pico-mark-background-color, #f39c12);
+    color: var(--plex-warning);
 }
 
 .status-error {
-    color: var(--pico-del-color, #e74c3c);
+    color: var(--plex-error);
 }
 
 .status-running {
-    color: var(--pico-primary);
+    color: var(--plex-orange);
 }
 
 /* Priority score colors */
@@ -26,28 +26,13 @@
     font-size: 0.9em;
 }
 
-.priority-high {
-    background-color: rgba(46, 204, 113, 0.2);
-    color: #2ecc71;
-}
-
-.priority-medium {
-    background-color: rgba(243, 156, 18, 0.2);
-    color: #f39c12;
-}
-
-.priority-low {
-    background-color: rgba(231, 76, 60, 0.2);
-    color: #e74c3c;
-}
-
 /* Log viewer - single scroll context for both axes */
 .log-viewer {
     height: 500px;
     overflow: auto;
-    background-color: var(--pico-code-background-color);
+    background-color: var(--plex-bg-input);
     padding: 1rem;
-    font-family: var(--pico-font-family-monospace);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
     font-size: 0.85em;
     line-height: 1.4;
 }
@@ -61,49 +46,32 @@
     min-width: 100%;
 }
 
-/* Log level highlighting */
-.log-error {
-    color: #e74c3c;
-}
-
-.log-warning {
-    color: #f39c12;
-}
-
-.log-info {
-    color: #3498db;
-}
-
-.log-debug {
-    color: #95a5a6;
-}
-
 /* Alert styles */
 .alert {
     padding: 1rem;
     margin-bottom: 1rem;
-    border-radius: var(--pico-border-radius);
+    border-radius: var(--plex-radius-sm);
     position: relative;
 }
 
 .alert-success {
     background-color: rgba(46, 204, 113, 0.1);
-    border-left: 4px solid #2ecc71;
+    border-left: 4px solid var(--plex-success);
 }
 
 .alert-error {
     background-color: rgba(231, 76, 60, 0.1);
-    border-left: 4px solid #e74c3c;
+    border-left: 4px solid var(--plex-error);
 }
 
 .alert-warning {
     background-color: rgba(243, 156, 18, 0.1);
-    border-left: 4px solid #f39c12;
+    border-left: 4px solid var(--plex-warning);
 }
 
 .alert-info {
     background-color: rgba(52, 152, 219, 0.1);
-    border-left: 4px solid #3498db;
+    border-left: 4px solid var(--plex-info);
 }
 
 .alert .close {
@@ -162,7 +130,7 @@ button.small, .button.small {
 /* Navigation current page indicator */
 nav a[aria-current="page"] {
     font-weight: bold;
-    border-bottom: 2px solid var(--pico-primary);
+    border-bottom: 2px solid var(--plex-orange);
 }
 
 /* Settings tabs navigation */
@@ -172,7 +140,7 @@ article nav ul {
     list-style: none;
     padding: 0;
     margin-bottom: 1rem;
-    border-bottom: 1px solid var(--pico-muted-border-color);
+    border-bottom: 1px solid var(--plex-border);
 }
 
 article nav ul li {
@@ -186,7 +154,7 @@ article nav ul li a {
 }
 
 article nav ul li a[aria-current="page"] {
-    border-bottom: 2px solid var(--pico-primary);
+    border-bottom: 2px solid var(--plex-orange);
     margin-bottom: -1px;
 }
 
@@ -203,7 +171,7 @@ article nav ul li a[aria-current="page"] {
 footer {
     margin-top: 2rem;
     padding-top: 1rem;
-    border-top: 1px solid var(--pico-muted-border-color);
+    border-top: 1px solid var(--plex-border);
     text-align: center;
     opacity: 0.7;
 }
@@ -239,11 +207,22 @@ footer {
     scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
+/* Light theme scrollbar overrides */
+[data-theme="light"] .recent-activity-scroll::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+}
+[data-theme="light"] .recent-activity-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.35);
+}
+[data-theme="light"] .recent-activity-scroll {
+    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
 /* Keep table header sticky while scrolling */
 .recent-activity-scroll table thead {
     position: sticky;
     top: 0;
-    background: var(--plex-card-bg, #1f2326);
+    background: var(--plex-bg-card);
     z-index: 1;
 }
 
@@ -473,15 +452,13 @@ footer {
 
 .di-pill:hover { transform: scale(1.02); }
 
-/* Idle variant — smaller, dimmer */
+/* Idle variant — smaller */
 .di-pill--idle {
     height: 38px;
     border-radius: 20px;
     padding: 0 1rem;
     min-width: 200px;
-    opacity: 0.7;
 }
-.di-pill--idle:hover { opacity: 1; }
 
 /* ── Idle pill expanded actions ───────────────────────── */
 .di-idle-actions {
@@ -1046,7 +1023,7 @@ footer {
 }
 
 .di-countdown__timer {
-    font-family: var(--pico-font-family-monospace, monospace);
+    font-family: monospace;
     font-size: 0.85rem;
     font-weight: 700;
     color: #5AC8FA;
@@ -1058,6 +1035,12 @@ footer {
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+}
+
+/* ── Light theme pill overrides ──────────────────────── */
+/* Pill stays dark in light mode — just soften the shadow for lighter backgrounds */
+[data-theme="light"] .di-pill {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
 }
 
 /* ── Mobile responsive ───────────────────────────────── */

@@ -61,22 +61,37 @@ body {
 /* Light theme */
 [data-theme="light"] {
     --plex-bg-dark: #e8e8ed;
-    --plex-bg-darker: #ededf0;
-    --plex-bg-card: #f8f8fa;
-    --plex-bg-card-hover: #ffffff;
+    --plex-bg-darker: #e8e8ec;
+    --plex-bg-card: #ffffff;
+    --plex-bg-card-hover: #f5f5f8;
     --plex-bg-hover: #dddde2;
-    --plex-bg-input: #e8e8ed;
+    --plex-bg-input: #f0f0f3;
     --plex-text: #1c1c1e;
-    --plex-text-muted: #6e6e73;
-    --plex-text-light: #48484a;
+    --plex-text-muted: #58585d;
+    --plex-text-light: #3a3a3c;
     --plex-border: rgba(0,0,0,0.10);
     --plex-border-light: rgba(0,0,0,0.15);
     --plex-success: #248a3d;
     --plex-error: #d70015;
+    --plex-warning: #c77c02;
     --plex-info: #0066cc;
-    --plex-shadow-card: 0 1px 4px rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.05);
-    --plex-shadow-elevated: 0 4px 16px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.07);
+    --plex-shadow-card: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.05);
+    --plex-shadow-elevated: 0 4px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.07);
 }
+
+/* Light theme component overrides */
+[data-theme="light"] .sidebar {
+    background: #ffffff;
+    border-right-color: rgba(0,0,0,0.10);
+}
+[data-theme="light"] .card-header { background: rgba(0,0,0,0.02); }
+[data-theme="light"] .card-footer { background: rgba(0,0,0,0.03); }
+[data-theme="light"] th { background: rgba(0,0,0,0.03); }
+[data-theme="light"] tbody tr { border-bottom-color: rgba(0,0,0,0.06); }
+[data-theme="light"] tfoot .totals-row { background: rgba(0,0,0,0.04); }
+[data-theme="light"] th { color: var(--plex-text-light); }
+[data-theme="light"] .stat-detail { opacity: 0.85; }
+[data-theme="light"] .page-subtitle { color: var(--plex-text-light); }
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;

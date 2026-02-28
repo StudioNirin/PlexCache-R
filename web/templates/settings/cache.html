@@ -233,7 +233,7 @@
                        oninput="updateCacheCalculations()">
                 <div class="form-hint">Override auto-detected size (e.g., 3.7TB). For ZFS pools where dataset size differs from pool size.</div>
                 {% if drive_info.is_zfs and not drive_info.is_manual_override %}
-                <div class="form-hint" style="color: #e67e22; margin-top: 0.25rem;">
+                <div class="form-hint" style="color: var(--plex-warning); margin-top: 0.25rem;">
                     <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
                     ZFS detected: Auto-detected value ({{ drive_info.total_display | default('Unknown') }}) may not reflect true pool capacity. Enter your pool size above.
                 </div>
@@ -258,7 +258,7 @@
                            oninput="updateCacheCalculations()">
                     <div class="form-hint">Maximum <strong>total drive usage</strong> before PlexCache stops caching (e.g., 500GB or 75%). Includes all files on the drive, not just PlexCache-managed files. Leave empty for no cap.</div>
                     <div id="cache_limit_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
-                    <div id="cache_limit_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
+                    <div id="cache_limit_warning" class="form-hint" style="display: none; color: var(--plex-error); margin-top: 0.25rem;">
                         <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
                         <span id="cache_limit_warning_text"></span>
                     </div>
@@ -274,7 +274,7 @@
                            oninput="updateCacheCalculations()">
                     <div class="form-hint">Safety floor: always keep at least this much free space on the drive (e.g., 50GB or 5%). Useful when other apps also write to the cache drive. Leave empty to disable.</div>
                     <div id="min_free_space_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
-                    <div id="min_free_space_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
+                    <div id="min_free_space_warning" class="form-hint" style="display: none; color: var(--plex-error); margin-top: 0.25rem;">
                         <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
                         <span id="min_free_space_warning_text"></span>
                     </div>
@@ -291,7 +291,7 @@
                        oninput="updateCacheCalculations()">
                 <div class="form-hint">Maximum space for <strong>PlexCache-managed files only</strong> (excludes other apps on the drive). Unlike Cache Limit which counts all drive usage. Leave empty to disable.</div>
                 <div id="plexcache_quota_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
-                <div id="plexcache_quota_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
+                <div id="plexcache_quota_warning" class="form-hint" style="display: none; color: var(--plex-error); margin-top: 0.25rem;">
                     <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
                     <span id="plexcache_quota_warning_text"></span>
                 </div>

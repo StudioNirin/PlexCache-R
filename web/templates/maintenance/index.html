@@ -220,8 +220,8 @@ function showConfirmModal(title, message, action, formData, isDryRun = false) {
                 if (data.blocked && data.can_queue) {
                     actionBtn.className = 'btn btn-primary';
                     actionBtn.textContent = 'Queue Action';
-                    actionBtn.style.background = '#5AC8FA';
-                    actionBtn.style.borderColor = '#5AC8FA';
+                    actionBtn.style.background = 'var(--plex-info)';
+                    actionBtn.style.borderColor = 'var(--plex-info)';
                 } else if (data.blocked && data.queue_full) {
                     actionBtn.disabled = true;
                     actionBtn.textContent = 'Queue Full';
