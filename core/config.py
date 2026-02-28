@@ -67,6 +67,7 @@ class PathMapping:
     host_cache_path: Optional[str] = None  # For Docker: host-side cache path
     cacheable: bool = True
     enabled: bool = True
+    section_id: Optional[int] = None  # Plex library section ID (links mapping to library)
 
 
 @dataclass
@@ -507,7 +508,8 @@ class ConfigManager:
                 cache_path=cache_path,
                 host_cache_path=host_cache_path,
                 cacheable=mapping_data.get('cacheable', True),
-                enabled=mapping_data.get('enabled', True)
+                enabled=mapping_data.get('enabled', True),
+                section_id=mapping_data.get('section_id')
             )
             self.paths.path_mappings.append(mapping)
             if host_cache_path and host_cache_path != cache_path:
@@ -787,7 +789,8 @@ class ConfigManager:
                         'cache_path': m.cache_path,
                         'host_cache_path': m.host_cache_path,
                         'cacheable': m.cacheable,
-                        'enabled': m.enabled
+                        'enabled': m.enabled,
+                        'section_id': m.section_id
                     }
                     for m in self.paths.path_mappings
                 ]

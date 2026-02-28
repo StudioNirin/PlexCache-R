@@ -1,0 +1,157 @@
+<!-- Library card partial — one per Plex library section -->
+<div class="library-card {% if card.enabled %}library-card-enabled{% else %}library-card-disabled{% endif %}"
+     id="library-card-{{ card.library.id }}">
+    <div class="card mb-2">
+        <div class="card-body">
+            <!-- Header row: toggle + title + type badge -->
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                    <label class="switch" style="margin: 0;">
+                        <input type="checkbox"
+                               {% if card.enabled %}checked{% endif %}
+                               hx-post="/settings/libraries/{{ card.library.id }}/toggle"
+                               hx-target="#library-card-{{ card.library.id }}"
+                               hx-swap="outerHTML"
+                               hx-vals='{"enabled": "{{ 'off' if card.enabled else 'on' }}"}'
+                               hx-trigger="change">
+                        <span></span>
+                    </label>
+                    <strong style="font-size: 1.05rem;">{{ card.library.title }}</strong>
+                </div>
+                <span class="text-muted" style="font-size: 0.8rem;">
+                    {{ card.library.type_label }} &middot; ID: {{ card.library.id }}
+                </span>
+            </div>
+
+            {% if card.enabled %}
+            <!-- Path summary (view mode) -->
+            {% if card.mappings %}
+                {% for mapping in card.mappings %}
+                <div class="library-mapping-view" id="lib-mapping-view-{{ card.library.id }}-{{ loop.index0 }}"
+                     style="font-size: 0.85rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: var(--plex-bg-darker); border-radius: var(--plex-radius-sm);">
+                    <div class="grid grid-2" style="margin-bottom: 0.25rem;">
+                        <div>
+                            <span class="text-muted">Plex Path:</span><br>
+                            <code>{{ mapping.plex_path }}</code>
+                        </div>
+                        <div>
+                            <span class="text-muted">Real Path:</span>
+                            <span class="path-validation"
+                                  hx-get="/api/validate-path?path={{ mapping.real_path | urlencode }}"
+                                  hx-trigger="load"
+                                  hx-swap="innerHTML"></span><br>
+                            <code>{{ mapping.real_path }}</code>
+                        </div>
+                    </div>
+                    <div class="grid grid-2">
+                        <div>
+                            <span class="text-muted">Cache Path:</span>
+                            <span class="path-validation"
+                                  hx-get="/api/validate-path?path={{ mapping.cache_path | urlencode }}"
+                                  hx-trigger="load"
+                                  hx-swap="innerHTML"></span><br>
+                            <code>{{ mapping.cache_path or 'N/A' }}</code>
+                        </div>
+                        {% if is_docker and mapping.host_cache_path and mapping.host_cache_path != mapping.cache_path %}
+                        <div>
+                            <span class="text-muted" style="color: var(--plex-orange);">Host Cache:</span><br>
+                            <code>{{ mapping.host_cache_path }}</code>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+
+                <button type="button" class="btn btn-sm btn-secondary"
+                        onclick="toggleLibraryEdit({{ card.library.id }})">
+                    <i data-lucide="pencil" style="width: 14px; height: 14px;"></i>
+                    Edit Paths
+                </button>
+
+                <!-- Edit panel (hidden by default) -->
+                <div id="library-edit-{{ card.library.id }}" style="display: none; margin-top: 0.75rem;">
+                    {% for mapping in card.mappings %}
+                    <div style="padding: 0.75rem; background: var(--plex-bg-darker); border: 1px solid var(--plex-orange); border-radius: var(--plex-radius-sm); margin-bottom: 0.5rem;">
+                        <form hx-put="/settings/libraries/paths/{{ mapping._index }}"
+                              hx-target="#library-card-{{ card.library.id }}"
+                              hx-swap="outerHTML">
+                            <div class="grid grid-2 mb-1">
+                                <div class="form-group mb-1">
+                                    <label>Name</label>
+                                    <input type="text" name="name" value="{{ mapping.name }}" required>
+                                </div>
+                                <div class="form-group mb-1">
+                                    <label>Plex Path</label>
+                                    <input type="text" name="plex_path" value="{{ mapping.plex_path }}"
+                                           readonly style="opacity: 0.7;">
+                                    <div class="form-hint">Set by Plex library configuration</div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-2 mb-1">
+                                <div class="form-group mb-1">
+                                    <label>Real Path</label>
+                                    <input type="text" name="real_path" value="{{ mapping.real_path }}"
+                                           class="path-browse-input" required>
+                                    <div class="form-hint">
+                                        {% if is_unraid %}Where files live on your Unraid share (e.g., <code>/mnt/user/Movies/</code>).
+                                        {% else %}Actual filesystem path where your media files are stored.{% endif %}
+                                    </div>
+                                </div>
+                                <div class="form-group mb-1">
+                                    <label>Cache Path</label>
+                                    <input type="text" name="cache_path" value="{{ mapping.cache_path or '' }}"
+                                           class="path-browse-input">
+                                    <div class="form-hint">
+                                        {% if is_unraid %}Fast drive path (e.g., <code>/mnt/cache/Movies/</code>).
+                                        {% else %}Fast drive path where cached copies are stored.{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {% if is_docker %}
+                            <div class="form-group mb-1">
+                                <label style="color: var(--plex-orange);">Host Cache Path (Docker)</label>
+                                <input type="text" name="host_cache_path"
+                                       value="{{ mapping.host_cache_path or mapping.cache_path or '' }}"
+                                       class="path-browse-input"
+                                       placeholder="e.g., /mnt/cache_downloads/Movies/">
+                                <div class="form-hint">
+                                    The actual host path. Only needed if Docker remaps your cache path.
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <div class="flex gap-2 items-center">
+                                <label class="switch">
+                                    <input type="checkbox" name="cacheable"
+                                           {% if mapping.cacheable %}checked{% endif %}>
+                                    <span>Cacheable</span>
+                                </label>
+                                <div style="flex: 1;"></div>
+                                <button type="button" class="btn btn-secondary btn-sm"
+                                        onclick="toggleLibraryEdit({{ card.library.id }})">
+                                    Cancel
+                                </button>
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <i data-lucide="save"></i> Save
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-muted" style="font-size: 0.85rem; font-style: italic;">
+                    No path mappings yet. Toggle on to auto-create from Plex library paths.
+                </div>
+            {% endif %}
+            {% else %}
+            <div class="text-muted" style="font-size: 0.85rem; opacity: 0.6;">
+                Library disabled &mdash; toggle on to configure path mappings.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<script>lucide.createIcons();</script>

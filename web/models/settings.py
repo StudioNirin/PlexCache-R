@@ -12,6 +12,7 @@ class PathMappingModel(BaseModel):
     cache_path: Optional[str] = None
     cacheable: bool = True
     enabled: bool = True
+    section_id: Optional[int] = None
 
 
 class PlexSettingsModel(BaseModel):

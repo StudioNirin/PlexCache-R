@@ -1,8 +1,10 @@
 """API routes for HTMX partial updates"""
 
 import html
+import os
 from datetime import datetime
-from fastapi import APIRouter, Request, Form
+from pathlib import Path
+from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from typing import List
 from urllib.parse import unquote
@@ -617,3 +619,90 @@ def check_upgrades():
         return {"upgrades_found": 0, "upgrades_resolved": 0, "details": []}
 
     return cache_service.check_for_upgrades(stale)
+
+
+# =============================================================================
+# Filesystem Browse Endpoints
+# =============================================================================
+
+@router.get("/browse")
+def browse_directory(path: str = Query("")):
+    """Directory listing for path autocomplete.
+
+    Security:
+    - Rejects null bytes, control characters, paths > 4096 chars
+    - Pre-resolve jail: must start with /mnt/
+    - Post-resolve jail: resolved path must still start with /mnt/
+    - Only returns directories (not files), skips dotfiles
+    - Capped at 100 entries
+    """
+    # Input validation
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    if len(path) > 4096:
+        return JSONResponse({"error": "path too long"}, status_code=400)
+    if "\x00" in path or any(ord(c) < 32 for c in path):
+        return JSONResponse({"error": "invalid characters in path"}, status_code=400)
+
+    # Pre-resolve jail check
+    if not path.startswith("/mnt/"):
+        return JSONResponse({"error": "path must be under /mnt/"}, status_code=403)
+
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, ValueError):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+
+    # Post-resolve jail check (catches ../ traversal and symlink escapes)
+    resolved_str = str(resolved)
+    if resolved_str != "/mnt" and not resolved_str.startswith("/mnt/"):
+        return JSONResponse({"error": "path must be under /mnt/"}, status_code=403)
+
+    if not resolved.is_dir():
+        return JSONResponse({"error": "not a directory"}, status_code=404)
+
+    # List directories only, skip dotfiles, cap at 100
+    directories = []
+    try:
+        with os.scandir(str(resolved)) as it:
+            for entry in it:
+                if entry.name.startswith("."):
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        directories.append(entry.name)
+                except (PermissionError, OSError):
+                    continue
+    except PermissionError:
+        return JSONResponse({"error": "permission denied"}, status_code=403)
+
+    directories.sort()
+    directories = directories[:100]
+
+    return {"path": str(resolved), "directories": directories}
+
+
+@router.get("/validate-path", response_class=HTMLResponse)
+def validate_path(path: str = Query("")):
+    """Validate a filesystem path — returns an HTMX icon partial.
+
+    Returns green check if path exists and is a directory,
+    warning icon if not found, or empty if path is invalid.
+    """
+    if not path or not path.startswith("/mnt/"):
+        return HTMLResponse("")
+
+    try:
+        p = Path(path)
+        if p.exists() and p.is_dir():
+            return HTMLResponse(
+                '<i data-lucide="check-circle" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i>'
+                '<script>lucide.createIcons();</script>'
+            )
+        else:
+            return HTMLResponse(
+                '<i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--plex-warning, #e67e22); vertical-align: middle;" title="Path not found"></i>'
+                '<script>lucide.createIcons();</script>'
+            )
+    except (OSError, ValueError):
+        return HTMLResponse("")

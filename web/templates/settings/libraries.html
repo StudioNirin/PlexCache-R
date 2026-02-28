@@ -1,0 +1,137 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="library"></i>
+        <h2>Plex Libraries</h2>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-2">Select libraries to cache and configure their path mappings.</p>
+
+        {% if not library_cards %}
+        <div class="alert alert-info">
+            <i data-lucide="alert-circle"></i>
+            <span>Unable to fetch libraries from Plex. Check your <a href="/settings/plex" style="color: var(--plex-orange);">server connection</a>.</span>
+        </div>
+        {% endif %}
+
+        <div id="library-cards">
+            {% for card in library_cards %}
+                {% include "settings/partials/library_card.html" %}
+            {% endfor %}
+        </div>
+
+        {% if orphan_mappings %}
+        <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+        <h3 style="font-size: 1rem; color: var(--plex-text-muted); margin-bottom: 1rem;">
+            <i data-lucide="folder" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+            Custom Mappings
+        </h3>
+        <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 0.75rem;">
+            These path mappings are not linked to a Plex library. They may have been created manually or before library linking was available.
+        </p>
+        <div id="orphan-mappings">
+            {% for mapping in orphan_mappings %}
+            {% set index = mapping._index %}
+            {% include "settings/partials/path_mapping_card.html" %}
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+        <details>
+            <summary style="cursor: pointer; color: var(--plex-orange);">
+                <i data-lucide="plus"></i> Add Custom Path Mapping
+            </summary>
+
+            <form hx-post="/settings/paths" hx-target="#orphan-mappings" hx-swap="beforeend" style="margin-top: 1rem;">
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="new_name">Name</label>
+                        <input type="text" id="new_name" name="name" placeholder="TV Shows" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="new_plex_path">Plex Path</label>
+                        <input type="text" id="new_plex_path" name="plex_path" placeholder="/media/tv" required>
+                        <div class="form-hint">Path as Plex sees it. Find this in Plex under Settings &gt; Libraries.</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="new_real_path">Real Path</label>
+                        <input type="text" id="new_real_path" name="real_path"
+                               class="path-browse-input"
+                               placeholder="{% if is_unraid %}/mnt/user/TV Shows/{% else %}/media/tv{% endif %}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="new_cache_path">Cache Path</label>
+                        <input type="text" id="new_cache_path" name="cache_path"
+                               class="path-browse-input"
+                               placeholder="{% if is_unraid %}/mnt/cache/TV Shows/{% else %}/mnt/ssd/tv{% endif %}">
+                    </div>
+                </div>
+
+                {% if is_docker %}
+                <div class="form-group">
+                    <label for="new_host_cache_path" style="color: var(--plex-orange);">Host Cache Path (Docker)</label>
+                    <input type="text" id="new_host_cache_path" name="host_cache_path"
+                           class="path-browse-input"
+                           placeholder="/mnt/cache_downloads/media/tv">
+                    <div class="form-hint">
+                        The actual host path. Only needed if Docker remaps your cache path.
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="flex gap-2 mb-2">
+                    <label class="switch">
+                        <input type="checkbox" name="cacheable" checked>
+                        <span>Cacheable</span>
+                    </label>
+                    <label class="switch">
+                        <input type="checkbox" name="enabled" checked>
+                        <span>Enabled</span>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary">
+                    <i data-lucide="plus"></i>
+                    Add Path Mapping
+                </button>
+            </form>
+        </details>
+    </div>
+</div>
+
+<script src="/static/js/path-browser.js"></script>
+<script>
+    function toggleLibraryEdit(sectionId) {
+        var editPanel = document.getElementById('library-edit-' + sectionId);
+        if (!editPanel) return;
+        if (editPanel.style.display === 'none') {
+            editPanel.style.display = 'block';
+        } else {
+            // Reset all forms to original values before hiding
+            editPanel.querySelectorAll('form').forEach(function(form) { form.reset(); });
+            editPanel.style.display = 'none';
+        }
+        lucide.createIcons();
+    }
+
+    function toggleEditMode(index) {
+        var view = document.getElementById('mapping-view-' + index);
+        var edit = document.getElementById('mapping-edit-' + index);
+        if (view.style.display === 'none') {
+            view.style.display = 'block';
+            edit.style.display = 'none';
+        } else {
+            view.style.display = 'none';
+            edit.style.display = 'block';
+        }
+        lucide.createIcons();
+    }
+</script>
+{% endblock %}

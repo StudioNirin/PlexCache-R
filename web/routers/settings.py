@@ -36,7 +36,6 @@ def settings_index(request: Request):
     """Settings overview - redirects to plex tab"""
     settings_service = get_settings_service()
     settings = settings_service.get_plex_settings()
-    libraries = settings_service.get_plex_libraries()
 
     return templates.TemplateResponse(
         "settings/plex.html",
@@ -45,26 +44,23 @@ def settings_index(request: Request):
             "page_title": "Settings",
             "active_tab": "plex",
             "settings": settings,
-            "libraries": libraries
         }
     )
 
 
 @router.get("/plex", response_class=HTMLResponse)
 def settings_plex(request: Request):
-    """Plex settings tab (user settings moved to /settings/users)"""
+    """Plex Server connection settings tab"""
     settings_service = get_settings_service()
     settings = settings_service.get_plex_settings()
-    libraries = settings_service.get_plex_libraries()
 
     return templates.TemplateResponse(
         "settings/plex.html",
         {
             "request": request,
-            "page_title": "Plex Settings",
+            "page_title": "Plex Server Settings",
             "active_tab": "plex",
             "settings": settings,
-            "libraries": libraries
         }
     )
 
@@ -156,37 +152,16 @@ def test_plex_connection(request: Request):
 
 @router.put("/plex", response_class=HTMLResponse)
 async def save_plex_settings(request: Request):
-    """Save Plex settings (user settings moved to /settings/users)"""
+    """Save Plex Server connection settings (URL + token only)"""
     settings_service = get_settings_service()
 
-    # Parse form data (need to handle multi-value checkbox fields)
     form = await request.form()
-
-    # Get single values
     plex_url = form.get("plex_url", "")
     plex_token = form.get("plex_token", "")
-    try:
-        days_to_monitor = int(form.get("days_to_monitor", 183))
-    except (ValueError, TypeError):
-        days_to_monitor = 183
-    try:
-        number_episodes = int(form.get("number_episodes", 5))
-    except (ValueError, TypeError):
-        number_episodes = 5
 
-    # Get multi-value checkbox fields
-    try:
-        valid_sections = [int(v) for v in form.getlist("valid_sections")]
-    except (ValueError, TypeError):
-        valid_sections = []
-
-    # Note: users_toggle, skip_ondeck, skip_watchlist are now managed by /settings/users
     success = settings_service.save_plex_settings({
         "plex_url": plex_url,
         "plex_token": plex_token,
-        "valid_sections": valid_sections,
-        "days_to_monitor": days_to_monitor,
-        "number_episodes": number_episodes
     })
 
     if success:
@@ -195,7 +170,7 @@ async def save_plex_settings(request: Request):
             {
                 "request": request,
                 "type": "success",
-                "message": "Plex settings saved successfully"
+                "message": "Connection settings saved successfully"
             }
         )
     else:
@@ -352,19 +327,9 @@ async def save_user_settings(request: Request):
 
 @router.get("/paths", response_class=HTMLResponse)
 def settings_paths(request: Request):
-    """Path mappings tab"""
-    settings_service = get_settings_service()
-    mappings = settings_service.get_path_mappings()
-
-    return templates.TemplateResponse(
-        "settings/paths.html",
-        {
-            "request": request,
-            "page_title": "Path Settings",
-            "active_tab": "paths",
-            "mappings": mappings,
-        }
-    )
+    """Path mappings tab — redirects to Libraries tab"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/settings/libraries", status_code=302)
 
 
 @router.post("/paths", response_class=HTMLResponse)
@@ -471,6 +436,202 @@ def delete_path_mapping(request: Request, index: int):
         )
     else:
         return HTMLResponse("<div class='alert alert-error'>Failed to delete mapping</div>")
+
+
+# =============================================================================
+# Libraries tab endpoints
+# =============================================================================
+
+@router.get("/libraries", response_class=HTMLResponse)
+def settings_libraries(request: Request):
+    """Libraries tab — combined library toggle + path mappings"""
+    settings_service = get_settings_service()
+
+    # Run one-time migration (links existing path_mappings to Plex libraries)
+    settings_service.migrate_link_path_mappings_to_libraries()
+
+    # Fetch libraries from Plex
+    libraries = settings_service.get_plex_libraries()
+
+    # Load path mappings
+    raw_settings = settings_service.get_all()
+    mappings = raw_settings.get("path_mappings", [])
+    valid_sections = raw_settings.get("valid_sections", [])
+
+    # Group mappings by section_id
+    library_mappings = {}  # section_id -> list of mappings (with _index)
+    orphan_mappings = []   # mappings without section_id
+    for i, m in enumerate(mappings):
+        m_copy = dict(m)
+        m_copy["_index"] = i
+        sid = m.get("section_id")
+        if sid is not None:
+            library_mappings.setdefault(sid, []).append(m_copy)
+        else:
+            orphan_mappings.append(m_copy)
+
+    # Build library cards
+    library_cards = []
+    for lib in libraries:
+        sid = lib["id"]
+        lib_maps = library_mappings.get(sid, [])
+        enabled = sid in valid_sections or any(m.get("enabled", True) for m in lib_maps)
+        library_cards.append({
+            "library": lib,
+            "enabled": enabled,
+            "mappings": lib_maps,
+            "has_mappings": bool(lib_maps),
+        })
+
+    return templates.TemplateResponse(
+        "settings/libraries.html",
+        {
+            "request": request,
+            "page_title": "Library Settings",
+            "active_tab": "libraries",
+            "library_cards": library_cards,
+            "orphan_mappings": orphan_mappings,
+        }
+    )
+
+
+@router.post("/libraries/{section_id}/toggle", response_class=HTMLResponse)
+def toggle_library(request: Request, section_id: int):
+    """Toggle a Plex library on/off"""
+    settings_service = get_settings_service()
+    raw = settings_service._load_raw()
+    mappings = raw.get("path_mappings", [])
+
+    # Check current state — any enabled mapping with this section_id?
+    current_mappings = [m for m in mappings if m.get("section_id") == section_id]
+    currently_enabled = any(m.get("enabled", True) for m in current_mappings)
+
+    if currently_enabled:
+        # Turn OFF: disable all mappings with this section_id
+        for m in mappings:
+            if m.get("section_id") == section_id:
+                m["enabled"] = False
+    else:
+        # Turn ON
+        if current_mappings:
+            # Re-enable existing mappings
+            for m in mappings:
+                if m.get("section_id") == section_id:
+                    m["enabled"] = True
+        else:
+            # Auto-create mappings from Plex library
+            libraries = settings_service.get_plex_libraries()
+            library = next((lib for lib in libraries if lib["id"] == section_id), None)
+            if library:
+                for loc in library.get("locations", []):
+                    new_mapping = settings_service.auto_fill_mapping(library, loc, raw)
+                    mappings.append(new_mapping)
+
+    raw["path_mappings"] = mappings
+    settings_service._rebuild_valid_sections(raw)
+    settings_service._save_raw(raw)
+
+    # Re-render this library card
+    libraries = settings_service.get_plex_libraries()
+    library = next((lib for lib in libraries if lib["id"] == section_id), None)
+    if not library:
+        return HTMLResponse("<div class='alert alert-error'>Library not found</div>")
+
+    # Reload mappings for this card
+    raw = settings_service._load_raw()
+    all_mappings = raw.get("path_mappings", [])
+    lib_maps = []
+    for i, m in enumerate(all_mappings):
+        if m.get("section_id") == section_id:
+            m_copy = dict(m)
+            m_copy["_index"] = i
+            lib_maps.append(m_copy)
+
+    enabled = any(m.get("enabled", True) for m in lib_maps)
+    card = {
+        "library": library,
+        "enabled": enabled,
+        "mappings": lib_maps,
+        "has_mappings": bool(lib_maps),
+    }
+
+    return templates.TemplateResponse(
+        "settings/partials/library_card.html",
+        {"request": request, "card": card}
+    )
+
+
+@router.put("/libraries/paths/{index}", response_class=HTMLResponse)
+def update_library_path(
+    request: Request,
+    index: int,
+    name: str = Form(...),
+    plex_path: str = Form(...),
+    real_path: str = Form(...),
+    cache_path: str = Form(""),
+    host_cache_path: str = Form(""),
+    cacheable: str = Form(None),
+):
+    """Update a library's path mapping and return refreshed library card"""
+    settings_service = get_settings_service()
+
+    effective_host_cache_path = host_cache_path if host_cache_path else cache_path
+
+    mapping = {
+        "name": name,
+        "plex_path": plex_path,
+        "real_path": real_path,
+        "cache_path": cache_path if cache_path else None,
+        "host_cache_path": effective_host_cache_path if effective_host_cache_path else None,
+        "cacheable": cacheable == "on",
+        "enabled": True,  # Editing implies enabled
+    }
+
+    success = settings_service.update_path_mapping(index, mapping)
+
+    if not success:
+        return HTMLResponse("<div class='alert alert-error'>Failed to update mapping</div>")
+
+    # Get the section_id to re-render the library card
+    raw = settings_service._load_raw()
+    all_mappings = raw.get("path_mappings", [])
+    section_id = all_mappings[index].get("section_id") if index < len(all_mappings) else None
+
+    if section_id is None:
+        # Orphan mapping — return a path_mapping_card
+        return templates.TemplateResponse(
+            "settings/partials/path_mapping_card.html",
+            {"request": request, "mapping": all_mappings[index], "index": index}
+        )
+
+    # Rebuild valid_sections after update
+    settings_service._rebuild_valid_sections(raw)
+    settings_service._save_raw(raw)
+
+    # Re-render the full library card
+    libraries = settings_service.get_plex_libraries()
+    library = next((lib for lib in libraries if lib["id"] == section_id), None)
+    if not library:
+        return HTMLResponse("<div class='alert alert-success'>Saved</div>")
+
+    lib_maps = []
+    for i, m in enumerate(all_mappings):
+        if m.get("section_id") == section_id:
+            m_copy = dict(m)
+            m_copy["_index"] = i
+            lib_maps.append(m_copy)
+
+    card = {
+        "library": library,
+        "enabled": any(m.get("enabled", True) for m in lib_maps),
+        "mappings": lib_maps,
+        "has_mappings": bool(lib_maps),
+    }
+
+    return templates.TemplateResponse(
+        "settings/partials/library_card.html",
+        {"request": request, "card": card}
+    )
 
 
 @router.get("/cache", response_class=HTMLResponse)

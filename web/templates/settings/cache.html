@@ -10,6 +10,31 @@
         <form hx-put="/settings/cache" hx-target="#settings-alert-container" hx-swap="innerHTML">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="search" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Content Discovery
+            </h3>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="number_episodes">Episodes to Prefetch</label>
+                    <input type="number" id="number_episodes" name="number_episodes"
+                           class="input-narrow"
+                           value="{{ settings.number_episodes | default(3) }}" min="0" max="10">
+                    <div class="form-hint">Number of upcoming episodes to cache for in-progress shows</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="days_to_monitor">Days to Monitor</label>
+                    <input type="number" id="days_to_monitor" name="days_to_monitor"
+                           class="input-narrow"
+                           value="{{ settings.days_to_monitor | default(7) }}" min="1" max="999">
+                    <div class="form-hint">How far back to check OnDeck for recently watched items</div>
+                </div>
+            </div>
+
+            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
                 <i data-lucide="bookmark" style="width: 18px; height: 18px; vertical-align: middle;"></i>
                 Watchlist
             </h3>

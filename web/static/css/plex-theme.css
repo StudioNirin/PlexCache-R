@@ -1108,6 +1108,57 @@ textarea {
     flex-shrink: 0;
 }
 
+/* Library Cards (Libraries tab) */
+.library-card .card {
+    transition: border-color 0.2s ease;
+}
+
+.library-card-enabled .card {
+    border-color: var(--plex-orange);
+}
+
+.library-card-disabled .card {
+    opacity: 0.7;
+}
+
+.library-card-disabled .card:hover {
+    opacity: 0.85;
+}
+
+.path-validation {
+    display: inline-block;
+    margin-left: 0.25rem;
+}
+
+/* Path Browser Dropdown (autocomplete) */
+.path-browser-dropdown {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--plex-bg-card);
+    border: 1px solid var(--plex-border);
+    border-top: none;
+    border-radius: 0 0 var(--plex-radius-sm) var(--plex-radius-sm);
+    box-shadow: var(--plex-shadow-elevated);
+}
+
+.path-browser-item {
+    padding: 0.4rem 0.75rem;
+    font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+    font-size: 0.85rem;
+    cursor: pointer;
+    color: var(--plex-text);
+    transition: background 0.1s ease;
+}
+
+.path-browser-item:hover,
+.path-browser-item-active {
+    background: var(--plex-bg-hover);
+}
+
 /* User List */
 .user-list {
     position: relative;

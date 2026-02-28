@@ -26,6 +26,7 @@ class PathMapping:
     cache_path: Optional[str] = None
     cacheable: bool = True
     enabled: bool = True
+    section_id: Optional[int] = None
 
 
 @dataclass
@@ -113,7 +114,7 @@ class SettingsService:
     def _sanitize_path_mapping(self, mapping: Dict[str, Any]) -> Dict[str, Any]:
         """Sanitize all path fields in a path mapping"""
         sanitized = mapping.copy()
-        path_fields = ["plex_path", "real_path", "cache_path"]
+        path_fields = ["plex_path", "real_path", "cache_path", "host_cache_path"]
         for field in path_fields:
             if field in sanitized and sanitized[field]:
                 sanitized[field] = self._sanitize_path(sanitized[field])
@@ -223,10 +224,17 @@ class SettingsService:
         return self._save_raw(raw)
 
     def update_path_mapping(self, index: int, mapping: Dict[str, Any]) -> bool:
-        """Update an existing path mapping by index (sanitizes paths to strip whitespace)"""
+        """Update an existing path mapping by index (sanitizes paths to strip whitespace).
+
+        Preserves section_id from the existing mapping if not in the update dict.
+        """
         raw = self._load_raw()
         mappings = raw.get("path_mappings", [])
         if 0 <= index < len(mappings):
+            # Preserve section_id from existing mapping if not provided
+            existing = mappings[index]
+            if "section_id" not in mapping and "section_id" in existing:
+                mapping["section_id"] = existing["section_id"]
             mappings[index] = self._sanitize_path_mapping(mapping)
             raw["path_mappings"] = mappings
             return self._save_raw(raw)
@@ -242,10 +250,108 @@ class SettingsService:
             return self._save_raw(raw)
         return False
 
+    def _rebuild_valid_sections(self, raw: Dict[str, Any]) -> None:
+        """Rebuild valid_sections from enabled path_mappings with section_id.
+
+        Scans all enabled path_mappings that have a section_id set,
+        collects unique IDs, and writes them sorted to raw["valid_sections"].
+        """
+        mappings = raw.get("path_mappings", [])
+        section_ids = set()
+        for m in mappings:
+            sid = m.get("section_id")
+            if sid is not None and m.get("enabled", True):
+                section_ids.add(int(sid))
+        raw["valid_sections"] = sorted(section_ids)
+
+    def migrate_link_path_mappings_to_libraries(self) -> bool:
+        """One-time migration: match existing path_mappings to Plex libraries by plex_path.
+
+        Sets section_id on mappings whose plex_path matches a Plex library location.
+        Skips if any mapping already has a section_id (already migrated).
+
+        Returns True if migration was performed.
+        """
+        raw = self._load_raw()
+        mappings = raw.get("path_mappings", [])
+
+        if not mappings:
+            return False
+
+        # Skip if any mapping already has section_id
+        if any(m.get("section_id") is not None for m in mappings):
+            return False
+
+        # Get Plex libraries to match against
+        libraries = self.get_plex_libraries()
+        if not libraries:
+            return False
+
+        # Build lookup: normalized plex_path → section_id
+        path_to_section = {}
+        for lib in libraries:
+            for loc in lib.get("locations", []):
+                normalized = loc.rstrip("/") + "/"
+                path_to_section[normalized] = lib["id"]
+
+        migrated = False
+        for m in mappings:
+            plex_path = m.get("plex_path", "").rstrip("/") + "/" if m.get("plex_path") else ""
+            if plex_path in path_to_section:
+                m["section_id"] = path_to_section[plex_path]
+                migrated = True
+
+        if migrated:
+            raw["path_mappings"] = mappings
+            self._rebuild_valid_sections(raw)
+            self._save_raw(raw)
+            logger.info("Migrated path mappings: linked to Plex library section IDs")
+
+        return migrated
+
+    def auto_fill_mapping(self, library: Dict, plex_location: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate a pre-filled path mapping from a Plex library location.
+
+        Args:
+            library: Plex library dict with id, title, type, locations
+            plex_location: The specific Plex path for this location
+            settings: Current raw settings (for cache_dir)
+
+        Returns:
+            Dict suitable for adding to path_mappings
+        """
+        cache_dir = settings.get("cache_dir", "/mnt/cache").rstrip("/")
+        plex_path = plex_location if plex_location.endswith("/") else plex_location + "/"
+
+        # Suggest real_path based on common Docker path patterns
+        real_path = plex_path
+        for docker_prefix, host_prefix in [("/data/", "/mnt/user/"), ("/media/", "/mnt/user/")]:
+            if plex_path.startswith(docker_prefix):
+                real_path = plex_path.replace(docker_prefix, host_prefix, 1)
+                break
+
+        # Generate cache_path from library folder name
+        lib_folder = plex_path.rstrip("/").split("/")[-1]
+        cache_path = f"{cache_dir}/{lib_folder}/"
+
+        return {
+            "name": library["title"],
+            "plex_path": plex_path,
+            "real_path": real_path,
+            "cache_path": cache_path,
+            "host_cache_path": cache_path,
+            "cacheable": True,
+            "enabled": True,
+            "section_id": library["id"]
+        }
+
     def get_cache_settings(self) -> Dict[str, Any]:
         """Get cache behavior settings"""
         raw = self._load_raw()
         return {
+            # Content discovery (moved from Plex tab)
+            "number_episodes": raw.get("number_episodes", 5),
+            "days_to_monitor": raw.get("days_to_monitor", 183),
             "watchlist_toggle": raw.get("watchlist_toggle", True),
             "watchlist_episodes": raw.get("watchlist_episodes", 3),
             "watchlist_retention_days": raw.get("watchlist_retention_days", 0),
@@ -285,6 +391,9 @@ class SettingsService:
 
         # Map form field names to settings keys
         field_mapping = {
+            # Content discovery (moved from Plex tab)
+            "number_episodes": ("number_episodes", safe_int),
+            "days_to_monitor": ("days_to_monitor", safe_int),
             "watchlist_toggle": ("watchlist_toggle", lambda x: x == "on" or x is True),
             "watchlist_episodes": ("watchlist_episodes", safe_int),
             "watchlist_retention_days": ("watchlist_retention_days", float),
