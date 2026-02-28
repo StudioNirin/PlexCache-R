@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("/run")
-async def run_operation(
+def run_operation(
     request: Request,
     dry_run: str = Form("false"),
     verbose: str = Form("false")
@@ -82,7 +82,7 @@ async def run_operation(
 
 
 @router.post("/stop")
-async def stop_operation(request: Request):
+def stop_operation(request: Request):
     """Stop the current operation"""
     runner = get_operation_runner()
 
@@ -128,7 +128,7 @@ async def stop_operation(request: Request):
 
 
 @router.get("/status")
-async def get_status(request: Request):
+def get_status(request: Request):
     """Get current operation status"""
     runner = get_operation_runner()
     status = runner.get_status_dict()
@@ -147,41 +147,30 @@ async def get_status(request: Request):
     return JSONResponse(status)
 
 
-@router.get("/logs")
-async def get_operation_logs(request: Request):
-    """Get captured log messages from current/last operation"""
-    runner = get_operation_runner()
-    logs = runner.log_messages
-
-    is_htmx = request.headers.get("HX-Request") == "true"
-
-    if is_htmx:
-        return templates.TemplateResponse(
-            "components/operation_logs.html",
-            {
-                "request": request,
-                "logs": logs
-            }
-        )
-
-    return JSONResponse({"logs": logs})
-
-
 @router.get("/activity")
-async def get_recent_activity(request: Request):
+def get_recent_activity(request: Request):
     """Get recent file activity from operations"""
+    from web.services import get_settings_service
+
     runner = get_operation_runner()
     activity = runner.recent_activity
 
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
+        context = {
+            "request": request,
+            "activity": activity,
+        }
+        # Pass extra context when activity is empty for contextual empty states
+        if not activity:
+            settings_service = get_settings_service()
+            context["plex_connected"] = settings_service.check_plex_connection()
+            context["last_run"] = settings_service.get_last_run_time()
+
         return templates.TemplateResponse(
             "components/recent_activity.html",
-            {
-                "request": request,
-                "activity": activity
-            }
+            context
         )
 
     return JSONResponse({"activity": activity})

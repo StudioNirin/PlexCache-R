@@ -4,16 +4,15 @@ import json
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 
 from web.config import PROJECT_ROOT, DATA_DIR, CONFIG_DIR, SETTINGS_FILE
-from core.system_utils import get_disk_usage, detect_zfs, get_array_direct_path, parse_size_bytes
-
-# Backward-compatible alias
-_parse_size_bytes = parse_size_bytes
+from core.system_utils import get_disk_usage, detect_zfs, get_array_direct_path, parse_size_bytes, format_bytes, translate_container_to_host_path, translate_host_to_container_path, remove_from_exclude_file, remove_from_timestamps_file
+from core.file_operations import get_media_identity, find_matching_plexcached, save_json_atomically
 
 
 # Subtitle file extensions (case-insensitive)
@@ -84,54 +83,14 @@ class CacheService:
         return settings.get("cache_dir", "")
 
     def _translate_container_to_host_path(self, path: str) -> str:
-        """Translate container cache path to host path for exclude file.
-
-        When writing to the exclude file, paths must be host paths so the
-        Unraid mover can understand them.
-        """
+        """Translate container cache path to host path for exclude file."""
         settings = self._load_settings()
-        path_mappings = settings.get('path_mappings', [])
-
-        for mapping in path_mappings:
-            host_cache_path = mapping.get('host_cache_path', '')
-            cache_path = mapping.get('cache_path', '')
-
-            if not host_cache_path or not cache_path:
-                continue
-            if host_cache_path == cache_path:
-                continue  # No translation needed
-
-            container_prefix = cache_path.rstrip('/')
-            if path.startswith(container_prefix):
-                host_prefix = host_cache_path.rstrip('/')
-                return path.replace(container_prefix, host_prefix, 1)
-
-        return path
+        return translate_container_to_host_path(path, settings.get('path_mappings', []))
 
     def _translate_host_to_container_path(self, path: str) -> str:
-        """Translate host cache path to container path.
-
-        When reading from the exclude file, paths are host paths but we need
-        container paths to check file existence inside Docker.
-        """
+        """Translate host cache path to container path."""
         settings = self._load_settings()
-        path_mappings = settings.get('path_mappings', [])
-
-        for mapping in path_mappings:
-            host_cache_path = mapping.get('host_cache_path', '')
-            cache_path = mapping.get('cache_path', '')
-
-            if not host_cache_path or not cache_path:
-                continue
-            if host_cache_path == cache_path:
-                continue  # No translation needed
-
-            host_prefix = host_cache_path.rstrip('/')
-            if path.startswith(host_prefix):
-                container_prefix = cache_path.rstrip('/')
-                return path.replace(host_prefix, container_prefix, 1)
-
-        return path
+        return translate_host_to_container_path(path, settings.get('path_mappings', []))
 
     def _get_cache_dir_for_display(self, settings: Dict = None) -> str:
         """Get the cache directory for UI display, preferring host paths.
@@ -205,23 +164,6 @@ class CacheService:
             filename = filename[:match.start()]
 
         return filename
-
-    def _format_size(self, size_bytes: int) -> str:
-        """Format bytes into human-readable string"""
-        if size_bytes == 0:
-            return "0 B"
-
-        units = ['B', 'KB', 'MB', 'GB', 'TB']
-        unit_index = 0
-        size = float(size_bytes)
-
-        while size >= 1024 and unit_index < len(units) - 1:
-            size /= 1024
-            unit_index += 1
-
-        if unit_index == 0:
-            return f"{int(size)} B"
-        return f"{size:.2f} {units[unit_index]}"
 
     def get_cached_files_list(self) -> List[str]:
         """Get list of cached file paths from timestamps.json (primary) or exclude file (fallback)"""
@@ -683,7 +625,7 @@ class CacheService:
                 path=cache_path,
                 filename=filename,
                 size=size,
-                size_display=self._format_size(size),
+                size_display=format_bytes(size),
                 cached_at=cached_at,
                 cache_age_hours=cache_age_hours,
                 source=source,
@@ -735,7 +677,7 @@ class CacheService:
 
         if cache_dir and os.path.exists(cache_dir):
             try:
-                drive_size_override = _parse_size_bytes(settings.get("cache_drive_size", ""))
+                drive_size_override = parse_size_bytes(settings.get("cache_drive_size", ""))
                 disk = get_disk_usage(cache_dir, drive_size_override)
                 disk_used = disk.used
                 disk_total = disk.total
@@ -786,7 +728,7 @@ class CacheService:
                 if disk_used > eviction_threshold_bytes:
                     eviction_over_threshold = True
                     eviction_over_by = disk_used - eviction_threshold_bytes
-                    eviction_over_by_display = self._format_size(eviction_over_by)
+                    eviction_over_by_display = format_bytes(eviction_over_by)
 
         cache_limit_exceeded = False
         if cache_limit_bytes > 0 and disk_used >= cache_limit_bytes:
@@ -820,21 +762,49 @@ class CacheService:
             except (ValueError, TypeError):
                 pass
 
+        # Check plexcache quota
+        plexcache_quota_exceeded = False
+        plexcache_quota_setting = settings.get("plexcache_quota", "")
+        if plexcache_quota_setting and plexcache_quota_setting not in ["", "0"]:
+            try:
+                quota_str = str(plexcache_quota_setting).strip()
+                quota_bytes = 0
+                if quota_str.upper().endswith('%'):
+                    if disk_total > 0:
+                        percent_val = int(quota_str.rstrip('%'))
+                        quota_bytes = int(disk_total * percent_val / 100)
+                else:
+                    match = re.match(r'^([\d.]+)\s*(T|TB|G|GB|M|MB)?$', quota_str, re.IGNORECASE)
+                    if match:
+                        value = float(match.group(1))
+                        unit = (match.group(2) or "GB").upper()
+                        if unit in ("T", "TB"):
+                            quota_bytes = int(value * 1024**4)
+                        elif unit in ("G", "GB"):
+                            quota_bytes = int(value * 1024**3)
+                        elif unit in ("M", "MB"):
+                            quota_bytes = int(value * 1024**2)
+                if quota_bytes > 0 and cached_files_size >= quota_bytes:
+                    plexcache_quota_exceeded = True
+            except (ValueError, TypeError):
+                pass
+
         return {
             "cache_files": len(all_files),  # Grouped count (subtitles with videos)
-            "cache_size": self._format_size(disk_used),  # Actual disk used
+            "cache_size": format_bytes(disk_used),  # Actual disk used
             "cache_size_bytes": disk_used,
-            "cache_limit": self._format_size(disk_total),  # Actual disk total
+            "cache_limit": format_bytes(disk_total),  # Actual disk total
             "cache_limit_bytes": disk_total,
             "usage_percent": usage_percent,
-            "cached_files_size": self._format_size(cached_files_size),  # PlexCache files only
+            "cached_files_size": format_bytes(cached_files_size),  # PlexCache files only
             "cached_files_size_bytes": cached_files_size,
             "ondeck_count": ondeck_count,
             "watchlist_count": watchlist_count,
             "eviction_over_threshold": eviction_over_threshold,
             "eviction_over_by_display": eviction_over_by_display,
             "cache_limit_exceeded": cache_limit_exceeded,
-            "min_free_space_warning": min_free_space_warning
+            "min_free_space_warning": min_free_space_warning,
+            "plexcache_quota_exceeded": plexcache_quota_exceeded
         }
 
     def get_drive_details(self, expiring_within_days: int = 3) -> Dict[str, Any]:
@@ -866,7 +836,7 @@ class CacheService:
 
         if cache_dir and os.path.exists(cache_dir):
             try:
-                drive_size_override = _parse_size_bytes(settings.get("cache_drive_size", ""))
+                drive_size_override = parse_size_bytes(settings.get("cache_drive_size", ""))
                 has_manual_drive_size = drive_size_override > 0
                 disk = get_disk_usage(cache_dir, drive_size_override)
                 disk_used = disk.used
@@ -945,22 +915,12 @@ class CacheService:
                     # Percentage-based limit
                     percent_val = int(limit_str.rstrip("%"))
                     cache_limit_bytes = int(disk_total * percent_val / 100)
-                    cache_limit_display = f"{percent_val}% = {self._format_size(cache_limit_bytes)}"
+                    cache_limit_display = f"{percent_val}% = {format_bytes(cache_limit_bytes)}"
                     cache_limit_percent = percent_val
                 else:
-                    # Absolute value - parse size string (e.g., "1000GB", "500G", "1TB")
-                    import re
-                    match = re.match(r"^(\d+(?:\.\d+)?)\s*(TB|GB|MB|T|G|M)?$", limit_str, re.IGNORECASE)
-                    if match:
-                        value = float(match.group(1))
-                        unit = (match.group(2) or "GB").upper()
-                        if unit in ("T", "TB"):
-                            cache_limit_bytes = int(value * 1024**4)
-                        elif unit in ("G", "GB"):
-                            cache_limit_bytes = int(value * 1024**3)
-                        elif unit in ("M", "MB"):
-                            cache_limit_bytes = int(value * 1024**2)
-                        cache_limit_display = self._format_size(cache_limit_bytes)
+                    cache_limit_bytes = parse_size_bytes(limit_str)
+                    if cache_limit_bytes > 0:
+                        cache_limit_display = format_bytes(cache_limit_bytes)
                         if disk_total > 0:
                             cache_limit_percent = round(cache_limit_bytes / disk_total * 100, 1)
             except (ValueError, TypeError):
@@ -989,21 +949,12 @@ class CacheService:
                 if mfs_str.upper().endswith('%'):
                     percent_val = int(mfs_str.rstrip('%').rstrip().upper().rstrip('%'))
                     min_free_space_bytes = int(disk_total * percent_val / 100)
-                    min_free_space_display = f"{percent_val}% = {self._format_size(min_free_space_bytes)}"
+                    min_free_space_display = f"{percent_val}% = {format_bytes(min_free_space_bytes)}"
                     min_free_space_percent = percent_val
                 else:
-                    import re
-                    match = re.match(r"^(\d+(?:\.\d+)?)\s*(TB|GB|MB|T|G|M)?$", mfs_str, re.IGNORECASE)
-                    if match:
-                        value = float(match.group(1))
-                        unit = (match.group(2) or "GB").upper()
-                        if unit in ("T", "TB"):
-                            min_free_space_bytes = int(value * 1024**4)
-                        elif unit in ("G", "GB"):
-                            min_free_space_bytes = int(value * 1024**3)
-                        elif unit in ("M", "MB"):
-                            min_free_space_bytes = int(value * 1024**2)
-                        min_free_space_display = self._format_size(min_free_space_bytes)
+                    min_free_space_bytes = parse_size_bytes(mfs_str)
+                    if min_free_space_bytes > 0:
+                        min_free_space_display = format_bytes(min_free_space_bytes)
                         if disk_total > 0:
                             min_free_space_percent = round(min_free_space_bytes / disk_total * 100, 1)
             except (ValueError, TypeError):
@@ -1013,6 +964,39 @@ class CacheService:
             min_free_space_available = max(0, disk_free - min_free_space_bytes)
             if disk_free < min_free_space_bytes:
                 min_free_space_warning = True
+
+        # Calculate plexcache_quota info (only counts PlexCache-managed files)
+        plexcache_quota_setting = settings.get("plexcache_quota", "")
+        plexcache_quota_bytes = 0
+        plexcache_quota_display = None
+        plexcache_quota_percent = None
+        plexcache_quota_warning = False
+        plexcache_quota_available = 0
+        plexcache_quota_used_percent = 0
+
+        if plexcache_quota_setting and plexcache_quota_setting not in ["", "0"]:
+            try:
+                quota_str = str(plexcache_quota_setting).strip()
+                if quota_str.upper().endswith('%'):
+                    if disk_total > 0:
+                        percent_val = int(quota_str.rstrip('%'))
+                        plexcache_quota_bytes = int(disk_total * percent_val / 100)
+                        plexcache_quota_display = f"{percent_val}% = {format_bytes(plexcache_quota_bytes)}"
+                        plexcache_quota_percent = percent_val
+                else:
+                    plexcache_quota_bytes = parse_size_bytes(quota_str)
+                    if plexcache_quota_bytes > 0:
+                        plexcache_quota_display = format_bytes(plexcache_quota_bytes)
+                        if disk_total > 0:
+                            plexcache_quota_percent = round(plexcache_quota_bytes / disk_total * 100, 1)
+            except (ValueError, TypeError):
+                pass
+
+        if plexcache_quota_bytes > 0:
+            plexcache_quota_used_percent = round(total_cached_size / plexcache_quota_bytes * 100, 1) if plexcache_quota_bytes > 0 else 0
+            plexcache_quota_available = max(0, plexcache_quota_bytes - total_cached_size)
+            if total_cached_size >= plexcache_quota_bytes:
+                plexcache_quota_warning = True
 
         # Calculate eviction threshold (for visual display)
         eviction_threshold_setting = settings.get("cache_eviction_threshold_percent", 95)
@@ -1025,7 +1009,7 @@ class CacheService:
 
         if cache_limit_bytes > 0:
             eviction_threshold_bytes = int(cache_limit_bytes * eviction_threshold_setting / 100)
-            eviction_threshold_display = self._format_size(eviction_threshold_bytes)
+            eviction_threshold_display = format_bytes(eviction_threshold_bytes)
             if disk_total > 0:
                 eviction_threshold_percent_of_drive = round(eviction_threshold_bytes / disk_total * 100, 1)
             # Check if drive usage is over threshold
@@ -1069,14 +1053,14 @@ class CacheService:
             # Storage Overview
             "storage": {
                 "total": disk_total,
-                "total_display": self._format_size(disk_total),
+                "total_display": format_bytes(disk_total),
                 "used": disk_used,
-                "used_display": self._format_size(disk_used),
+                "used_display": format_bytes(disk_used),
                 "free": disk_free,
-                "free_display": self._format_size(disk_free),
+                "free_display": format_bytes(disk_free),
                 "usage_percent": calc_percent(disk_used, disk_total),
                 "cached_size": total_cached_size,
-                "cached_size_display": self._format_size(total_cached_size),
+                "cached_size_display": format_bytes(total_cached_size),
                 "cached_percent": calc_percent(total_cached_size, disk_total),
                 "file_count": len(all_files),
                 # ZFS detection (values may need manual override)
@@ -1088,7 +1072,7 @@ class CacheService:
                 "cache_limit_percent": cache_limit_percent,
                 "cache_limit_used_percent": cache_limit_used_percent,
                 "cache_limit_available": cache_limit_available,
-                "cache_limit_available_display": self._format_size(cache_limit_available) if cache_limit_bytes > 0 else None,
+                "cache_limit_available_display": format_bytes(cache_limit_available) if cache_limit_bytes > 0 else None,
                 # Eviction threshold info
                 "eviction_threshold_bytes": eviction_threshold_bytes,
                 "eviction_threshold_display": eviction_threshold_display,
@@ -1097,17 +1081,25 @@ class CacheService:
                 "eviction_over_threshold": eviction_over_threshold,
                 "eviction_approaching": eviction_approaching,
                 "eviction_over_by": eviction_over_by,
-                "eviction_over_by_display": self._format_size(eviction_over_by) if eviction_over_by > 0 else None,
+                "eviction_over_by_display": format_bytes(eviction_over_by) if eviction_over_by > 0 else None,
                 # Min free space info
                 "min_free_space_bytes": min_free_space_bytes,
                 "min_free_space_display": min_free_space_display,
                 "min_free_space_percent": min_free_space_percent,
                 "min_free_space_warning": min_free_space_warning,
                 "min_free_space_available": min_free_space_available,
-                "min_free_space_available_display": self._format_size(min_free_space_available) if min_free_space_bytes > 0 else None,
+                "min_free_space_available_display": format_bytes(min_free_space_available) if min_free_space_bytes > 0 else None,
+                # PlexCache quota info
+                "plexcache_quota_bytes": plexcache_quota_bytes,
+                "plexcache_quota_display": plexcache_quota_display,
+                "plexcache_quota_percent": plexcache_quota_percent,
+                "plexcache_quota_used_percent": plexcache_quota_used_percent,
+                "plexcache_quota_available": plexcache_quota_available,
+                "plexcache_quota_available_display": format_bytes(plexcache_quota_available) if plexcache_quota_bytes > 0 else None,
+                "plexcache_quota_warning": plexcache_quota_warning,
                 # Stacked bar data
                 "other_drive_size": other_drive_size,
-                "other_drive_size_display": self._format_size(other_drive_size),
+                "other_drive_size_display": format_bytes(other_drive_size),
                 "other_drive_percent": other_drive_percent,
                 "cache_bar_status": cache_bar_status  # "safe", "approaching", or "over"
             },
@@ -1116,19 +1108,19 @@ class CacheService:
                 "ondeck": {
                     "count": ondeck_count,
                     "size": ondeck_size,
-                    "size_display": self._format_size(ondeck_size),
+                    "size_display": format_bytes(ondeck_size),
                     "percent": calc_percent(ondeck_size, total_cached_size) if total_cached_size > 0 else 0
                 },
                 "watchlist": {
                     "count": watchlist_count,
                     "size": watchlist_size,
-                    "size_display": self._format_size(watchlist_size),
+                    "size_display": format_bytes(watchlist_size),
                     "percent": calc_percent(watchlist_size, total_cached_size) if total_cached_size > 0 else 0
                 },
                 "other": {
                     "count": other_count,
                     "size": other_size,
-                    "size_display": self._format_size(other_size),
+                    "size_display": format_bytes(other_size),
                     "percent": calc_percent(other_size, total_cached_size) if total_cached_size > 0 else 0
                 }
             },
@@ -1257,19 +1249,19 @@ class CacheService:
                 "count": len(high_files),
                 "percent": calc_percent(len(high_files), total_count),
                 "size": sum(f["size"] for f in high_files),
-                "size_display": self._format_size(sum(f["size"] for f in high_files))
+                "size_display": format_bytes(sum(f["size"] for f in high_files))
             },
             "medium": {
                 "count": len(medium_files),
                 "percent": calc_percent(len(medium_files), total_count),
                 "size": sum(f["size"] for f in medium_files),
-                "size_display": self._format_size(sum(f["size"] for f in medium_files))
+                "size_display": format_bytes(sum(f["size"] for f in medium_files))
             },
             "low": {
                 "count": len(low_files),
                 "percent": calc_percent(len(low_files), total_count),
                 "size": sum(f["size"] for f in low_files),
-                "size_display": self._format_size(sum(f["size"] for f in low_files))
+                "size_display": format_bytes(sum(f["size"] for f in low_files))
             }
         }
 
@@ -1284,7 +1276,7 @@ class CacheService:
             "watchlist_count": watchlist_count,
             "other_count": other_count,
             "total_size": total_size,
-            "total_size_display": self._format_size(total_size)
+            "total_size_display": format_bytes(total_size)
         }
 
         # Eviction settings and current status
@@ -1300,7 +1292,7 @@ class CacheService:
 
         if cache_dir and os.path.exists(cache_dir):
             try:
-                drive_size_override = _parse_size_bytes(settings.get("cache_drive_size", ""))
+                drive_size_override = parse_size_bytes(settings.get("cache_drive_size", ""))
                 disk = get_disk_usage(cache_dir, drive_size_override)
                 disk_used = disk.used
                 disk_total = disk.total
@@ -1325,7 +1317,7 @@ class CacheService:
             "current_usage_percent": current_usage_percent,
             "would_evict_count": would_evict_count,
             "would_evict_size": would_evict_size,
-            "would_evict_size_display": self._format_size(would_evict_size)
+            "would_evict_size_display": format_bytes(would_evict_size)
         }
 
         return {
@@ -1355,7 +1347,7 @@ class CacheService:
         disk_total = 0
         if cache_dir and os.path.exists(cache_dir):
             try:
-                drive_size_override = _parse_size_bytes(settings.get("cache_drive_size", ""))
+                drive_size_override = parse_size_bytes(settings.get("cache_drive_size", ""))
                 disk = get_disk_usage(cache_dir, drive_size_override)
                 disk_used = disk.used
                 disk_total = disk.total
@@ -1374,17 +1366,7 @@ class CacheService:
                     percent_val = int(limit_str.rstrip("%"))
                     cache_limit_bytes = int(disk_total * percent_val / 100)
                 else:
-                    # Absolute value (e.g., "500GB", "1TB")
-                    match = re.match(r"^(\d+(?:\.\d+)?)\s*(TB|GB|MB|T|G|M)?$", limit_str, re.IGNORECASE)
-                    if match:
-                        value = float(match.group(1))
-                        unit = (match.group(2) or "GB").upper()
-                        if unit in ("T", "TB"):
-                            cache_limit_bytes = int(value * 1024**4)
-                        elif unit in ("G", "GB"):
-                            cache_limit_bytes = int(value * 1024**3)
-                        elif unit in ("M", "MB"):
-                            cache_limit_bytes = int(value * 1024**2)
+                    cache_limit_bytes = parse_size_bytes(limit_str)
             except (ValueError, TypeError):
                 pass
 
@@ -1421,16 +1403,16 @@ class CacheService:
         return {
             "threshold_percent": threshold_percent,
             "cache_limit_bytes": cache_limit_bytes,
-            "cache_limit_display": self._format_size(cache_limit_bytes),
+            "cache_limit_display": format_bytes(cache_limit_bytes),
             "current_usage_percent": round((disk_used / cache_limit_bytes * 100), 1) if cache_limit_bytes > 0 else 0,
             "target_usage_percent": threshold_percent,
             "target_bytes": target_bytes,
-            "target_bytes_display": self._format_size(target_bytes),
+            "target_bytes_display": format_bytes(target_bytes),
             "bytes_to_free": bytes_to_free,
-            "bytes_to_free_display": self._format_size(bytes_to_free),
+            "bytes_to_free_display": format_bytes(bytes_to_free),
             "would_evict": would_evict,
             "total_freed": freed_so_far,
-            "total_freed_display": self._format_size(freed_so_far),
+            "total_freed_display": format_bytes(freed_so_far),
             "remaining_count": remaining_count
         }
 
@@ -1576,52 +1558,347 @@ class CacheService:
             "errors": errors
         }
 
-    def _remove_from_exclude_file(self, cache_path: str):
-        """Remove a path from the exclude file"""
-        if not self.exclude_file.exists():
-            return
+    def _cache_to_real(self, cache_path: str, path_mappings: List[Dict]) -> Optional[str]:
+        """Convert a cache path to a real (array) path via path_mappings prefix swap."""
+        for mapping in path_mappings:
+            if not mapping.get('enabled', True):
+                continue
+            cache_prefix = mapping.get('cache_path', '').rstrip('/')
+            real_prefix = mapping.get('real_path', '').rstrip('/')
+            if cache_prefix and cache_path.startswith(cache_prefix):
+                return real_prefix + cache_path[len(cache_prefix):]
+        return None
+
+    def _real_to_cache(self, real_path: str, path_mappings: List[Dict]) -> Optional[str]:
+        """Convert a real (array) path to a cache path via path_mappings prefix swap."""
+        for mapping in path_mappings:
+            if not mapping.get('enabled', True):
+                continue
+            real_prefix = mapping.get('real_path', '').rstrip('/')
+            cache_prefix = mapping.get('cache_path', '').rstrip('/')
+            if real_prefix and real_path.startswith(real_prefix):
+                return cache_prefix + real_path[len(real_prefix):]
+        return None
+
+    def _plex_to_real(self, plex_path: str, path_mappings: List[Dict]) -> Optional[str]:
+        """Convert a Plex path to a real (array) path via path_mappings prefix swap."""
+        for mapping in path_mappings:
+            if not mapping.get('enabled', True):
+                continue
+            plex_prefix = mapping.get('plex_path', '').rstrip('/')
+            real_prefix = mapping.get('real_path', '').rstrip('/')
+            if plex_prefix and plex_path.startswith(plex_prefix):
+                return real_prefix + plex_path[len(plex_prefix):]
+        return None
+
+    def _real_to_plex(self, real_path: str, path_mappings: List[Dict]) -> Optional[str]:
+        """Convert a real (array) path to a Plex path via path_mappings prefix swap."""
+        for mapping in path_mappings:
+            if not mapping.get('enabled', True):
+                continue
+            real_prefix = mapping.get('real_path', '').rstrip('/')
+            plex_prefix = mapping.get('plex_path', '').rstrip('/')
+            if real_prefix and real_path.startswith(real_prefix):
+                return plex_prefix + real_path[len(real_prefix):]
+        return None
+
+    def _add_to_exclude_file(self, cache_path: str):
+        """Add a cache path to the exclude file (with host path translation and dedup)."""
+        settings = self._load_settings()
+        host_path = translate_container_to_host_path(cache_path, settings.get('path_mappings', []))
+
+        existing = set()
+        if self.exclude_file.exists():
+            try:
+                with open(self.exclude_file, 'r', encoding='utf-8') as f:
+                    existing = {line.strip() for line in f if line.strip()}
+            except IOError:
+                pass
+
+        if host_path not in existing:
+            with open(self.exclude_file, 'a', encoding='utf-8') as f:
+                f.write(host_path + '\n')
+
+    def check_for_upgrades(self, stale_exclude_entries: List[str]) -> Dict[str, Any]:
+        """Check if stale exclude entries are actually media upgrades (Sonarr/Radarr swaps).
+
+        For each stale entry that has a rating_key in the OnDeck tracker, queries Plex
+        to see if the file path has changed (indicating an upgrade). If so, transfers
+        all tracking data from the old path to the new path.
+
+        Args:
+            stale_exclude_entries: Cache paths that are in the exclude list but not on cache.
+
+        Returns:
+            Dict with upgrades_found, upgrades_resolved, and details list.
+        """
+        logger = logging.getLogger(__name__)
+        result = {"upgrades_found": 0, "upgrades_resolved": 0, "details": []}
+
+        if not stale_exclude_entries:
+            return result
+
+        settings = self._load_settings()
+        path_mappings = settings.get('path_mappings', [])
+        ondeck_data = self.get_ondeck_tracker()
+
+        if not ondeck_data:
+            return result
+
+        # For each stale entry, check if it maps to an ondeck entry with a rating_key
+        # Note: OnDeck tracker keys are REAL paths (/mnt/user/...), not Plex paths
+        candidates: List[Tuple[str, str, str]] = []  # (cache_path, rating_key, real_path)
+        for cache_path in stale_exclude_entries:
+            real_path = self._cache_to_real(cache_path, path_mappings)
+            if not real_path:
+                continue
+            # Look up by real path (OnDeck tracker key format)
+            entry = ondeck_data.get(real_path)
+            if entry and entry.get('rating_key'):
+                candidates.append((cache_path, entry['rating_key'], real_path))
+
+        if not candidates:
+            return result
+
+        # Connect to Plex once for all candidates
+        plex_url = settings.get('plex_url', '') or settings.get('PLEX_URL', '')
+        plex_token = settings.get('plex_token', '') or settings.get('PLEX_TOKEN', '')
+        if not plex_url or not plex_token:
+            logger.debug("Upgrade check skipped: no Plex credentials configured")
+            return result
 
         try:
-            with open(self.exclude_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+            from plexapi.server import PlexServer
+            plex = PlexServer(plex_url, plex_token, timeout=10)
+        except Exception as e:
+            logger.warning(f"Upgrade check: could not connect to Plex: {e}")
+            return result
 
-            # Translate container path to host path for comparison
-            # (exclude file contains host paths for Unraid mover)
-            host_path = self._translate_container_to_host_path(cache_path)
-            new_lines = [line for line in lines if line.strip() != host_path]
+        # Check each candidate against Plex
+        for cache_path, rating_key, old_real_path in candidates:
+            try:
+                item = plex.fetchItem(int(rating_key))
+            except Exception as e:
+                logger.debug(f"Upgrade check: fetchItem({rating_key}) failed: {e}")
+                continue
 
-            with open(self.exclude_file, 'w', encoding='utf-8') as f:
-                f.writelines(new_lines)
-        except IOError as e:
-            logging.warning(f"Could not update exclude file: {e}")
+            # Get current file path from Plex (returns plex-internal path)
+            try:
+                new_plex_path = item.media[0].parts[0].file
+            except (IndexError, AttributeError):
+                logger.debug(f"Upgrade check: no file path for rating_key={rating_key}")
+                continue
+
+            # Convert Plex path to real path for comparison with tracker key
+            new_real_path = self._plex_to_real(new_plex_path, path_mappings)
+            if not new_real_path:
+                logger.debug(f"Upgrade check: cannot convert plex path for rk={rating_key}: {new_plex_path}")
+                continue
+
+            if new_real_path == old_real_path:
+                continue  # Same path, not an upgrade
+
+            # Upgrade detected
+            result["upgrades_found"] += 1
+
+            new_cache_path = self._real_to_cache(new_real_path, path_mappings)
+            if not new_cache_path:
+                logger.warning(f"Upgrade detected (rk={rating_key}) but cannot convert new real path: {new_real_path}")
+                continue
+
+            # Verify the new file actually exists on cache
+            if not os.path.exists(new_cache_path):
+                logger.debug(f"Upgrade detected (rk={rating_key}) but new file not yet on cache: {new_cache_path}")
+                continue
+
+            # Derive plex paths for watchlist tracker (uses plex path keys)
+            old_plex_path = self._real_to_plex(old_real_path, path_mappings)
+
+            logger.info(f"[UPGRADE] Detected file upgrade (rk={rating_key}): "
+                        f"{os.path.basename(cache_path)} -> {os.path.basename(new_cache_path)}")
+
+            success = self._transfer_upgrade_tracking(
+                old_cache_path=cache_path,
+                old_real_path=old_real_path,
+                old_plex_path=old_plex_path,
+                new_cache_path=new_cache_path,
+                new_real_path=new_real_path,
+                new_plex_path=new_plex_path,
+                rating_key=rating_key,
+                settings=settings,
+                path_mappings=path_mappings,
+            )
+
+            if success:
+                result["upgrades_resolved"] += 1
+                result["details"].append({
+                    "rating_key": rating_key,
+                    "old_file": os.path.basename(cache_path),
+                    "new_file": os.path.basename(new_cache_path),
+                })
+
+        if result["upgrades_resolved"] > 0:
+            logger.info(f"[UPGRADE] Resolved {result['upgrades_resolved']} media upgrade(s) via web audit")
+
+        return result
+
+    def _transfer_upgrade_tracking(
+        self,
+        old_cache_path: str,
+        old_real_path: str,
+        old_plex_path: str,
+        new_cache_path: str,
+        new_real_path: str,
+        new_plex_path: str,
+        rating_key: str,
+        settings: Dict,
+        path_mappings: List[Dict],
+    ) -> bool:
+        """Transfer all tracking data from old path to new path after a media upgrade.
+
+        Updates: exclude list, timestamps, OnDeck tracker, watchlist tracker,
+        and .plexcached backups.
+
+        Returns True if transfer succeeded.
+        """
+        logger = logging.getLogger(__name__)
+
+        try:
+            # 1. Exclude list: remove old, add new
+            self._remove_from_exclude_file(old_cache_path)
+            self._add_to_exclude_file(new_cache_path)
+
+            # 2. Timestamps: preserve source from old entry, remove old, add new
+            timestamps = self.get_timestamps()
+            old_ts = timestamps.get(old_cache_path, {})
+            old_source = old_ts.get('source', 'unknown') if isinstance(old_ts, dict) else 'unknown'
+            remove_from_timestamps_file(self.timestamps_file, old_cache_path)
+
+            # Add new timestamp entry
+            ts_data = {}
+            if self.timestamps_file.exists():
+                try:
+                    with open(self.timestamps_file, 'r', encoding='utf-8') as f:
+                        ts_data = json.load(f)
+                except (json.JSONDecodeError, IOError):
+                    pass
+            ts_data[new_cache_path] = {
+                "cached_at": datetime.now().isoformat(),
+                "source": old_source,
+            }
+            save_json_atomically(str(self.timestamps_file), ts_data, label="timestamps")
+
+            # 3. OnDeck tracker: remove old entry (new entry created on next operation run)
+            # OnDeck tracker keys are real paths (/mnt/user/...)
+            ondeck_data = self.get_ondeck_tracker()
+            if old_real_path in ondeck_data:
+                del ondeck_data[old_real_path]
+                save_json_atomically(str(self.ondeck_file), ondeck_data, label="ondeck tracker")
+
+            # 4. Watchlist tracker: transfer entry if exists
+            # Watchlist tracker keys are plex paths (/data/...)
+            watchlist_data = self.get_watchlist_tracker()
+            if old_plex_path and old_plex_path in watchlist_data:
+                watchlist_data[new_plex_path] = watchlist_data.pop(old_plex_path)
+                save_json_atomically(str(self.watchlist_file), watchlist_data, label="watchlist tracker")
+
+            # 5. Handle .plexcached backups
+            self._handle_upgrade_plexcached(
+                old_real_path, new_real_path, new_cache_path, rating_key, settings
+            )
+
+            logger.info(f"[UPGRADE] Tracking transfer complete (rk={rating_key})")
+            return True
+
+        except Exception as e:
+            logger.error(f"[UPGRADE] Failed to transfer tracking (rk={rating_key}): {e}")
+            return False
+
+    def _handle_upgrade_plexcached(
+        self,
+        old_real_path: str,
+        new_real_path: str,
+        new_cache_path: str,
+        rating_key: str,
+        settings: Dict,
+    ) -> None:
+        """Handle .plexcached backup files during a media upgrade.
+
+        Creates new backup first, verifies it, then deletes old backup.
+        If new backup fails, old backup is preserved.
+        """
+        logger = logging.getLogger(__name__)
+
+        if not settings.get('create_plexcached_backups', True):
+            return
+
+        import shutil
+
+        old_array_path = get_array_direct_path(old_real_path)
+        old_array_dir = os.path.dirname(old_array_path)
+        old_identity = get_media_identity(old_real_path)
+        old_plexcached = find_matching_plexcached(old_array_dir, old_identity, old_real_path)
+
+        if old_plexcached and os.path.isfile(old_plexcached):
+            # Create new backup FIRST if setting enabled (before deleting old)
+            new_backup_ok = False
+            if settings.get('backup_upgraded_files', True) and os.path.isfile(new_cache_path):
+                new_array_path = get_array_direct_path(new_real_path)
+                new_plexcached = new_array_path + '.plexcached'
+
+                if not os.path.isfile(new_plexcached):
+                    try:
+                        new_array_dir = os.path.dirname(new_array_path)
+                        os.makedirs(new_array_dir, exist_ok=True)
+                        shutil.copy2(new_cache_path, new_plexcached)
+                        src_size = os.path.getsize(new_cache_path)
+                        dst_size = os.path.getsize(new_plexcached)
+                        if src_size == dst_size:
+                            logger.info(f"[UPGRADE] Created new backup: {os.path.basename(new_plexcached)} "
+                                        f"({format_bytes(src_size)}, rk={rating_key})")
+                            new_backup_ok = True
+                        else:
+                            logger.warning(f"[UPGRADE] Backup size mismatch for {os.path.basename(new_plexcached)}")
+                            os.remove(new_plexcached)
+                    except OSError as e:
+                        logger.warning(f"[UPGRADE] Failed to create new backup: {e}")
+                else:
+                    # New backup already exists
+                    new_backup_ok = True
+            else:
+                # No new backup needed — safe to delete old
+                new_backup_ok = True
+
+            # Only delete old backup after new one is confirmed (or not needed)
+            if new_backup_ok:
+                try:
+                    os.remove(old_plexcached)
+                    logger.info(f"[UPGRADE] Deleted outdated backup: {os.path.basename(old_plexcached)} (rk={rating_key})")
+                except OSError as e:
+                    logger.warning(f"[UPGRADE] Failed to delete old backup: {e}")
+            else:
+                logger.warning(f"[UPGRADE] Keeping old backup (new backup failed): {os.path.basename(old_plexcached)} (rk={rating_key})")
+
+    def _remove_from_exclude_file(self, cache_path: str):
+        """Remove a path from the exclude file"""
+        settings = self._load_settings()
+        remove_from_exclude_file(self.exclude_file, cache_path, settings.get('path_mappings', []))
 
     def _remove_from_timestamps(self, cache_path: str):
         """Remove a path from the timestamps file"""
-        if not self.timestamps_file.exists():
-            return
-
-        try:
-            with open(self.timestamps_file, 'r', encoding='utf-8') as f:
-                timestamps = json.load(f)
-
-            if cache_path in timestamps:
-                del timestamps[cache_path]
-
-                with open(self.timestamps_file, 'w', encoding='utf-8') as f:
-                    json.dump(timestamps, f, indent=2)
-            else:
-                logging.debug(f"Path not found in timestamps (may already be removed): {cache_path}")
-        except (IOError, json.JSONDecodeError) as e:
-            logging.warning(f"Could not update timestamps file: {e}")
+        remove_from_timestamps_file(self.timestamps_file, cache_path)
 
 
 # Singleton instance
 _cache_service: Optional[CacheService] = None
+_cache_service_lock = threading.Lock()
 
 
 def get_cache_service() -> CacheService:
     """Get or create the cache service singleton"""
     global _cache_service
     if _cache_service is None:
-        _cache_service = CacheService()
+        with _cache_service_lock:
+            if _cache_service is None:
+                _cache_service = CacheService()
     return _cache_service

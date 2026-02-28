@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -329,15 +330,15 @@ class SchedulerService:
         total_minutes = total_seconds // 60
 
         if total_minutes < 1:
-            return "in <1m"
+            return "<1m"
         elif total_minutes < 60:
-            return f"in {total_minutes}m"
+            return f"{total_minutes}m"
         else:
             hours = total_minutes // 60
             minutes = total_minutes % 60
             if minutes == 0:
-                return f"in {hours}h"
-            return f"in {hours}h {minutes}m"
+                return f"{hours}h"
+            return f"{hours}h {minutes}m"
 
     def get_status(self) -> Dict[str, Any]:
         """Get scheduler status"""
@@ -421,11 +422,14 @@ class SchedulerService:
 
 # Singleton instance
 _scheduler_service: Optional[SchedulerService] = None
+_scheduler_service_lock = threading.Lock()
 
 
 def get_scheduler_service() -> SchedulerService:
     """Get or create the scheduler service singleton"""
     global _scheduler_service
     if _scheduler_service is None:
-        _scheduler_service = SchedulerService()
+        with _scheduler_service_lock:
+            if _scheduler_service is None:
+                _scheduler_service = SchedulerService()
     return _scheduler_service

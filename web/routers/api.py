@@ -1,14 +1,18 @@
 """API routes for HTMX partial updates"""
 
 import html
+import os
 from datetime import datetime
-from fastapi import APIRouter, Request, Form
+from pathlib import Path
+from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from typing import List
 from urllib.parse import unquote
 
-from web.config import templates
+from web.config import templates, PLEXCACHE_PRODUCT_VERSION
+from core.system_utils import format_bytes, format_duration, format_cache_age
 from web.services import get_cache_service, get_settings_service, get_operation_runner, get_scheduler_service, ScheduleConfig, get_maintenance_service
+from web.services.operation_runner import load_last_run_summary, OperationRunner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 router = APIRouter()
@@ -29,15 +33,7 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         if cached_stats:
             # Calculate cache age
             _, updated_at = web_cache.get_with_age(CACHE_KEY_DASHBOARD_STATS)
-            cache_age = None
-            if updated_at:
-                age_seconds = (datetime.now() - updated_at).total_seconds()
-                if age_seconds < 60:
-                    cache_age = "just now"
-                elif age_seconds < 3600:
-                    cache_age = f"{int(age_seconds / 60)} min ago"
-                else:
-                    cache_age = f"{int(age_seconds / 3600)} hr ago"
+            cache_age = format_cache_age(updated_at)
 
             # Update dynamic fields that shouldn't be cached
             cached_stats["is_running"] = operation_runner.is_running
@@ -70,8 +66,24 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         "next_run_relative": schedule_status.get("next_run_relative"),
         "health_status": health["status"],
         "health_issues": health["orphaned_count"],
-        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"]
+        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"],
+        "health_orphaned_count": health["orphaned_count"],
+        "health_stale_exclude_count": health["stale_exclude_count"],
+        "health_stale_timestamp_count": health["stale_timestamp_count"],
+        "last_run_summary": None,
     }
+
+    # Load last run summary
+    summary = load_last_run_summary()
+    if summary:
+        stats["last_run_summary"] = {
+            "status": summary.get("status", "unknown"),
+            "bytes_cached_display": format_bytes(summary["bytes_cached"]) if summary.get("bytes_cached") else "",
+            "bytes_restored_display": format_bytes(summary["bytes_restored"]) if summary.get("bytes_restored") else "",
+            "duration_display": format_duration(summary.get("duration_seconds", 0)),
+            "error_count": summary.get("error_count", 0),
+            "dry_run": summary.get("dry_run", False),
+        }
 
     # Cache the results
     web_cache.set(CACHE_KEY_DASHBOARD_STATS, stats)
@@ -152,9 +164,9 @@ def cache_files_table(
     if totals["total_size"] >= 1024 ** 3:
         totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 3):.2f} GB"
     elif totals["total_size"] >= 1024 ** 2:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.1f} MB"
+        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.2f} MB"
     else:
-        totals["total_size_display"] = f"{totals['total_size'] / 1024:.0f} KB"
+        totals["total_size_display"] = f"{totals['total_size'] / 1024:.2f} KB"
 
     # Get eviction mode setting
     settings_service = get_settings_service()
@@ -184,36 +196,24 @@ def evict_file(request: Request, file_path: str):
     # URL decode the path and validate
     decoded_path = unquote(file_path)
     if not decoded_path or not decoded_path.startswith("/"):
-        return '''<div class="alert alert-error" id="evict-alert">
-            <i data-lucide="alert-circle"></i>
-            <span>Invalid file path</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
-        </script>'''
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "error", "message": "Invalid file path"
+        }).body.decode()
 
     result = cache_service.evict_file(decoded_path)
 
-    # Return an alert message
     if result.get("success"):
-        message = html.escape(result.get("message", "File evicted"))
-        return f'''<div class="alert alert-success" id="evict-alert">
-            <i data-lucide="check-circle"></i>
-            <span>{message}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 3000);
-            htmx.trigger('#cache-table-body', 'refresh');
-        </script>'''
+        message = result.get("message", "File evicted")
+        resp = templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "success", "message": message
+        }).body.decode()
+        resp += "<script>htmx.trigger('#cache-table-body', 'refresh');</script>"
+        return resp
     else:
-        message = html.escape(result.get("message", "Eviction failed"))
-        return f'''<div class="alert alert-error" id="evict-alert">
-            <i data-lucide="alert-circle"></i>
-            <span>{message}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
-        </script>'''
+        message = result.get("message", "Eviction failed")
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "error", "message": message
+        }).body.decode()
 
 
 @router.post("/cache/evict-bulk", response_class=HTMLResponse)
@@ -226,13 +226,9 @@ async def evict_bulk(request: Request):
     paths = form.getlist("paths")
 
     if not paths:
-        return '''<div class="alert alert-warning" id="evict-alert">
-            <i data-lucide="alert-triangle"></i>
-            <span>No files selected</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 3000);
-        </script>'''
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "warning", "message": "No files selected"
+        }).body.decode()
 
     # URL decode paths
     decoded_paths = [unquote(p) for p in paths]
@@ -240,30 +236,26 @@ async def evict_bulk(request: Request):
     result = cache_service.evict_files(decoded_paths)
 
     if result["success"]:
-        msg = html.escape(f"Evicted {result['evicted_count']} of {result['total_count']} files")
+        msg = f"Evicted {result['evicted_count']} of {result['total_count']} files"
         if result["errors"]:
-            msg += html.escape(f" ({len(result['errors'])} errors)")
+            msg += f" ({len(result['errors'])} errors)"
 
-        return f'''<div class="alert alert-success" id="evict-alert">
-            <i data-lucide="check-circle"></i>
-            <span>{msg}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 3000);
+        resp = templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "success", "message": msg
+        }).body.decode()
+        resp += """<script>
             htmx.trigger('#cache-table-body', 'refresh');
             document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = false);
             document.getElementById('select-all')?.checked && (document.getElementById('select-all').checked = false);
             updateBulkActions();
-        </script>'''
+        </script>"""
+        return resp
     else:
-        errors_str = html.escape("; ".join(result["errors"][:3]))
-        return f'''<div class="alert alert-error" id="evict-alert">
-            <i data-lucide="alert-circle"></i>
-            <span>Failed to evict files: {errors_str}</span>
-        </div>
-        <script>
-            setTimeout(() => document.getElementById('evict-alert')?.remove(), 5000);
-        </script>'''
+        errors_str = "; ".join(result["errors"][:3])
+        return templates.TemplateResponse("partials/alert.html", {
+            "request": request, "type": "error",
+            "message": f"Failed to evict files: {errors_str}"
+        }).body.decode()
 
 
 @router.post("/settings/schedule", response_class=HTMLResponse)
@@ -298,6 +290,7 @@ async def save_schedule_settings(request: Request):
                 if (typeof refreshScheduleStatus === 'function') {{
                     refreshScheduleStatus();
                 }}
+                htmx.ajax('GET', '/api/operation-banner', {{target: '#global-operation-banner', swap: 'innerHTML'}});
             </script>
         ''')
     else:
@@ -312,7 +305,7 @@ async def save_schedule_settings(request: Request):
 
 
 @router.get("/settings/schedule/status")
-async def get_schedule_status():
+def get_schedule_status():
     """Get current scheduler status (JSON for polling)"""
     scheduler_service = get_scheduler_service()
     return scheduler_service.get_status()
@@ -403,7 +396,7 @@ def simulate_eviction(request: Request, threshold: int = 95):
 
 
 @router.get("/settings/schedule/validate-cron")
-async def validate_cron_expression(expression: str):
+def validate_cron_expression(expression: str):
     """Validate a cron expression (JSON)"""
     scheduler_service = get_scheduler_service()
     return scheduler_service.validate_cron(expression)
@@ -414,7 +407,7 @@ async def validate_cron_expression(expression: str):
 # =============================================================================
 
 @router.get("/health")
-async def health_check():
+def health_check():
     """
     Health check endpoint for Docker container monitoring.
 
@@ -433,7 +426,7 @@ async def health_check():
 
     return {
         "status": "healthy",
-        "version": "3.0.0",
+        "version": PLEXCACHE_PRODUCT_VERSION,
         "plex_connected": plex_connected,
         "scheduler_running": schedule_status.get("running", False),
         "operation_running": operation_runner.is_running,
@@ -487,7 +480,7 @@ def detailed_status():
 
 
 @router.post("/run")
-async def trigger_run(dry_run: bool = False, verbose: bool = False):
+def trigger_run(dry_run: bool = False, verbose: bool = False):
     """
     Trigger an immediate PlexCache operation.
 
@@ -535,7 +528,7 @@ async def trigger_run(dry_run: bool = False, verbose: bool = False):
 
 
 @router.get("/operation-indicator", response_class=HTMLResponse)
-async def get_operation_indicator(request: Request):
+def get_operation_indicator(request: Request):
     """Return global operation indicator HTML - used for header status across all pages"""
     operation_runner = get_operation_runner()
     is_running = operation_runner.is_running
@@ -568,9 +561,9 @@ def get_operation_banner(request: Request):
     if not operation_runner.is_running and not get_maintenance_runner().is_running:
         scheduler_service = get_scheduler_service()
         sched_status = scheduler_service.get_status()
-        if sched_status.get("enabled") and sched_status.get("next_run_relative"):
+        if sched_status.get("enabled"):
             context["scheduler_status"] = {
-                "next_run_relative": sched_status["next_run_relative"],
+                "next_run_relative": sched_status.get("next_run_relative") or "momentarily",
                 "next_run_display": sched_status.get("next_run_display", ""),
             }
 
@@ -585,3 +578,112 @@ def dismiss_operation():
     """Dismiss a completed/failed operation banner, resetting state to idle."""
     get_operation_runner().dismiss()
     return JSONResponse({"ok": True})
+
+
+@router.post("/check-upgrades")
+def check_upgrades():
+    """Check for and resolve media file upgrades (Sonarr/Radarr swaps).
+
+    Examines stale exclude entries to see if they represent upgraded files.
+    For each stale entry with a rating_key in the OnDeck tracker, queries Plex
+    to detect file path changes and transfers tracking data accordingly.
+    """
+    cache_service = get_cache_service()
+    maintenance_service = get_maintenance_service()
+
+    # Get current stale entries to scope the check
+    exclude_files = maintenance_service.get_exclude_files()
+    cache_files = maintenance_service.get_cache_files()
+    stale = sorted(list(exclude_files - cache_files))
+
+    if not stale:
+        return {"upgrades_found": 0, "upgrades_resolved": 0, "details": []}
+
+    return cache_service.check_for_upgrades(stale)
+
+
+# =============================================================================
+# Filesystem Browse Endpoints
+# =============================================================================
+
+@router.get("/browse")
+def browse_directory(path: str = Query("")):
+    """Directory listing for path autocomplete.
+
+    Security:
+    - Rejects null bytes, control characters, paths > 4096 chars
+    - Pre-resolve jail: must start with /mnt/
+    - Post-resolve jail: resolved path must still start with /mnt/
+    - Only returns directories (not files), skips dotfiles
+    - Capped at 100 entries
+    """
+    # Input validation
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    if len(path) > 4096:
+        return JSONResponse({"error": "path too long"}, status_code=400)
+    if "\x00" in path or any(ord(c) < 32 for c in path):
+        return JSONResponse({"error": "invalid characters in path"}, status_code=400)
+
+    # Pre-resolve jail check
+    if not path.startswith("/mnt/"):
+        return JSONResponse({"error": "path must be under /mnt/"}, status_code=403)
+
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, ValueError):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+
+    # Post-resolve jail check (catches ../ traversal and symlink escapes)
+    resolved_str = str(resolved)
+    if resolved_str != "/mnt" and not resolved_str.startswith("/mnt/"):
+        return JSONResponse({"error": "path must be under /mnt/"}, status_code=403)
+
+    if not resolved.is_dir():
+        return JSONResponse({"error": "not a directory"}, status_code=404)
+
+    # List directories only, skip dotfiles, cap at 100
+    directories = []
+    try:
+        with os.scandir(str(resolved)) as it:
+            for entry in it:
+                if entry.name.startswith("."):
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        directories.append(entry.name)
+                except (PermissionError, OSError):
+                    continue
+    except PermissionError:
+        return JSONResponse({"error": "permission denied"}, status_code=403)
+
+    directories.sort()
+    directories = directories[:100]
+
+    return {"path": str(resolved), "directories": directories}
+
+
+@router.get("/validate-path", response_class=HTMLResponse)
+def validate_path(path: str = Query("")):
+    """Validate a filesystem path — returns an HTMX icon partial.
+
+    Returns green check if path exists and is a directory,
+    warning icon if not found, or empty if path is invalid.
+    """
+    if not path or not path.startswith("/mnt/"):
+        return HTMLResponse("")
+
+    try:
+        p = Path(path)
+        if p.exists() and p.is_dir():
+            return HTMLResponse(
+                '<i data-lucide="check-circle" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i>'
+                '<script>lucide.createIcons();</script>'
+            )
+        else:
+            return HTMLResponse(
+                '<i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--plex-warning, #e67e22); vertical-align: middle;" title="Path not found"></i>'
+                '<script>lucide.createIcons();</script>'
+            )
+    except (OSError, ValueError):
+        return HTMLResponse("")

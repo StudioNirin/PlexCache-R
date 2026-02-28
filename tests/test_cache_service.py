@@ -90,8 +90,8 @@ class TestParseSizeBytes:
 
     @staticmethod
     def _parse(value):
-        from web.services.cache_service import _parse_size_bytes
-        return _parse_size_bytes(value)
+        from core.system_utils import parse_size_bytes
+        return parse_size_bytes(value)
 
     # --- TB ---
 
@@ -440,22 +440,22 @@ class TestStorageDiskUsageErrorHandling:
 
 class TestFormatSize:
 
-    def test_zero(self, tmp_path):
-        svc = _make_service(tmp_path)
-        assert svc._format_size(0) == "0 B"
+    def test_zero(self):
+        from core.system_utils import format_bytes
+        assert format_bytes(0) == "0 B"
 
-    def test_bytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        assert svc._format_size(512) == "512 B"
+    def test_bytes(self):
+        from core.system_utils import format_bytes
+        assert format_bytes(512) == "512 B"
 
-    def test_megabytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        result = svc._format_size(5 * 1024 ** 2)
+    def test_megabytes(self):
+        from core.system_utils import format_bytes
+        result = format_bytes(5 * 1024 ** 2)
         assert "MB" in result
 
-    def test_terabytes(self, tmp_path):
-        svc = _make_service(tmp_path)
-        result = svc._format_size(3 * 1024 ** 4)
+    def test_terabytes(self):
+        from core.system_utils import format_bytes
+        result = format_bytes(3 * 1024 ** 4)
         assert "TB" in result
 
 
@@ -620,3 +620,209 @@ class TestRemoveFromTrackingFiles:
         # exclude_file does not exist on disk
         svc._remove_from_exclude_file("/mnt/cache/media/Movies/Film.mkv")
         # Should complete without error
+
+
+# ============================================================================
+# Atomic tracker writes in _transfer_tracking_data()
+# ============================================================================
+
+class TestTransferTrackingAtomicWrites:
+    """Verify _transfer_upgrade_tracking() uses save_json_atomically() for all tracker writes."""
+
+    def _call_transfer(self, svc, **overrides):
+        """Helper to call _transfer_upgrade_tracking with standard args."""
+        defaults = dict(
+            old_cache_path="/mnt/cache/media/Movies/Old.mkv",
+            old_real_path="/mnt/user/media/Movies/Old.mkv",
+            old_plex_path="/data/media/Movies/Old.mkv",
+            new_cache_path="/mnt/cache/media/Movies/New.mkv",
+            new_real_path="/mnt/user/media/Movies/New.mkv",
+            new_plex_path="/data/media/Movies/New.mkv",
+            rating_key="12345",
+            settings={"create_plexcached_backups": False},
+            path_mappings=[],
+        )
+        defaults.update(overrides)
+        return svc._transfer_upgrade_tracking(**defaults)
+
+    def test_timestamps_written_atomically(self, tmp_path):
+        """Timestamps file must be written via save_json_atomically()."""
+        svc = _make_service(tmp_path)
+
+        old_cache = "/mnt/cache/media/Movies/Old.mkv"
+        svc.timestamps_file.write_text(json.dumps({
+            old_cache: {"cached_at": "2026-01-01T00:00:00", "source": "ondeck"}
+        }), encoding="utf-8")
+
+        # Get the actual module reference for patching
+        import web.services.cache_service as cs_mod
+        mock_atomic = MagicMock()
+        original = cs_mod.save_json_atomically
+
+        with patch.object(cs_mod, "save_json_atomically", mock_atomic), \
+             patch.object(cs_mod, "remove_from_exclude_file"), \
+             patch.object(cs_mod, "remove_from_timestamps_file"), \
+             patch.object(cs_mod, "get_array_direct_path", side_effect=lambda p: p.replace("/mnt/user/", "/mnt/user0/")), \
+             patch.object(cs_mod, "get_media_identity", return_value="Old"), \
+             patch.object(cs_mod, "find_matching_plexcached", return_value=None):
+            self._call_transfer(svc)
+
+        ts_calls = [c for c in mock_atomic.call_args_list
+                    if c[1].get("label") == "timestamps" or (len(c[0]) >= 3 and c[0][2] == "timestamps")]
+        assert len(ts_calls) == 1, f"Expected 1 timestamps atomic write, got {len(ts_calls)}: {mock_atomic.call_args_list}"
+
+    def test_ondeck_tracker_written_atomically(self, tmp_path):
+        """OnDeck tracker must be written via save_json_atomically()."""
+        svc = _make_service(tmp_path)
+
+        old_real = "/mnt/user/media/Movies/Old.mkv"
+        svc.ondeck_file.write_text(json.dumps({
+            old_real: {"users": ["alice"], "added": "2026-01-01T00:00:00"}
+        }), encoding="utf-8")
+        svc.timestamps_file.write_text("{}", encoding="utf-8")
+
+        import web.services.cache_service as cs_mod
+        mock_atomic = MagicMock()
+
+        with patch.object(cs_mod, "save_json_atomically", mock_atomic), \
+             patch.object(cs_mod, "remove_from_exclude_file"), \
+             patch.object(cs_mod, "remove_from_timestamps_file"), \
+             patch.object(cs_mod, "get_array_direct_path", side_effect=lambda p: p.replace("/mnt/user/", "/mnt/user0/")), \
+             patch.object(cs_mod, "get_media_identity", return_value="Old"), \
+             patch.object(cs_mod, "find_matching_plexcached", return_value=None):
+            self._call_transfer(svc, old_real_path=old_real)
+
+        od_calls = [c for c in mock_atomic.call_args_list
+                    if c[1].get("label") == "ondeck tracker" or (len(c[0]) >= 3 and c[0][2] == "ondeck tracker")]
+        assert len(od_calls) == 1, f"Expected 1 ondeck atomic write, got {len(od_calls)}: {mock_atomic.call_args_list}"
+
+    def test_watchlist_tracker_written_atomically(self, tmp_path):
+        """Watchlist tracker must be written via save_json_atomically()."""
+        svc = _make_service(tmp_path)
+
+        old_plex = "/data/media/Movies/Old.mkv"
+        svc.watchlist_file.write_text(json.dumps({
+            old_plex: {"users": ["bob"], "added": "2026-01-01T00:00:00"}
+        }), encoding="utf-8")
+        svc.timestamps_file.write_text("{}", encoding="utf-8")
+
+        import web.services.cache_service as cs_mod
+        mock_atomic = MagicMock()
+
+        with patch.object(cs_mod, "save_json_atomically", mock_atomic), \
+             patch.object(cs_mod, "remove_from_exclude_file"), \
+             patch.object(cs_mod, "remove_from_timestamps_file"), \
+             patch.object(cs_mod, "get_array_direct_path", side_effect=lambda p: p.replace("/mnt/user/", "/mnt/user0/")), \
+             patch.object(cs_mod, "get_media_identity", return_value="Old"), \
+             patch.object(cs_mod, "find_matching_plexcached", return_value=None):
+            self._call_transfer(svc, old_plex_path=old_plex)
+
+        wl_calls = [c for c in mock_atomic.call_args_list
+                    if c[1].get("label") == "watchlist tracker" or (len(c[0]) >= 3 and c[0][2] == "watchlist tracker")]
+        assert len(wl_calls) == 1, f"Expected 1 watchlist atomic write, got {len(wl_calls)}: {mock_atomic.call_args_list}"
+
+
+# ============================================================================
+# Upgrade backup ordering — _handle_upgrade_plexcached()
+# ============================================================================
+
+class TestUpgradeBackupOrdering:
+    """Verify _handle_upgrade_plexcached() creates new backup before deleting old."""
+
+    def test_old_backup_preserved_when_new_copy_fails(self, tmp_path):
+        """If new backup copy fails, old .plexcached must NOT be deleted."""
+        import shutil as shutil_mod
+        import web.services.cache_service as cs_mod
+
+        svc = _make_service(tmp_path)
+
+        # Create fake old .plexcached backup
+        array_dir = tmp_path / "array" / "Movies"
+        array_dir.mkdir(parents=True)
+        old_plexcached = array_dir / "OldMovie.mkv.plexcached"
+        old_plexcached.write_bytes(b"old backup content")
+
+        # Create fake new cache file
+        cache_dir = tmp_path / "cache" / "Movies"
+        cache_dir.mkdir(parents=True)
+        new_cache_file = cache_dir / "NewMovie.mkv"
+        new_cache_file.write_bytes(b"new movie content")
+
+        new_array_path = str(array_dir / "NewMovie.mkv")
+
+        with patch.object(cs_mod, "get_array_direct_path", side_effect=lambda p: p), \
+             patch.object(cs_mod, "get_media_identity", return_value="OldMovie"), \
+             patch.object(cs_mod, "find_matching_plexcached", return_value=str(old_plexcached)), \
+             patch.object(shutil_mod, "copy2", side_effect=OSError("Disk full")):
+            svc._handle_upgrade_plexcached(
+                old_real_path=str(array_dir / "OldMovie.mkv"),
+                new_real_path=new_array_path,
+                new_cache_path=str(new_cache_file),
+                rating_key="999",
+                settings={"create_plexcached_backups": True, "backup_upgraded_files": True},
+            )
+
+        # Old backup must still exist
+        assert old_plexcached.exists(), "Old .plexcached was deleted even though new backup failed"
+
+    def test_old_backup_deleted_after_new_succeeds(self, tmp_path):
+        """Old .plexcached deleted only after new backup is verified."""
+        import shutil as shutil_mod
+        import web.services.cache_service as cs_mod
+
+        svc = _make_service(tmp_path)
+
+        array_dir = tmp_path / "array" / "Movies"
+        array_dir.mkdir(parents=True)
+        old_plexcached = array_dir / "OldMovie.mkv.plexcached"
+        old_plexcached.write_bytes(b"old backup")
+
+        cache_dir = tmp_path / "cache" / "Movies"
+        cache_dir.mkdir(parents=True)
+        new_cache_file = cache_dir / "NewMovie.mkv"
+        new_cache_file.write_bytes(b"new movie data")
+
+        new_array_path = str(array_dir / "NewMovie.mkv")
+
+        call_order = []
+        original_copy2 = shutil_mod.copy2
+
+        def tracking_copy2(src, dst):
+            call_order.append(("copy2", str(dst)))
+            original_copy2(src, dst)
+
+        original_remove = os.remove
+        def tracking_remove(path):
+            call_order.append(("remove", str(path)))
+            original_remove(path)
+
+        # os.path.isfile must check real files for the plexcached check, but
+        # return True for new_plexcached existence check (returns False so copy runs)
+        def selective_isfile(path):
+            path_str = str(path)
+            # new_plexcached doesn't exist yet — must return False so copy runs
+            if path_str.endswith("NewMovie.mkv.plexcached"):
+                return False
+            return True  # old_plexcached and new_cache_path exist
+
+        with patch.object(cs_mod, "get_array_direct_path", side_effect=lambda p: p), \
+             patch.object(cs_mod, "get_media_identity", return_value="OldMovie"), \
+             patch.object(cs_mod, "find_matching_plexcached", return_value=str(old_plexcached)), \
+             patch.object(shutil_mod, "copy2", side_effect=tracking_copy2), \
+             patch("os.remove", side_effect=tracking_remove), \
+             patch("os.path.isfile", side_effect=selective_isfile), \
+             patch("os.path.getsize", return_value=14), \
+             patch("os.makedirs"):
+            svc._handle_upgrade_plexcached(
+                old_real_path=str(array_dir / "OldMovie.mkv"),
+                new_real_path=new_array_path,
+                new_cache_path=str(new_cache_file),
+                rating_key="999",
+                settings={"create_plexcached_backups": True, "backup_upgraded_files": True},
+            )
+
+        copy_idx = next((i for i, (op, _) in enumerate(call_order) if op == "copy2"), None)
+        remove_idx = next((i for i, (op, p) in enumerate(call_order) if op == "remove" and "OldMovie" in p), None)
+        assert copy_idx is not None, f"copy2 was not called. call_order: {call_order}"
+        assert remove_idx is not None, f"os.remove of old backup was not called. call_order: {call_order}"
+        assert copy_idx < remove_idx, "New backup must be created BEFORE old backup is deleted"

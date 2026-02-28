@@ -10,6 +10,31 @@
         <form hx-put="/settings/cache" hx-target="#settings-alert-container" hx-swap="innerHTML">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="search" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Content Discovery
+            </h3>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="number_episodes">Episodes to Prefetch</label>
+                    <input type="number" id="number_episodes" name="number_episodes"
+                           class="input-narrow"
+                           value="{{ settings.number_episodes | default(3) }}" min="0" max="10">
+                    <div class="form-hint">Number of upcoming episodes to cache for in-progress shows</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="days_to_monitor">Days to Monitor</label>
+                    <input type="number" id="days_to_monitor" name="days_to_monitor"
+                           class="input-narrow"
+                           value="{{ settings.days_to_monitor | default(7) }}" min="1" max="999">
+                    <div class="form-hint">How far back to check OnDeck for recently watched items</div>
+                </div>
+            </div>
+
+            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
                 <i data-lucide="bookmark" style="width: 18px; height: 18px; vertical-align: middle;"></i>
                 Watchlist
             </h3>
@@ -17,51 +42,82 @@
             <div class="form-group">
                 <label class="switch">
                     <input type="checkbox" name="watchlist_toggle"
+                           onchange="toggleWatchlistOptions()"
                            {% if settings.watchlist_toggle | default(true) %}checked{% endif %}>
                     <span>Enable Watchlist Caching</span>
                 </label>
             </div>
 
-            <div class="grid grid-2">
-                <div class="form-group">
-                    <label for="watchlist_episodes">Watchlist Episodes to Prefetch</label>
-                    <input type="number" id="watchlist_episodes" name="watchlist_episodes"
-                           value="{{ settings.watchlist_episodes | default(3) }}" min="0" max="10">
+            <div id="watchlist-options"{% if not (settings.watchlist_toggle | default(true)) %} style="display: none;"{% endif %}>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="watchlist_episodes">Watchlist Episodes to Prefetch</label>
+                        <input type="number" id="watchlist_episodes" name="watchlist_episodes"
+                               class="input-narrow"
+                               value="{{ settings.watchlist_episodes | default(3) }}" min="0" max="10">
+                    </div>
                 </div>
 
                 <div class="form-group">
-                    <label for="watchlist_retention_days">Watchlist Retention (days)</label>
-                    <input type="number" id="watchlist_retention_days" name="watchlist_retention_days"
-                           value="{{ '%g' % (settings.watchlist_retention_days | default(14) | float) }}" min="0" max="365" step="0.5">
-                    <div class="form-hint">Auto-expire watchlist items after this period (0 = never expire)</div>
+                    <label class="switch">
+                        <input type="checkbox" name="remote_watchlist_toggle"
+                               onchange="toggleRemoteWatchlistOptions()"
+                               {% if settings.remote_watchlist_toggle %}checked{% endif %}>
+                        <span>Enable Remote Watchlist (RSS fallback)</span>
+                    </label>
                 </div>
-            </div>
 
-            <div class="form-group">
-                <label class="switch">
-                    <input type="checkbox" name="remote_watchlist_toggle"
-                           {% if settings.remote_watchlist_toggle %}checked{% endif %}>
-                    <span>Enable Remote Watchlist (RSS fallback)</span>
-                </label>
-            </div>
-
-            <div class="form-group">
-                <label for="remote_watchlist_rss_url">Remote Watchlist RSS URL</label>
-                <input type="url" id="remote_watchlist_rss_url" name="remote_watchlist_rss_url"
-                       value="{{ settings.remote_watchlist_rss_url | default('') }}"
-                       placeholder="https://rss.plex.tv/...">
+                <div id="remote-watchlist-options"{% if not settings.remote_watchlist_toggle %} style="display: none;"{% endif %}>
+                    <div class="form-group">
+                        <label for="remote_watchlist_rss_url">Remote Watchlist RSS URL</label>
+                        <input type="url" id="remote_watchlist_rss_url" name="remote_watchlist_rss_url"
+                               value="{{ settings.remote_watchlist_rss_url | default('') }}"
+                               placeholder="https://rss.plex.tv/...">
+                    </div>
+                </div>
             </div>
 
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
-                <i data-lucide="hard-drive" style="width: 18px; height: 18px; vertical-align: middle;"></i>
-                Cache Management
+                <i data-lucide="clock" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Retention
             </h3>
 
-            <div class="form-hint" style="margin-bottom: 1rem;">
-                Cache Limit and Eviction are based on <strong>total drive usage</strong> (all files on the cache drive), not just PlexCache-managed files. Other applications, downloads, and system files all count toward the limit.
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="cache_retention_hours">Cache Retention (hours)</label>
+                    <input type="number" id="cache_retention_hours" name="cache_retention_hours"
+                           class="input-narrow"
+                           value="{{ settings.cache_retention_hours | default(12) }}" min="0" max="720">
+                    <div class="form-hint">Keep files cached at least this long before moving back (0 = no minimum)</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="watchlist_retention_days">Watchlist Retention (days)</label>
+                    <input type="number" id="watchlist_retention_days" name="watchlist_retention_days"
+                           class="input-narrow"
+                           value="{{ '%g' % (settings.watchlist_retention_days | default(14) | float) }}" min="0" max="365" step="0.5">
+                    <div class="form-hint">Auto-expire watchlist items after this period (0 = never expire)</div>
+                </div>
             </div>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="ondeck_retention_days">OnDeck Retention (days)</label>
+                    <input type="number" id="ondeck_retention_days" name="ondeck_retention_days"
+                           class="input-narrow"
+                           value="{{ '%g' % (settings.ondeck_retention_days | default(0) | float) }}" min="0" max="365" step="0.5">
+                    <div class="form-hint">Auto-expire OnDeck items after this period (0 = never expire)</div>
+                </div>
+            </div>
+
+            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
+
+            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
+                <i data-lucide="file-cog" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                File Handling
+            </h3>
 
             <div class="form-group">
                 <label class="switch">
@@ -90,6 +146,36 @@
             </div>
 
             <div class="form-group">
+                <label class="switch">
+                    <input type="checkbox" name="use_symlinks"
+                           {% if settings.use_symlinks %}checked{% endif %}>
+                    <span>Create Symlinks After Caching</span>
+                </label>
+                <div class="form-hint">For non-Unraid systems: creates a symlink at the original file
+                location pointing to the cached copy, so Plex can still find files. Not needed on Unraid
+                or mergerfs (FUSE handles this). In Docker, both paths must be mounted at the same absolute
+                paths in PlexCache-D and Plex containers.</div>
+            </div>
+
+            <div class="form-group">
+                <label class="switch">
+                    <input type="checkbox" name="auto_transfer_upgrades"
+                           {% if settings.auto_transfer_upgrades | default(true) %}checked{% endif %}>
+                    <span>Auto-Transfer Tracking on Media Upgrades</span>
+                </label>
+                <div class="form-hint">When Sonarr/Radarr upgrades a cached file, automatically transfer exclude list and tracker entries to the new file using Plex rating keys.</div>
+            </div>
+
+            <div class="form-group">
+                <label class="switch">
+                    <input type="checkbox" name="backup_upgraded_files"
+                           {% if settings.backup_upgraded_files | default(true) %}checked{% endif %}>
+                    <span>Backup Upgraded Files</span>
+                </label>
+                <div class="form-hint">When a cached file is upgraded, create a .plexcached backup of the new file on the array (only if the old file had a backup).</div>
+            </div>
+
+            <div class="form-group">
                 <label for="hardlinked_files">Hardlinked Files Handling</label>
                 <select id="hardlinked_files" name="hardlinked_files">
                     <option value="skip" {% if settings.hardlinked_files == 'skip' or not settings.hardlinked_files %}selected{% endif %}>Skip (preserve for seeders)</option>
@@ -97,77 +183,6 @@
                 </select>
                 <div class="form-hint">Files with multiple hardlinks (e.g., seeding torrents). Skip preserves links, Move copies the file.</div>
             </div>
-
-            <div class="grid grid-2">
-                <div class="form-group">
-                    <label for="cache_retention_hours">Cache Retention (hours)</label>
-                    <input type="number" id="cache_retention_hours" name="cache_retention_hours"
-                           value="{{ settings.cache_retention_hours | default(12) }}" min="0" max="720">
-                    <div class="form-hint">Keep files cached at least this long (0 = no minimum)</div>
-                </div>
-
-                <div class="form-group">
-                    <label for="cache_drive_size">Cache Drive Size {% if drive_info.is_zfs and not drive_info.is_manual_override %}(recommended for ZFS){% else %}(optional){% endif %}</label>
-                    <input type="text" id="cache_drive_size" name="cache_drive_size"
-                           value="{{ settings.cache_drive_size | default('') }}"
-                           placeholder="Auto-detect"
-                           oninput="updateCacheCalculations()">
-                    <div class="form-hint">Override auto-detected size (e.g., 3.7TB). For ZFS pools where dataset size differs from pool size.</div>
-                    {% if drive_info.is_zfs and not drive_info.is_manual_override %}
-                    <div class="form-hint" style="color: #e67e22; margin-top: 0.25rem;">
-                        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
-                        ZFS detected: Auto-detected value ({{ drive_info.total_display | default('Unknown') }}) may not reflect true pool capacity. Enter your pool size above.
-                    </div>
-                    {% else %}
-                    <div id="drive_size_display" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;">
-                        {% if drive_info.is_manual_override %}
-                        Using manual size: {{ drive_info.total_display }}
-                        {% else %}
-                        Auto-detected: {{ drive_info.total_display | default('Unknown') }}
-                        {% endif %}
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
-
-            <div class="grid grid-2">
-                <div class="form-group">
-                    <label for="cache_limit">Cache Limit</label>
-                    <input type="text" id="cache_limit" name="cache_limit"
-                           value="{{ settings.cache_limit | default('250GB') }}"
-                           placeholder="500GB or 75%"
-                           oninput="updateCacheCalculations()">
-                    <div class="form-hint">Maximum <strong>total drive usage</strong> before PlexCache stops caching (e.g., 500GB or 75%). Includes all files on the drive, not just PlexCache-managed files. Leave empty for no cap.</div>
-                    <div id="cache_limit_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
-                    <div id="cache_limit_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
-                        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
-                        <span id="cache_limit_warning_text"></span>
-                    </div>
-                    <div id="cache_limit_hint" class="form-hint" style="display: none; color: var(--plex-text-muted); margin-top: 0.25rem;"></div>
-                </div>
-
-                <div class="form-group">
-                    <label for="min_free_space">Min Free Space</label>
-                    <input type="text" id="min_free_space" name="min_free_space"
-                           value="{{ settings.min_free_space | default('') }}"
-                           placeholder="50GB or 5%"
-                           oninput="updateCacheCalculations()">
-                    <div class="form-hint">Safety floor: always keep at least this much free space on the drive (e.g., 50GB or 5%). Useful when other apps also write to the cache drive. Leave empty to disable.</div>
-                    <div id="min_free_space_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
-                    <div id="min_free_space_warning" class="form-hint" style="display: none; color: #e74c3c; margin-top: 0.25rem;">
-                        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
-                        <span id="min_free_space_warning_text"></span>
-                    </div>
-                    <div id="min_free_space_hint" class="form-hint" style="display: none; color: var(--plex-text-muted); margin-top: 0.25rem;"></div>
-                </div>
-            </div>
-
-            <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
-
-            <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
-                <i data-lucide="folder-x" style="width: 18px; height: 18px; vertical-align: middle;"></i>
-                Scanning
-            </h3>
 
             <div class="form-hint" style="margin-bottom: 1rem;">
                 Hidden directories (dot-prefixed like <code>.Trash</code>, <code>.Recycle.Bin</code>) are always skipped automatically.
@@ -201,54 +216,123 @@
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
-                <i data-lucide="trash-2" style="width: 18px; height: 18px; vertical-align: middle;"></i>
-                Eviction
+                <i data-lucide="hard-drive" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Storage Limits
             </h3>
 
+            <div class="form-hint" style="margin-bottom: 1rem;">
+                Cache Limit and Eviction are based on <strong>total drive usage</strong> (all files on the cache drive), not just PlexCache-managed files. Other applications, downloads, and system files all count toward the limit.
+            </div>
+
             <div class="form-group">
-                <label for="cache_eviction_mode">Eviction Mode</label>
-                <select id="cache_eviction_mode" name="cache_eviction_mode">
-                    <option value="smart" {% if settings.cache_eviction_mode == 'smart' %}selected{% endif %}>Smart (priority-based)</option>
-                    <option value="fifo" {% if settings.cache_eviction_mode == 'fifo' %}selected{% endif %}>FIFO (oldest first)</option>
-                    <option value="none" {% if settings.cache_eviction_mode == 'none' %}selected{% endif %}>None (manual only)</option>
-                </select>
+                <label for="cache_drive_size">Cache Drive Size {% if drive_info.is_zfs and not drive_info.is_manual_override %}(recommended for ZFS){% else %}(optional){% endif %}</label>
+                <input type="text" id="cache_drive_size" name="cache_drive_size"
+                       class="input-medium"
+                       value="{{ settings.cache_drive_size | default('') }}"
+                       placeholder="Auto-detect"
+                       oninput="updateCacheCalculations()">
+                <div class="form-hint">Override auto-detected size (e.g., 3.7TB). For ZFS pools where dataset size differs from pool size.</div>
+                {% if drive_info.is_zfs and not drive_info.is_manual_override %}
+                <div class="form-hint" style="color: var(--plex-warning); margin-top: 0.25rem;">
+                    <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                    ZFS detected: Auto-detected value ({{ drive_info.total_display | default('Unknown') }}) may not reflect true pool capacity. Enter your pool size above.
+                </div>
+                {% else %}
+                <div id="drive_size_display" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;">
+                    {% if drive_info.is_manual_override %}
+                    Using manual size: {{ drive_info.total_display }}
+                    {% else %}
+                    Auto-detected: {{ drive_info.total_display | default('Unknown') }}
+                    {% endif %}
+                </div>
+                {% endif %}
             </div>
 
             <div class="grid grid-2">
                 <div class="form-group">
-                    <label for="cache_eviction_threshold_percent">Eviction Threshold (%)</label>
-                    <input type="number" id="cache_eviction_threshold_percent" name="cache_eviction_threshold_percent"
-                           value="{{ settings.cache_eviction_threshold_percent | default(95) }}" min="50" max="100"
+                    <label for="cache_limit">Cache Limit</label>
+                    <input type="text" id="cache_limit" name="cache_limit"
+                           class="input-medium"
+                           value="{{ settings.cache_limit | default('250GB') }}"
+                           placeholder="500GB or 75%"
                            oninput="updateCacheCalculations()">
-                    <div class="form-hint">Start evicting low-priority files when total drive usage exceeds this percentage of your Cache Limit</div>
-                    <div id="eviction_threshold_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                    <div class="form-hint">Maximum <strong>total drive usage</strong> before PlexCache stops caching (e.g., 500GB or 75%). Includes all files on the drive, not just PlexCache-managed files. Leave empty for no cap.</div>
+                    <div id="cache_limit_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                    <div id="cache_limit_warning" class="form-hint" style="display: none; color: var(--plex-error); margin-top: 0.25rem;">
+                        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                        <span id="cache_limit_warning_text"></span>
+                    </div>
+                    <div id="cache_limit_hint" class="form-hint" style="display: none; color: var(--plex-text-muted); margin-top: 0.25rem;"></div>
                 </div>
 
                 <div class="form-group">
-                    <label for="eviction_min_priority">Minimum Priority to Keep</label>
-                    <input type="number" id="eviction_min_priority" name="eviction_min_priority"
-                           value="{{ settings.eviction_min_priority | default(60) }}" min="0" max="100">
-                    <div class="form-hint">Only evict files below this priority (OnDeck ~{{ priority_range.ondeck_min }}-{{ priority_range.ondeck_max }}, Watchlist ~{{ priority_range.watchlist_min }}-{{ priority_range.watchlist_max }})</div>
+                    <label for="min_free_space">Min Free Space</label>
+                    <input type="text" id="min_free_space" name="min_free_space"
+                           class="input-medium"
+                           value="{{ settings.min_free_space | default('') }}"
+                           placeholder="50GB or 5%"
+                           oninput="updateCacheCalculations()">
+                    <div class="form-hint">Safety floor: always keep at least this much free space on the drive (e.g., 50GB or 5%). Useful when other apps also write to the cache drive. Leave empty to disable.</div>
+                    <div id="min_free_space_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                    <div id="min_free_space_warning" class="form-hint" style="display: none; color: var(--plex-error); margin-top: 0.25rem;">
+                        <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                        <span id="min_free_space_warning_text"></span>
+                    </div>
+                    <div id="min_free_space_hint" class="form-hint" style="display: none; color: var(--plex-text-muted); margin-top: 0.25rem;"></div>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+                <label for="plexcache_quota">PlexCache Quota</label>
+                <input type="text" id="plexcache_quota" name="plexcache_quota"
+                       class="input-medium"
+                       value="{{ settings.plexcache_quota | default('') }}"
+                       placeholder="500GB or 75%"
+                       oninput="updateCacheCalculations()">
+                <div class="form-hint">Maximum space for <strong>PlexCache-managed files only</strong> (excludes other apps on the drive). Unlike Cache Limit which counts all drive usage. Leave empty to disable.</div>
+                <div id="plexcache_quota_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                <div id="plexcache_quota_warning" class="form-hint" style="display: none; color: var(--plex-error); margin-top: 0.25rem;">
+                    <i data-lucide="alert-triangle" style="width: 14px; height: 14px; vertical-align: middle;"></i>
+                    <span id="plexcache_quota_warning_text"></span>
                 </div>
             </div>
 
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
-                <i data-lucide="activity" style="width: 18px; height: 18px; vertical-align: middle;"></i>
-                Dashboard
+                <i data-lucide="trash-2" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Eviction
             </h3>
 
             <div class="form-group">
-                <label for="activity_retention_hours">Recent Activity Retention (hours)</label>
-                <select id="activity_retention_hours" name="activity_retention_hours">
-                    <option value="12" {% if settings.activity_retention_hours == 12 %}selected{% endif %}>12 hours</option>
-                    <option value="24" {% if settings.activity_retention_hours == 24 or not settings.activity_retention_hours %}selected{% endif %}>24 hours (default)</option>
-                    <option value="48" {% if settings.activity_retention_hours == 48 %}selected{% endif %}>48 hours</option>
-                    <option value="72" {% if settings.activity_retention_hours == 72 %}selected{% endif %}>3 days</option>
-                    <option value="168" {% if settings.activity_retention_hours == 168 %}selected{% endif %}>7 days</option>
+                <label for="cache_eviction_mode">Eviction Mode</label>
+                <select id="cache_eviction_mode" name="cache_eviction_mode" onchange="toggleEvictionOptions()">
+                    <option value="smart" {% if settings.cache_eviction_mode == 'smart' %}selected{% endif %}>Smart (priority-based)</option>
+                    <option value="fifo" {% if settings.cache_eviction_mode == 'fifo' %}selected{% endif %}>FIFO (oldest first)</option>
+                    <option value="none" {% if settings.cache_eviction_mode == 'none' %}selected{% endif %}>None (manual only)</option>
                 </select>
-                <div class="form-hint">How long to keep Recent Activity entries on the Dashboard</div>
+            </div>
+
+            <div id="eviction-options"{% if settings.cache_eviction_mode == 'none' %} style="display: none;"{% endif %}>
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="cache_eviction_threshold_percent">Eviction Threshold (%)</label>
+                        <input type="number" id="cache_eviction_threshold_percent" name="cache_eviction_threshold_percent"
+                               class="input-narrow"
+                               value="{{ settings.cache_eviction_threshold_percent | default(95) }}" min="50" max="100"
+                               oninput="updateCacheCalculations()">
+                        <div class="form-hint">Start evicting low-priority files when total drive usage exceeds this percentage of your Cache Limit</div>
+                        <div id="eviction_threshold_calculated" class="form-hint" style="color: var(--plex-orange); margin-top: 0.25rem;"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="eviction_min_priority">Minimum Priority to Keep</label>
+                        <input type="number" id="eviction_min_priority" name="eviction_min_priority"
+                               class="input-narrow"
+                               value="{{ settings.eviction_min_priority | default(60) }}" min="0" max="100">
+                        <div class="form-hint">Only evict files below this priority (OnDeck ~{{ priority_range.ondeck_min }}-{{ priority_range.ondeck_max }}, Watchlist ~{{ priority_range.watchlist_min }}-{{ priority_range.watchlist_max }})</div>
+                    </div>
+                </div>
             </div>
 
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
@@ -271,6 +355,7 @@
                 <div class="form-group">
                     <label for="max_concurrent_moves_cache">Concurrent Moves to Cache</label>
                     <input type="number" id="max_concurrent_moves_cache" name="max_concurrent_moves_cache"
+                           class="input-narrow"
                            value="{{ settings.max_concurrent_moves_cache | default(5) }}" min="1" max="10">
                     <div class="form-hint">Max parallel file operations when moving TO cache (default: 5)</div>
                 </div>
@@ -278,6 +363,7 @@
                 <div class="form-group">
                     <label for="max_concurrent_moves_array">Concurrent Moves to Array</label>
                     <input type="number" id="max_concurrent_moves_array" name="max_concurrent_moves_array"
+                           class="input-narrow"
                            value="{{ settings.max_concurrent_moves_array | default(2) }}" min="1" max="10">
                     <div class="form-hint">Max parallel file operations when moving TO array (default: 2)</div>
                 </div>
@@ -300,6 +386,7 @@ const autoDetectedDisplay = "{{ drive_info.total_display | default('Unknown') }}
 const currentDriveUsedBytes = {{ drive_info.used_bytes | default(0) }};
 const currentDriveUsedDisplay = "{{ drive_info.used_display | default('Unknown') }}";
 const currentDriveFreeBytes = {{ drive_info.free_bytes | default(0) }};
+const currentCachedFilesBytes = {{ drive_info.cached_files_bytes | default(0) }};
 
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -470,10 +557,62 @@ function updateCacheCalculations() {
             minFreeSpaceHint.style.display = 'none';
         }
     }
+
+    // Calculate PlexCache quota
+    const plexcacheQuotaInput = document.getElementById('plexcache_quota');
+    const plexcacheQuotaCalc = document.getElementById('plexcache_quota_calculated');
+    const plexcacheQuotaWarning = document.getElementById('plexcache_quota_warning');
+    const plexcacheQuotaWarningText = document.getElementById('plexcache_quota_warning_text');
+
+    if (plexcacheQuotaInput && plexcacheQuotaCalc) {
+        const quotaValue = plexcacheQuotaInput.value;
+        const quotaBytes = parseCacheLimit(quotaValue);
+
+        if (quotaBytes > 0) {
+            if (quotaValue.includes('%') && effectiveSize > 0) {
+                plexcacheQuotaCalc.textContent = `= ${formatBytes(quotaBytes)} of ${effectiveDisplay} drive (PlexCache files only)`;
+            } else if (effectiveSize > 0) {
+                const percent = (quotaBytes / effectiveSize * 100).toFixed(1);
+                plexcacheQuotaCalc.textContent = `= ${percent}% of ${effectiveDisplay} drive (PlexCache files only)`;
+            } else {
+                plexcacheQuotaCalc.textContent = `= ${formatBytes(quotaBytes)} (PlexCache files only)`;
+            }
+
+            // Show warning if tracked files already exceed quota
+            if (plexcacheQuotaWarning && currentCachedFilesBytes > 0) {
+                if (currentCachedFilesBytes >= quotaBytes) {
+                    plexcacheQuotaWarningText.textContent = `PlexCache is currently using ${formatBytes(currentCachedFilesBytes)} — already over this quota. No new files will be cached until tracked usage drops below ${formatBytes(quotaBytes)}.`;
+                    plexcacheQuotaWarning.style.display = 'block';
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                } else {
+                    plexcacheQuotaWarning.style.display = 'none';
+                }
+            }
+        } else {
+            plexcacheQuotaCalc.textContent = '';
+            if (plexcacheQuotaWarning) plexcacheQuotaWarning.style.display = 'none';
+        }
+    }
 }
 
 // Run on page load
 document.addEventListener('DOMContentLoaded', updateCacheCalculations);
+
+// Progressive disclosure toggles
+function toggleWatchlistOptions() {
+    const checkbox = document.querySelector('input[name="watchlist_toggle"]');
+    document.getElementById('watchlist-options').style.display = checkbox.checked ? '' : 'none';
+}
+
+function toggleRemoteWatchlistOptions() {
+    const checkbox = document.querySelector('input[name="remote_watchlist_toggle"]');
+    document.getElementById('remote-watchlist-options').style.display = checkbox.checked ? '' : 'none';
+}
+
+function toggleEvictionOptions() {
+    const select = document.getElementById('cache_eviction_mode');
+    document.getElementById('eviction-options').style.display = select.value !== 'none' ? '' : 'none';
+}
 
 // Excluded folders management
 function addExcludedFolder() {

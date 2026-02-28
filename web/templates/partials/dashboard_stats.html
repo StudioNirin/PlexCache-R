@@ -51,7 +51,8 @@
     <div class="stat-label">items tracked</div>
 </a>
 
-<a href="/maintenance" class="stat-card stat-card-link {% if stats.health_issues > 0 %}stat-card-danger{% elif stats.health_warnings > 0 %}stat-card-warning{% else %}stat-card-success{% endif %}">
+<a href="/maintenance" class="stat-card stat-card-link {% if stats.health_issues > 0 %}stat-card-danger{% elif stats.health_warnings > 0 %}stat-card-warning{% else %}stat-card-success{% endif %}"
+   title="{% if stats.health_issues > 0 %}{{ stats.health_orphaned_count }} orphaned backup{{ 's' if stats.health_orphaned_count != 1 }}{% endif %}{% if stats.health_warnings > 0 %}{% if stats.health_issues > 0 %}, {% endif %}{% set parts = [] %}{% if stats.health_stale_exclude_count > 0 %}{% set _ = parts.append(stats.health_stale_exclude_count ~ ' stale exclude') %}{% endif %}{% if stats.health_stale_timestamp_count > 0 %}{% set _ = parts.append(stats.health_stale_timestamp_count ~ ' stale timestamp') %}{% endif %}{{ parts|join(', ') }}{% endif %}{% if stats.health_issues == 0 and stats.health_warnings == 0 %}All tracking data is consistent{% endif %}">
     <div class="stat-card-header">
         {% if stats.health_issues > 0 %}
         <i data-lucide="alert-circle"></i>
@@ -65,9 +66,16 @@
     {% if stats.health_issues > 0 %}
     <div class="stat-value" style="color: var(--danger);">{{ stats.health_issues }}</div>
     <div class="stat-label">critical issues</div>
+    <div class="stat-detail">{{ stats.health_orphaned_count }} orphaned backup{{ 's' if stats.health_orphaned_count != 1 }}</div>
     {% elif stats.health_warnings > 0 %}
     <div class="stat-value" style="color: var(--warning);">{{ stats.health_warnings }}</div>
     <div class="stat-label">warnings</div>
+    <div class="stat-detail">
+        {% set parts = [] %}
+        {% if stats.health_stale_exclude_count > 0 %}{% set _ = parts.append(stats.health_stale_exclude_count ~ ' stale exclude') %}{% endif %}
+        {% if stats.health_stale_timestamp_count > 0 %}{% set _ = parts.append(stats.health_stale_timestamp_count ~ ' stale timestamp') %}{% endif %}
+        {{ parts|join(', ') }}
+    </div>
     {% else %}
     <div class="stat-value" style="color: var(--success);">OK</div>
     <div class="stat-label">no issues</div>
@@ -79,34 +87,38 @@
         <i data-lucide="clock"></i>
         Schedule
     </div>
-    <div style="display: flex; gap: 1rem; margin-bottom: 0.5rem;">
-        <div style="flex: 1; text-align: center;">
-            <div style="font-size: 0.7rem; text-transform: uppercase; color: var(--plex-text-muted); margin-bottom: 0.25rem;">Last</div>
-            <div style="font-size: 1.25rem; font-weight: 600; color: var(--plex-text);">{{ stats.last_run }}</div>
-        </div>
-        <div style="width: 1px; background: var(--plex-border);"></div>
-        <div style="flex: 1; text-align: center;">
-            <div style="font-size: 0.7rem; text-transform: uppercase; color: var(--plex-text-muted); margin-bottom: 0.25rem;">Next</div>
-            {% if stats.schedule_enabled and stats.next_run_relative %}
-            <div style="font-size: 1.25rem; font-weight: 600; color: var(--plex-orange);">{{ stats.next_run_relative }}</div>
-            <div style="font-size: 0.7rem; color: var(--plex-text-muted);">{{ stats.next_run }}</div>
-            {% elif stats.schedule_enabled %}
-            <div style="font-size: 0.9rem; font-weight: 600; color: var(--plex-orange);">{{ stats.next_run }}</div>
-            {% else %}
-            <div style="font-size: 1rem; color: var(--plex-text-muted);">—</div>
-            {% endif %}
+    <div style="text-align: center; margin-bottom: 0.5rem;">
+        <div style="font-size: 0.7rem; text-transform: uppercase; color: var(--plex-text-muted); margin-bottom: 0.25rem;">Last Run</div>
+        <div style="font-size: 1.5rem; font-weight: 600; color: var(--plex-text);">{{ stats.last_run }}</div>
+    </div>
+    {% if stats.last_run_summary %}
+    <div class="last-run-detail" style="text-align: center; margin-bottom: 0.35rem;">
+        {% if stats.last_run_summary.dry_run %}
+        <span class="badge badge-muted" style="font-size: 0.65rem;">Dry Run</span>
+        {% elif stats.last_run_summary.status == 'failed' %}
+        <span class="badge badge-warning" style="font-size: 0.65rem;">Failed</span>
+        {% endif %}
+        {% if stats.last_run_summary.error_count > 0 %}
+        <span style="font-size: 0.7rem; color: var(--warning);">{{ stats.last_run_summary.error_count }} error{{ 's' if stats.last_run_summary.error_count != 1 }}</span>
+        {% endif %}
+        <div style="font-size: 0.75rem; color: var(--plex-text-muted); margin-top: 0.15rem;">
+            {% set parts = [] %}
+            {% if stats.last_run_summary.bytes_cached_display %}{% set _ = parts.append(stats.last_run_summary.bytes_cached_display ~ ' cached') %}{% endif %}
+            {% if stats.last_run_summary.bytes_restored_display %}{% set _ = parts.append(stats.last_run_summary.bytes_restored_display ~ ' restored') %}{% endif %}
+            {% if parts %}{{ parts|join(', ') }} &middot; {% endif %}{{ stats.last_run_summary.duration_display }}
         </div>
     </div>
+    {% endif %}
     <div class="mt-1" style="text-align: center;">
         {% if stats.plex_connected %}
         <span class="badge badge-success">
-            <i data-lucide="wifi"></i>
-            Connected
+            <i data-lucide="plug"></i>
+            Plex Connected
         </span>
         {% else %}
         <span class="badge badge-warning">
-            <i data-lucide="wifi-off"></i>
-            Not Connected
+            <i data-lucide="plug-off"></i>
+            Plex Not Connected
         </span>
         {% endif %}
     </div>

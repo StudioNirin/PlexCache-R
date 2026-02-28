@@ -62,9 +62,9 @@ def cache_list(
     if totals["total_size"] >= 1024 ** 3:
         totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 3):.2f} GB"
     elif totals["total_size"] >= 1024 ** 2:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.1f} MB"
+        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.2f} MB"
     else:
-        totals["total_size_display"] = f"{totals['total_size'] / 1024:.0f} KB"
+        totals["total_size_display"] = f"{totals['total_size'] / 1024:.2f} KB"
 
     return templates.TemplateResponse(
         "cache/list.html",
@@ -106,7 +106,7 @@ def cache_drive(request: Request, expiring_within: int = 7):
 
 
 @router.get("/priorities", response_class=HTMLResponse)
-async def cache_priorities(
+def cache_priorities(
     request: Request,
     sort: str = Query("priority", description="Sort column"),
     dir: str = Query("desc", description="Sort direction")

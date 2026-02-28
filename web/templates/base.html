@@ -13,6 +13,7 @@
 
     <!-- Custom Plex Theme -->
     <link rel="stylesheet" href="/static/css/plex-theme.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
 
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
@@ -41,7 +42,7 @@
             <i data-lucide="menu"></i>
         </button>
         <div class="mobile-brand">
-            <i data-lucide="hard-drive"></i>
+            <div class="sidebar-brand-icon"><i data-lucide="hard-drive"></i></div>
             <span>PlexCache-D</span>
         </div>
         <div class="mobile-actions">
@@ -55,18 +56,11 @@
     <!-- Sidebar Overlay -->
     <div class="sidebar-overlay" onclick="closeSidebar()"></div>
 
-    <!-- Global Operation Status Banner - floating overlay on all pages -->
-    <div id="global-operation-banner"
-         hx-get="/api/operation-banner"
-         hx-trigger="load"
-         hx-swap="innerHTML">
-    </div>
-
     <div class="app-container">
         <!-- Sidebar -->
         <nav class="sidebar">
             <div class="sidebar-brand">
-                <i data-lucide="hard-drive"></i>
+                <div class="sidebar-brand-icon"><i data-lucide="hard-drive"></i></div>
                 <span>PlexCache-D</span>
                 {% if image_tag is defined and image_tag != 'latest' %}
                 <span class="dev-badge">{{ image_tag | upper }}</span>
@@ -128,13 +122,20 @@
                     </button>
                 </div>
 
+                <!-- Global Operation Status Banner -->
+                <div id="global-operation-banner"
+                     hx-get="/api/operation-banner"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                </div>
+
                 <!-- Alert container for toast notifications -->
                 <div id="alert-container"></div>
 
                 {% block content %}{% endblock %}
 
                 <footer>
-                    PlexCache-D Web UI <span class="version">v0.1.0</span>
+                    PlexCache-D Web UI <span class="version">v{{ web_version }}</span>
                 </footer>
             </div>
         </main>
@@ -146,9 +147,13 @@
         // Initialize Lucide icons
         lucide.createIcons();
 
-        // Re-initialize icons after HTMX swaps
-        document.addEventListener('htmx:afterSwap', function() {
+        // Re-initialize icons after HTMX swaps + scroll to alert if populated
+        document.addEventListener('htmx:afterSwap', function(e) {
             lucide.createIcons();
+            var id = e.detail.target.id;
+            if ((id === 'settings-alert-container' || id === 'alert-container') && e.detail.target.innerHTML.trim()) {
+                e.detail.target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         });
 
         // Theme toggle
@@ -229,6 +234,71 @@
                 document.documentElement.classList.remove('sidebar-collapsed-init');
             }
         })();
+    </script>
+    <!-- Banner live log stream — persists outside HTMX-swapped banner area -->
+    <script>
+    window.BannerLogStream = (function() {
+        var buffer = [];
+        var socket = null;
+        var reconnectTimer = null;
+        var MAX_LINES = 5;
+
+        function esc(text) {
+            var d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        function connect() {
+            if (socket) return;
+            var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            socket = new WebSocket(proto + '//' + location.host + '/logs/ws?source=live');
+
+            socket.onmessage = function(e) {
+                try {
+                    var data = JSON.parse(e.data);
+                    if (data.type === 'initial') {
+                        buffer = (data.lines || []).slice(-MAX_LINES);
+                    } else if (data.type === 'append') {
+                        (data.lines || []).forEach(function(l) { buffer.push(l); });
+                        while (buffer.length > MAX_LINES) buffer.shift();
+                    } else { return; } // heartbeat/error — skip render
+                    renderIfVisible();
+                } catch (err) {}
+            };
+
+            socket.onclose = function() {
+                socket = null;
+                // Auto-reconnect if a running pill still exists
+                if (document.querySelector('.di-pill.di-glow')) {
+                    reconnectTimer = setTimeout(connect, 3000);
+                }
+            };
+            socket.onerror = function() {};
+        }
+
+        function disconnect() {
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            if (socket) { socket.close(); socket = null; }
+            buffer = [];
+        }
+
+        function renderIfVisible() {
+            var container = document.getElementById('di-log-lines');
+            if (!container || buffer.length === 0) return;
+
+            var html = '';
+            buffer.forEach(function(line) {
+                var text = typeof line === 'string' ? line : (line.raw || '');
+                if (text.length > 120) text = text.substring(0, 117) + '...';
+                html += '<div class="di-file-row" style="font-family: monospace; font-size: 0.7rem;">' +
+                        '<span class="di-file-row__name">' + esc(text) + '</span></div>';
+            });
+            container.innerHTML = html;
+        }
+
+        return { connect: connect, disconnect: disconnect, renderIfVisible: renderIfVisible };
+    })();
     </script>
     {% block scripts %}{% endblock %}
 </body>

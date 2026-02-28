@@ -55,17 +55,36 @@
                     <option value="WARNING">Warning</option>
                     <option value="INFO">Info</option>
                     <option value="DEBUG">Debug</option>
+                    <option value="SUMMARY">Summary</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label for="phase-filter">Phase</label>
+                <select id="phase-filter">
+                    <option value="all">All Phases</option>
+                    <option value="fetching">Fetching Media</option>
+                    <option value="analyzing">Analyzing</option>
+                    <option value="restoring">Restoring to Array</option>
+                    <option value="evicting">Eviction</option>
+                    <option value="caching">Caching</option>
+                    <option value="moving">Moving Files</option>
+                    <option value="results">Results</option>
                 </select>
             </div>
             <div class="form-group mb-0">
                 <label>&nbsp;</label>
-                <button class="btn btn-secondary"
-                        hx-get="/logs/content"
-                        hx-target="#log-content"
-                        hx-include="#log-file-select, #log-lines">
-                    <i data-lucide="refresh-cw"></i>
-                    Refresh
-                </button>
+                <div class="flex gap-1">
+                    <button class="btn btn-secondary"
+                            hx-get="/logs/content"
+                            hx-target="#log-content"
+                            hx-include="#log-file-select, #log-lines">
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh
+                    </button>
+                    <a id="download-btn" class="btn btn-secondary" href="/logs/download?filename={{ current_file or '' }}" title="Download log file">
+                        <i data-lucide="download"></i>
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -77,11 +96,28 @@
         <div class="log-toolbar">
             <div class="search-container">
                 <input type="text" id="log-search" class="search-input" placeholder="Search logs... (Ctrl+F)">
-                <span class="search-results" id="search-results">0 results</span>
-                <button type="button" class="btn btn-sm btn-secondary" id="search-prev" title="Previous (Shift+Enter)">▲</button>
-                <button type="button" class="btn btn-sm btn-secondary" id="search-next" title="Next (Enter)">▼</button>
+                <span class="search-results" id="search-results"></span>
+                <button type="button" class="btn btn-sm btn-secondary" id="search-prev" title="Previous (Shift+Enter)">&#x25B2;</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="search-next" title="Next (Enter)">&#x25BC;</button>
+                <label class="search-toggle" title="Use regex">
+                    <input type="checkbox" id="search-regex">
+                    <span>.*</span>
+                </label>
+                <label class="search-toggle" title="Case sensitive">
+                    <input type="checkbox" id="search-case-sensitive">
+                    <span>Aa</span>
+                </label>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1">
+                <div class="time-range-inputs">
+                    <input type="time" id="time-from" step="1" title="From time" placeholder="From">
+                    <span class="text-muted">&ndash;</span>
+                    <input type="time" id="time-to" step="1" title="To time" placeholder="To">
+                    <button type="button" class="btn btn-sm btn-secondary" id="time-clear" title="Clear time filter">&times;</button>
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary" id="wrap-toggle" title="Toggle line wrap">
+                    <i data-lucide="wrap-text"></i>
+                </button>
                 <label class="switch" style="margin: 0;">
                     <input type="checkbox" id="auto-scroll" checked>
                     <span>Auto-scroll</span>
@@ -100,12 +136,13 @@
     <div class="card-header">
         <i data-lucide="terminal"></i>
         <h2>Log Output</h2>
+        <div id="log-level-badges" class="flex gap-1" style="margin-left: auto;"></div>
     </div>
     <div class="card-body">
         <div class="log-viewer-wrapper">
             <div id="log-content" class="log-viewer"
                  hx-get="/logs/content"
-                 hx-trigger="load"
+                 hx-trigger="logViewerReady"
                  hx-include="#log-file-select, #log-lines">Loading logs...</div>
             <div id="scrollbar-markers" class="scrollbar-markers"></div>
         </div>
@@ -115,388 +152,645 @@
 
 {% block scripts %}
 <script>
-// ==================== Preferences Persistence ====================
-const PREFS_KEY = 'plexcache_log_viewer_prefs';
+// ==================== LogViewer Namespace ====================
+var LogViewer = (function() {
+    'use strict';
 
-function savePreferences() {
-    const prefs = {
-        lines: document.getElementById('log-lines').value,
-        filterLevel: document.getElementById('log-level-filter').value,
-        autoScroll: document.getElementById('auto-scroll').checked,
-        liveUpdates: document.getElementById('live-updates').checked
+    // ---- Cached DOM refs ----
+    var els = {};
+
+    // ---- State ----
+    var searchState = {
+        query: '',
+        matches: [],
+        currentIndex: 0
     };
-    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
-}
+    var searchDebounceTimer = null;
+    var socket = null;
+    var reconnectTimer = null;
+    var savedScrollPosition = null;
+    var badgeCounts = {};
 
-function loadPreferences() {
-    // Check for ?live=true query parameter (e.g., from operation banner link)
-    const urlParams = new URLSearchParams(window.location.search);
-    const liveFromUrl = urlParams.get('live') === 'true';
+    var PREFS_KEY = 'plexcache_log_viewer_prefs';
 
-    try {
-        const saved = localStorage.getItem(PREFS_KEY);
-        const prefs = saved ? JSON.parse(saved) : {};
+    // ---- Helpers ----
+    function escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
 
-        if (prefs.lines) {
-            document.getElementById('log-lines').value = prefs.lines;
-        }
-        if (prefs.filterLevel) {
-            document.getElementById('log-level-filter').value = prefs.filterLevel;
-        }
-        if (typeof prefs.autoScroll === 'boolean') {
-            document.getElementById('auto-scroll').checked = prefs.autoScroll;
-        }
+    // ---- Preferences ----
+    function savePreferences() {
+        var prefs = {
+            lines: els.logLines.value,
+            filterLevel: els.levelFilter.value,
+            autoScroll: els.autoScroll.checked,
+            liveUpdates: els.liveUpdates.checked,
+            wrapLines: els.logContent.classList.contains('log-wrapped'),
+            searchRegex: els.searchRegex.checked,
+            searchCaseSensitive: els.searchCaseSensitive.checked,
+            phaseFilter: els.phaseFilter.value,
+            timeFrom: els.timeFrom.value,
+            timeTo: els.timeTo.value
+        };
+        localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    }
 
-        // URL parameter takes precedence over saved preference
-        const shouldEnableLive = liveFromUrl || prefs.liveUpdates;
-        if (shouldEnableLive) {
-            document.getElementById('live-updates').checked = true;
-            startLiveUpdates();
-        }
-    } catch (e) {
-        console.warn('Failed to load log viewer preferences:', e);
-        // Still check URL param even if localStorage fails
-        if (liveFromUrl) {
-            document.getElementById('live-updates').checked = true;
-            startLiveUpdates();
+    function loadPreferences() {
+        var urlParams = new URLSearchParams(window.location.search);
+        var liveFromUrl = urlParams.get('live') === 'true';
+
+        try {
+            var saved = localStorage.getItem(PREFS_KEY);
+            var prefs = saved ? JSON.parse(saved) : {};
+
+            if (prefs.lines) els.logLines.value = prefs.lines;
+            if (prefs.filterLevel) els.levelFilter.value = prefs.filterLevel;
+            if (typeof prefs.autoScroll === 'boolean') els.autoScroll.checked = prefs.autoScroll;
+            if (prefs.wrapLines) els.logContent.classList.add('log-wrapped');
+            if (prefs.searchRegex) els.searchRegex.checked = true;
+            if (prefs.searchCaseSensitive) els.searchCaseSensitive.checked = true;
+            if (prefs.phaseFilter) els.phaseFilter.value = prefs.phaseFilter;
+            if (prefs.timeFrom) els.timeFrom.value = prefs.timeFrom;
+            if (prefs.timeTo) els.timeTo.value = prefs.timeTo;
+
+            var shouldEnableLive = liveFromUrl || prefs.liveUpdates;
+            if (shouldEnableLive) {
+                els.liveUpdates.checked = true;
+                connectWebSocket();
+            }
+        } catch (e) {
+            console.warn('Failed to load log viewer preferences:', e);
+            if (liveFromUrl) {
+                els.liveUpdates.checked = true;
+                connectWebSocket();
+            }
         }
     }
-}
 
-// Log viewer enhancements - track scroll position for search preservation
-let savedScrollPosition = null;
+    // ---- Level Filtering (data-attribute based) ----
+    function applyAllFilters() {
+        var container = els.logContent.querySelector('pre') || els.logContent;
+        var lines = container.querySelectorAll('.log-line');
+        var levelFilter = els.levelFilter.value;
+        var phaseFilter = els.phaseFilter.value;
+        var timeFrom = els.timeFrom.value;
+        var timeTo = els.timeTo.value;
+        var visibleCount = 0;
 
-document.addEventListener('htmx:beforeSwap', function(evt) {
-    if (evt.detail.target.id === 'log-content') {
-        const hasActiveSearch = searchState && searchState.query && searchState.query.length >= 2;
-        if (hasActiveSearch) {
-            // Save scroll position before content is replaced
-            savedScrollPosition = evt.detail.target.scrollTop;
-        } else {
-            savedScrollPosition = null;
+        lines.forEach(function(line) {
+            var visible = true;
+
+            // Level filter
+            if (levelFilter !== 'all') {
+                var lineLevel = line.dataset.level;
+                if (lineLevel !== levelFilter) visible = false;
+            }
+
+            // Phase filter
+            if (visible && phaseFilter !== 'all') {
+                var linePhase = line.dataset.phase;
+                if (linePhase !== phaseFilter) visible = false;
+            }
+
+            // Time range filter
+            if (visible && (timeFrom || timeTo)) {
+                var lineTimestamp = line.dataset.timestamp;
+                if (lineTimestamp) {
+                    var normalized = normalizeTimeTo24h(lineTimestamp);
+                    if (timeFrom && normalized < timeFrom) visible = false;
+                    if (timeTo && normalized > timeTo) visible = false;
+                } else if (timeFrom || timeTo) {
+                    // Continuation lines with no timestamp — hide if time filter is active
+                    // Actually keep them visible to preserve context
+                }
+            }
+
+            line.style.display = visible ? '' : 'none';
+            if (visible) visibleCount++;
+        });
+
+        // Show empty state when filters hide all lines
+        var emptyMsg = els.logContent.querySelector('.log-filter-empty');
+        var hasFilters = levelFilter !== 'all' || phaseFilter !== 'all' || timeFrom || timeTo;
+        if (visibleCount === 0 && lines.length > 0 && hasFilters) {
+            if (!emptyMsg) {
+                emptyMsg = document.createElement('div');
+                emptyMsg.className = 'log-filter-empty';
+                emptyMsg.style.cssText = 'text-align:center; padding:2rem; color:var(--plex-text-muted);';
+                emptyMsg.textContent = 'No log lines match the current filters';
+                els.logContent.appendChild(emptyMsg);
+            }
+            emptyMsg.style.display = '';
+        } else if (emptyMsg) {
+            emptyMsg.style.display = 'none';
         }
     }
-});
 
-document.addEventListener('htmx:afterSwap', function(evt) {
-    if (evt.detail.target.id === 'log-content') {
-        const hasActiveSearch = searchState && searchState.query && searchState.query.length >= 2;
-
-        if (hasActiveSearch && savedScrollPosition !== null) {
-            // Restore scroll position, then re-highlight matches (without scrolling)
-            evt.detail.target.scrollTop = savedScrollPosition;
-            reapplySearchHighlights();
-            savedScrollPosition = null;
-        } else if (document.getElementById('auto-scroll').checked) {
-            // No search active - auto-scroll to bottom
-            evt.detail.target.scrollTop = evt.detail.target.scrollHeight;
+    function normalizeTimeTo24h(ts) {
+        // Convert "2:30:05 PM" → "14:30:05", pass through "14:30:05" as-is
+        ts = ts.trim();
+        var ampmMatch = ts.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i);
+        if (ampmMatch) {
+            var h = parseInt(ampmMatch[1], 10);
+            var m = ampmMatch[2];
+            var s = ampmMatch[3];
+            var period = ampmMatch[4].toUpperCase();
+            if (period === 'PM' && h !== 12) h += 12;
+            if (period === 'AM' && h === 12) h = 0;
+            return (h < 10 ? '0' : '') + h + ':' + m + ':' + s;
         }
+        // Already 24h, pad if needed
+        var parts = ts.split(':');
+        if (parts.length >= 2 && parts[0].length === 1) {
+            return '0' + ts;
+        }
+        return ts;
     }
-    lucide.createIcons();
-    // Reapply filter after content swap
-    applyLogFilter();
-});
 
-// Log level filtering
-const filterSelect = document.getElementById('log-level-filter');
-const logContent = document.getElementById('log-content');
+    // ---- Search ----
+    function performSearch() {
+        var query = els.searchInput.value.trim();
+        searchState.query = query;
+        searchState.matches = [];
+        searchState.currentIndex = 0;
 
-function getLineLevel(element) {
-    // Check element class first (more reliable)
-    if (element.classList.contains('log-error')) return 'ERROR';
-    if (element.classList.contains('log-warning')) return 'WARNING';
-    if (element.classList.contains('log-info')) return 'INFO';
-    if (element.classList.contains('log-debug')) return 'DEBUG';
-    // Fallback to text content
-    const text = element.textContent;
-    if (text.includes(' - ERROR - ') || text.includes('ERROR')) return 'ERROR';
-    if (text.includes(' - WARNING - ') || text.includes('WARNING')) return 'WARNING';
-    if (text.includes(' - INFO - ') || text.includes('INFO')) return 'INFO';
-    if (text.includes(' - DEBUG - ') || text.includes('DEBUG')) return 'DEBUG';
-    return 'INFO'; // Default
-}
+        var container = els.logContent.querySelector('pre') || els.logContent;
+        var lines = container.querySelectorAll('.log-line');
 
-function applyLogFilter() {
-    const filter = filterSelect.value;
-    // Look for pre (static logs) or code (WebSocket logs)
-    const container = logContent.querySelector('pre') || logContent.querySelector('code') || logContent;
+        // Clear previous highlights
+        lines.forEach(function(line) {
+            line.classList.remove('current-match');
+            if (line.dataset.original) {
+                line.innerHTML = line.dataset.original;
+                delete line.dataset.original;
+            }
+        });
 
-    const lines = container.querySelectorAll('span, div');
-    lines.forEach(line => {
-        if (filter === 'all') {
-            line.style.display = '';
+        if (query.length < 2) {
+            updateSearchResults();
             return;
         }
 
-        const lineLevel = getLineLevel(line);
-        // Show only exact level match
-        line.style.display = (lineLevel === filter) ? '' : 'none';
-    });
-}
-
-filterSelect.addEventListener('change', applyLogFilter);
-
-// ==================== Search Functionality ====================
-const searchInput = document.getElementById('log-search');
-const searchResults = document.getElementById('search-results');
-const searchPrev = document.getElementById('search-prev');
-const searchNext = document.getElementById('search-next');
-
-let searchState = {
-    query: '',
-    matches: [],
-    currentIndex: 0
-};
-
-function escapeRegex(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// Re-apply search highlights without changing scroll position or currentIndex
-function reapplySearchHighlights() {
-    const query = searchState.query;
-    if (!query || query.length < 2) return;
-
-    const container = logContent.querySelector('pre') || logContent.querySelector('code') || logContent;
-    const lines = container.querySelectorAll('span, div');
-    const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
-
-    // Reset matches array but preserve currentIndex if valid
-    const oldIndex = searchState.currentIndex;
-    searchState.matches = [];
-
-    lines.forEach((line, idx) => {
-        const text = line.textContent;
-        if (regex.test(text)) {
-            searchState.matches.push({ element: line, index: idx });
-            // Apply highlight
-            line.dataset.original = line.innerHTML;
-            line.innerHTML = line.innerHTML.replace(regex, '<span class="search-highlight">$1</span>');
+        var regex;
+        try {
+            var flags = els.searchCaseSensitive.checked ? 'g' : 'gi';
+            var pattern = els.searchRegex.checked ? query : escapeRegex(query);
+            regex = new RegExp('(' + pattern + ')', flags);
+        } catch (e) {
+            els.searchResults.textContent = 'Invalid regex';
+            els.searchResults.classList.remove('has-results');
+            return;
         }
-    });
 
-    // Restore currentIndex if still valid, otherwise reset to 0
-    if (oldIndex < searchState.matches.length) {
-        searchState.currentIndex = oldIndex;
-    } else {
-        searchState.currentIndex = Math.max(0, searchState.matches.length - 1);
-    }
+        lines.forEach(function(line, idx) {
+            var text = line.textContent;
+            if (regex.test(text)) {
+                searchState.matches.push({ element: line, index: idx });
+                line.dataset.original = line.innerHTML;
+                regex.lastIndex = 0; // Reset after test()
+                line.innerHTML = line.innerHTML.replace(regex, '<span class="search-highlight">$1</span>');
+            }
+            regex.lastIndex = 0;
+        });
 
-    // Mark current match (without scrolling)
-    if (searchState.matches.length > 0) {
-        searchState.matches[searchState.currentIndex].element.classList.add('current-match');
-    }
-
-    updateSearchResults();
-}
-
-function performSearch() {
-    const query = searchInput.value.trim();
-    searchState.query = query;
-    searchState.matches = [];
-    searchState.currentIndex = 0;
-
-    const container = logContent.querySelector('pre') || logContent.querySelector('code') || logContent;
-    const lines = container.querySelectorAll('span, div');
-
-    // Clear previous highlights
-    lines.forEach(line => {
-        line.classList.remove('current-match');
-        // Restore original text if it was highlighted
-        if (line.dataset.original) {
-            line.innerHTML = line.dataset.original;
-            delete line.dataset.original;
-        }
-    });
-
-    if (query.length < 2) {
         updateSearchResults();
-        return;
+
+        if (searchState.matches.length > 0) {
+            highlightCurrentMatch();
+        }
     }
 
-    const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+    function reapplySearchHighlights() {
+        var query = searchState.query;
+        if (!query || query.length < 2) return;
 
-    lines.forEach((line, idx) => {
-        const text = line.textContent;
-        if (regex.test(text)) {
-            searchState.matches.push({ element: line, index: idx });
-            // Store original and apply highlight
-            line.dataset.original = line.innerHTML;
-            line.innerHTML = line.innerHTML.replace(regex, '<span class="search-highlight">$1</span>');
+        var container = els.logContent.querySelector('pre') || els.logContent;
+        var lines = container.querySelectorAll('.log-line');
+
+        var regex;
+        try {
+            var flags = els.searchCaseSensitive.checked ? 'g' : 'gi';
+            var pattern = els.searchRegex.checked ? query : escapeRegex(query);
+            regex = new RegExp('(' + pattern + ')', flags);
+        } catch (e) {
+            return;
         }
-    });
 
-    updateSearchResults();
+        var oldIndex = searchState.currentIndex;
+        searchState.matches = [];
 
-    // Scroll to first match
-    if (searchState.matches.length > 0) {
+        lines.forEach(function(line, idx) {
+            var text = line.textContent;
+            if (regex.test(text)) {
+                searchState.matches.push({ element: line, index: idx });
+                line.dataset.original = line.innerHTML;
+                regex.lastIndex = 0;
+                line.innerHTML = line.innerHTML.replace(regex, '<span class="search-highlight">$1</span>');
+            }
+            regex.lastIndex = 0;
+        });
+
+        if (oldIndex < searchState.matches.length) {
+            searchState.currentIndex = oldIndex;
+        } else {
+            searchState.currentIndex = Math.max(0, searchState.matches.length - 1);
+        }
+
+        if (searchState.matches.length > 0) {
+            searchState.matches[searchState.currentIndex].element.classList.add('current-match');
+        }
+
+        updateSearchResults();
+    }
+
+    function updateSearchResults() {
+        if (searchState.matches.length > 0) {
+            els.searchResults.textContent = (searchState.currentIndex + 1) + ' / ' + searchState.matches.length;
+            els.searchResults.classList.add('has-results');
+        } else if (searchState.query && searchState.query.length >= 2) {
+            els.searchResults.textContent = '0 results';
+            els.searchResults.classList.remove('has-results');
+        } else {
+            els.searchResults.textContent = '';
+            els.searchResults.classList.remove('has-results');
+        }
+        updateScrollbarMarkers();
+    }
+
+    function updateScrollbarMarkers() {
+        var markersContainer = els.scrollbarMarkers;
+        if (!markersContainer) return;
+        markersContainer.innerHTML = '';
+
+        if (!searchState.matches || searchState.matches.length === 0) return;
+
+        var container = els.logContent.querySelector('pre') || els.logContent;
+        var containerHeight = container.scrollHeight;
+        var viewportHeight = els.logContent.clientHeight;
+
+        if (containerHeight <= viewportHeight) return;
+
+        searchState.matches.forEach(function(match, idx) {
+            var element = match.element;
+            if (!element || !element.isConnected) return;
+            var percentage = (element.offsetTop / containerHeight) * 100;
+
+            var marker = document.createElement('div');
+            marker.className = 'scrollbar-marker' + (idx === searchState.currentIndex ? ' current' : '');
+            marker.style.top = percentage + '%';
+            markersContainer.appendChild(marker);
+        });
+    }
+
+    function highlightCurrentMatch() {
+        var prev = els.logContent.querySelector('.current-match');
+        if (prev) prev.classList.remove('current-match');
+
+        if (searchState.matches.length === 0) return;
+
+        var match = searchState.matches[searchState.currentIndex];
+        match.element.classList.add('current-match');
+        match.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        updateScrollbarMarkers();
+    }
+
+    function navigateSearch(direction) {
+        if (searchState.matches.length === 0) return;
+
+        if (direction === 'next') {
+            searchState.currentIndex = (searchState.currentIndex + 1) % searchState.matches.length;
+        } else {
+            searchState.currentIndex = (searchState.currentIndex - 1 + searchState.matches.length) % searchState.matches.length;
+        }
+
+        updateSearchResults();
         highlightCurrentMatch();
     }
-}
 
-function updateSearchResults() {
-    if (searchState.matches.length > 0) {
-        searchResults.textContent = `${searchState.currentIndex + 1} / ${searchState.matches.length}`;
-        searchResults.classList.add('has-results');
-    } else if (searchState.query.length >= 2) {
-        searchResults.textContent = '0 results';
-        searchResults.classList.remove('has-results');
-    } else {
-        searchResults.textContent = '0 results';
-        searchResults.classList.remove('has-results');
-    }
-    updateScrollbarMarkers();
-}
+    // ---- WebSocket ----
+    function connectWebSocket() {
+        disconnectWebSocket();
 
-function updateScrollbarMarkers() {
-    const markersContainer = document.getElementById('scrollbar-markers');
-    if (!markersContainer) return;
-    markersContainer.innerHTML = '';
+        var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var filename = els.fileSelect.value;
+        var lineCount = els.logLines.value;
 
-    if (!searchState.matches || searchState.matches.length === 0) return;
+        // If live updates is checked and an operation is running, use live source
+        // Otherwise tail the selected file
+        var liveToggle = els.liveUpdates.checked;
+        var source = liveToggle ? 'live' : 'file';
+        var url = protocol + '//' + location.host + '/logs/ws?source=' + source +
+                  '&filename=' + encodeURIComponent(filename) +
+                  '&lines=' + lineCount;
 
-    const container = logContent ? (logContent.querySelector('pre') || logContent.querySelector('code') || logContent) : null;
-    if (!container) return;
+        socket = new WebSocket(url);
 
-    const containerHeight = container.scrollHeight;
-    const viewportHeight = logContent.clientHeight;
+        socket.onopen = function() {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+        };
 
-    // Only show markers if content is scrollable
-    if (containerHeight <= viewportHeight) return;
+        socket.onmessage = function(event) {
+            try {
+                var data = JSON.parse(event.data);
+                if (data.type === 'initial') {
+                    renderLogLines(data.lines, false);
+                    setBadgeCounts(data.counts || {});
+                } else if (data.type === 'append') {
+                    renderLogLines(data.lines, true);
+                    mergeBadgeCounts(data.counts || {});
+                } else if (data.type === 'error') {
+                    console.error('WebSocket error:', data.message);
+                }
+                // heartbeat — no action needed
+            } catch (e) {
+                console.warn('Failed to parse WebSocket message:', e);
+            }
+        };
 
-    searchState.matches.forEach((match, idx) => {
-        const element = match.element;
-        // Check if element still exists in DOM (may have been replaced by live update)
-        if (!element || !element.isConnected) return;
-        const elementTop = element.offsetTop;
-        const percentage = (elementTop / containerHeight) * 100;
+        socket.onclose = function() {
+            socket = null;
+            // Auto-reconnect if live updates still enabled
+            if (els.liveUpdates.checked) {
+                reconnectTimer = setTimeout(function() {
+                    connectWebSocket();
+                }, 3000);
+            }
+        };
 
-        const marker = document.createElement('div');
-        marker.className = 'scrollbar-marker' + (idx === searchState.currentIndex ? ' current' : '');
-        marker.style.top = `${percentage}%`;
-        markersContainer.appendChild(marker);
-    });
-}
-
-function highlightCurrentMatch() {
-    // Remove previous current-match
-    const prev = logContent.querySelector('.current-match');
-    if (prev) prev.classList.remove('current-match');
-
-    if (searchState.matches.length === 0) return;
-
-    const match = searchState.matches[searchState.currentIndex];
-    match.element.classList.add('current-match');
-    match.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-    // Update scrollbar markers to show current
-    updateScrollbarMarkers();
-}
-
-function navigateSearch(direction) {
-    if (searchState.matches.length === 0) return;
-
-    if (direction === 'next') {
-        searchState.currentIndex = (searchState.currentIndex + 1) % searchState.matches.length;
-    } else {
-        searchState.currentIndex = (searchState.currentIndex - 1 + searchState.matches.length) % searchState.matches.length;
+        socket.onerror = function(err) {
+            console.error('WebSocket error:', err);
+        };
     }
 
-    updateSearchResults();
-    highlightCurrentMatch();
-}
-
-// Search event listeners
-searchInput.addEventListener('input', performSearch);
-searchPrev.addEventListener('click', () => navigateSearch('prev'));
-searchNext.addEventListener('click', () => navigateSearch('next'));
-
-// Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    // Ctrl+F to focus search
-    if (e.ctrlKey && e.key === 'f') {
-        e.preventDefault();
-        searchInput.focus();
+    function disconnectWebSocket() {
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        if (socket) {
+            socket.close();
+            socket = null;
+        }
     }
-    // Enter/Shift+Enter when in search input
-    if (e.key === 'Enter' && document.activeElement === searchInput) {
-        e.preventDefault();
-        if (e.shiftKey) {
-            navigateSearch('prev');
+
+    function renderLogLines(lines, append) {
+        if (!lines || lines.length === 0) return;
+
+        var container = els.logContent.querySelector('pre');
+
+        if (!append || !container) {
+            // Full replace
+            var html = '<pre class="log-output">';
+            lines.forEach(function(line) {
+                html += '<span class="log-line log-' + (line.level || '').toLowerCase() + '"' +
+                        ' data-level="' + (line.level || '') + '"' +
+                        ' data-timestamp="' + (line.timestamp || '') + '"' +
+                        ' data-phase="' + (line.phase || '') + '">' +
+                        escapeHtml(line.raw) + '\n</span>';
+            });
+            html += '</pre>';
+            if (els.logContent.classList.contains('log-wrapped')) {
+                // Preserve wrap state
+                html = html.replace('class="log-output"', 'class="log-output log-output-wrapped"');
+            }
+            els.logContent.innerHTML = html;
+            container = els.logContent.querySelector('pre');
         } else {
-            navigateSearch('next');
+            // Append mode
+            var fragment = document.createDocumentFragment();
+            lines.forEach(function(line) {
+                var span = document.createElement('span');
+                span.className = 'log-line log-' + (line.level || '').toLowerCase();
+                span.dataset.level = line.level || '';
+                span.dataset.timestamp = line.timestamp || '';
+                span.dataset.phase = line.phase || '';
+                span.textContent = line.raw + '\n';
+                fragment.appendChild(span);
+            });
+            container.appendChild(fragment);
+
+            // DOM trimming: cap at 5000 lines
+            var allLines = container.querySelectorAll('.log-line');
+            var maxLines = 5000;
+            while (allLines.length > maxLines) {
+                var first = allLines[0];
+                // Remove span and trailing text node
+                if (first.nextSibling && first.nextSibling.nodeType === 3) {
+                    first.nextSibling.remove();
+                }
+                first.remove();
+                allLines = container.querySelectorAll('.log-line');
+            }
+        }
+
+        // Post-render: re-apply filters and search
+        applyAllFilters();
+
+        if (searchState.query && searchState.query.length >= 2) {
+            reapplySearchHighlights();
+        }
+
+        // Auto-scroll
+        if (els.autoScroll.checked) {
+            els.logContent.scrollTop = els.logContent.scrollHeight;
+        }
+
+        lucide.createIcons();
+    }
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function setBadgeCounts(counts) {
+        badgeCounts = counts || {};
+        renderBadges();
+    }
+
+    function mergeBadgeCounts(counts) {
+        for (var key in counts) {
+            if (counts.hasOwnProperty(key)) {
+                badgeCounts[key] = (badgeCounts[key] || 0) + counts[key];
+            }
+        }
+        renderBadges();
+    }
+
+    function renderBadges() {
+        var container = els.badgeContainer;
+        if (!container) return;
+
+        var html = '';
+        var errCount = (badgeCounts.ERROR || 0) + (badgeCounts.CRITICAL || 0);
+        if (errCount) {
+            html += '<span class="badge badge-error">' + errCount + ' error' + (errCount !== 1 ? 's' : '') + '</span>';
+        }
+        if (badgeCounts.WARNING) {
+            html += '<span class="badge badge-warning">' + badgeCounts.WARNING + ' warning' + (badgeCounts.WARNING !== 1 ? 's' : '') + '</span>';
+        }
+        if (badgeCounts.INFO) {
+            html += '<span class="badge badge-info">' + badgeCounts.INFO + ' info</span>';
+        }
+        if (badgeCounts.DEBUG) {
+            html += '<span class="badge badge-muted">' + badgeCounts.DEBUG + ' debug</span>';
+        }
+        container.innerHTML = html;
+    }
+
+    // ---- HTMX Integration ----
+    function onBeforeSwap(evt) {
+        if (evt.detail.target.id === 'log-content') {
+            var hasActiveSearch = searchState.query && searchState.query.length >= 2;
+            savedScrollPosition = hasActiveSearch ? evt.detail.target.scrollTop : null;
         }
     }
-    // F3 for next/prev
-    if (e.key === 'F3') {
-        e.preventDefault();
-        if (e.shiftKey) {
-            navigateSearch('prev');
-        } else {
-            navigateSearch('next');
+
+    function onAfterSwap(evt) {
+        if (evt.detail.target.id === 'log-content') {
+            var hasActiveSearch = searchState.query && searchState.query.length >= 2;
+
+            if (hasActiveSearch && savedScrollPosition !== null) {
+                evt.detail.target.scrollTop = savedScrollPosition;
+                reapplySearchHighlights();
+                savedScrollPosition = null;
+            } else if (els.autoScroll.checked) {
+                evt.detail.target.scrollTop = evt.detail.target.scrollHeight;
+            }
         }
+        lucide.createIcons();
+        applyAllFilters();
     }
-});
 
-// ==================== Live Updates ====================
-const liveUpdatesToggle = document.getElementById('live-updates');
-let liveUpdatesInterval = null;
-
-function refreshLogs() {
-    // Clear stale DOM references from search state before refresh
-    if (searchState.matches.length > 0) {
-        searchState.matches = [];
+    // ---- Download URL ----
+    function updateDownloadLink() {
+        var filename = els.fileSelect.value;
+        els.downloadBtn.href = '/logs/download?filename=' + encodeURIComponent(filename);
     }
-    // Clear scrollbar markers
-    const markersContainer = document.getElementById('scrollbar-markers');
-    if (markersContainer) markersContainer.innerHTML = '';
 
-    htmx.ajax('GET', '/logs/content', {
-        target: '#log-content',
-        swap: 'innerHTML',
-        values: {
-            filename: document.getElementById('log-file-select').value,
-            lines: document.getElementById('log-lines').value
+    // ---- Wrap Toggle ----
+    function toggleWrap() {
+        els.logContent.classList.toggle('log-wrapped');
+        var pre = els.logContent.querySelector('pre');
+        if (pre) {
+            pre.classList.toggle('log-output-wrapped');
         }
-    });
-}
-
-function startLiveUpdates() {
-    if (liveUpdatesInterval) return;
-    liveUpdatesInterval = setInterval(refreshLogs, 5000); // Every 5 seconds
-}
-
-function stopLiveUpdates() {
-    if (liveUpdatesInterval) {
-        clearInterval(liveUpdatesInterval);
-        liveUpdatesInterval = null;
+        savePreferences();
     }
-}
 
-liveUpdatesToggle.addEventListener('change', function() {
-    if (this.checked) {
-        startLiveUpdates();
-    } else {
-        stopLiveUpdates();
+    // ---- Init ----
+    function init() {
+        // Cache DOM refs
+        els.fileSelect = document.getElementById('log-file-select');
+        els.logLines = document.getElementById('log-lines');
+        els.levelFilter = document.getElementById('log-level-filter');
+        els.phaseFilter = document.getElementById('phase-filter');
+        els.searchInput = document.getElementById('log-search');
+        els.searchResults = document.getElementById('search-results');
+        els.searchPrev = document.getElementById('search-prev');
+        els.searchNext = document.getElementById('search-next');
+        els.searchRegex = document.getElementById('search-regex');
+        els.searchCaseSensitive = document.getElementById('search-case-sensitive');
+        els.autoScroll = document.getElementById('auto-scroll');
+        els.liveUpdates = document.getElementById('live-updates');
+        els.logContent = document.getElementById('log-content');
+        els.scrollbarMarkers = document.getElementById('scrollbar-markers');
+        els.timeFrom = document.getElementById('time-from');
+        els.timeTo = document.getElementById('time-to');
+        els.timeClear = document.getElementById('time-clear');
+        els.wrapToggle = document.getElementById('wrap-toggle');
+        els.downloadBtn = document.getElementById('download-btn');
+        els.badgeContainer = document.getElementById('log-level-badges');
+
+        // HTMX events
+        document.addEventListener('htmx:beforeSwap', onBeforeSwap);
+        document.addEventListener('htmx:afterSwap', onAfterSwap);
+
+        // Filter events
+        els.levelFilter.addEventListener('change', function() { applyAllFilters(); savePreferences(); });
+        els.phaseFilter.addEventListener('change', function() { applyAllFilters(); savePreferences(); });
+        els.timeFrom.addEventListener('change', function() { applyAllFilters(); savePreferences(); });
+        els.timeTo.addEventListener('change', function() { applyAllFilters(); savePreferences(); });
+        els.timeClear.addEventListener('click', function() {
+            els.timeFrom.value = '';
+            els.timeTo.value = '';
+            applyAllFilters();
+            savePreferences();
+        });
+
+        // Search events (debounced)
+        els.searchInput.addEventListener('input', function() {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(performSearch, 250);
+        });
+        els.searchPrev.addEventListener('click', function() { navigateSearch('prev'); });
+        els.searchNext.addEventListener('click', function() { navigateSearch('next'); });
+        els.searchRegex.addEventListener('change', function() { performSearch(); savePreferences(); });
+        els.searchCaseSensitive.addEventListener('change', function() { performSearch(); savePreferences(); });
+
+        // Wrap toggle
+        els.wrapToggle.addEventListener('click', toggleWrap);
+
+        // Live updates
+        els.liveUpdates.addEventListener('change', function() {
+            if (this.checked) {
+                connectWebSocket();
+            } else {
+                disconnectWebSocket();
+            }
+            savePreferences();
+        });
+
+        // File/lines change → update download link and reconnect WS if active
+        els.fileSelect.addEventListener('change', function() {
+            updateDownloadLink();
+            if (socket) connectWebSocket();
+        });
+        els.logLines.addEventListener('change', function() {
+            savePreferences();
+            if (socket) connectWebSocket();
+        });
+
+        // Other preference listeners
+        els.autoScroll.addEventListener('change', savePreferences);
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'f') {
+                e.preventDefault();
+                els.searchInput.focus();
+            }
+            if (e.key === 'Enter' && document.activeElement === els.searchInput) {
+                e.preventDefault();
+                navigateSearch(e.shiftKey ? 'prev' : 'next');
+            }
+            if (e.key === 'F3') {
+                e.preventDefault();
+                navigateSearch(e.shiftKey ? 'prev' : 'next');
+            }
+        });
+
+        // Cleanup on navigate away
+        window.addEventListener('beforeunload', disconnectWebSocket);
+
+        // Load saved preferences, then trigger initial log fetch
+        loadPreferences();
+        htmx.trigger('#log-content', 'logViewerReady');
     }
-    savePreferences();
-});
 
-// Stop live updates when navigating away
-window.addEventListener('beforeunload', stopLiveUpdates);
+    // Public API
+    return {
+        init: init,
+        applyAllFilters: applyAllFilters,
+        connectWebSocket: connectWebSocket,
+        disconnectWebSocket: disconnectWebSocket
+    };
+})();
 
-// ==================== Preference Event Listeners ====================
-document.getElementById('log-lines').addEventListener('change', savePreferences);
-document.getElementById('log-level-filter').addEventListener('change', savePreferences);
-document.getElementById('auto-scroll').addEventListener('change', savePreferences);
-
-// Load preferences on page load
-document.addEventListener('DOMContentLoaded', loadPreferences);
+document.addEventListener('DOMContentLoaded', LogViewer.init);
 </script>
 {% endblock %}

@@ -31,7 +31,7 @@
         <div class="stat-value" style="color: var(--danger);">{{ results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'orphaned')|list|length }}</div>
         <div class="stat-label">critical issues</div>
         {% elif results.health_status == 'warnings' %}
-        <div class="stat-value" style="color: var(--warning);">{{ results.stale_exclude_entries|length + results.stale_timestamp_entries|length }}</div>
+        <div class="stat-value" style="color: var(--warning);">{{ results.stale_exclude_entries|length + results.stale_timestamp_entries|length + results.extensionless_files|length }}</div>
         <div class="stat-label">warnings</div>
         {% else %}
         <div class="stat-value" style="color: var(--success);">OK</div>
@@ -179,6 +179,8 @@
 {% set orphaned_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'orphaned')|list|length %}
 {% set redundant_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'redundant')|list|length %}
 {% set superseded_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'superseded')|list|length %}
+{% set malformed_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'malformed')|list|length %}
+{% set repairable_count = results.orphaned_plexcached|selectattr('backup_type', 'equalto', 'repairable')|list|length %}
 <div class="card mb-2">
     <div class="card-header" style="background: var(--danger-bg);">
         <i data-lucide="file-question"></i>
@@ -187,14 +189,18 @@
             {% if orphaned_count > 0 %}<span class="badge badge-warning">{{ orphaned_count }} orphaned</span>{% endif %}
             {% if superseded_count > 0 %}<span class="badge badge-success">{{ superseded_count }} superseded</span>{% endif %}
             {% if redundant_count > 0 %}<span class="badge badge-info">{{ redundant_count }} redundant</span>{% endif %}
+            {% if repairable_count > 0 %}<span class="badge badge-info">{{ repairable_count }} repairable</span>{% endif %}
+            {% if malformed_count > 0 %}<span class="badge badge-error">{{ malformed_count }} malformed</span>{% endif %}
         </div>
     </div>
     <div class="card-body" style="padding: 0.75rem; background: var(--danger-bg);">
         <p class="text-muted" style="margin: 0 0 0.75rem 0;">
-            {% if orphaned_count > 0 or superseded_count > 0 or redundant_count > 0 %}
+            {% if orphaned_count > 0 or superseded_count > 0 or redundant_count > 0 or repairable_count > 0 or malformed_count > 0 %}
             {% if orphaned_count > 0 %}<strong>Orphaned:</strong> Backup exists but no original or cache file - restore to recover, or delete if unneeded.<br>{% endif %}
             {% if superseded_count > 0 %}<strong>Superseded:</strong> Old backup replaced by an upgraded version (Radarr/Sonarr upgrade) - safe to delete.<br>{% endif %}
-            {% if redundant_count > 0 %}<strong>Redundant:</strong> Original already restored to array - backup can be safely deleted.{% endif %}
+            {% if redundant_count > 0 %}<strong>Redundant:</strong> Original already restored to array - backup can be safely deleted.<br>{% endif %}
+            {% if repairable_count > 0 %}<strong>Repairable:</strong> Backup renamed by Sonarr/Radarr — missing .mkv extension. Repair to fix.<br>{% endif %}
+            {% if malformed_count > 0 %}<strong>Malformed:</strong> Backup file is missing its media extension (.mkv) - cannot restore, delete to clean up.{% endif %}
             {% else %}
             These backup files need attention.
             {% endif %}
@@ -214,6 +220,11 @@
                 {% if orphaned_count > 0 %}
                 <button class="btn btn-sm btn-warning" onclick="restoreAllOrphaned(false)">
                     <i data-lucide="archive-restore"></i> Restore All Orphaned
+                </button>
+                {% endif %}
+                {% if repairable_count > 0 %}
+                <button class="btn btn-sm btn-primary" onclick="repairAllRepairable(false)">
+                    <i data-lucide="wrench"></i> Repair All
                 </button>
                 {% endif %}
                 <button class="btn btn-sm btn-danger" onclick="deleteAllOrphaned(false)">
@@ -255,6 +266,10 @@
                             <span class="badge badge-warning">Orphaned</span>
                             {% elif backup.backup_type == 'superseded' %}
                             <span class="badge badge-success">Superseded</span>
+                            {% elif backup.backup_type == 'repairable' %}
+                            <span class="badge badge-info">Repairable</span>
+                            {% elif backup.backup_type == 'malformed' %}
+                            <span class="badge badge-error">Malformed</span>
                             {% else %}
                             <span class="badge badge-info">Redundant</span>
                             {% endif %}
@@ -264,6 +279,10 @@
                             <span title="No original on array - restore needed">No original</span>
                             {% elif backup.backup_type == 'superseded' %}
                             <span title="Upgraded to: {{ backup.replacement_file }}">Upgraded on cache</span>
+                            {% elif backup.backup_type == 'repairable' %}
+                            <span title="Repair to: {{ backup.repair_path }}">Renamed by Sonarr/Radarr</span>
+                            {% elif backup.backup_type == 'malformed' %}
+                            <span title="Missing media extension - delete only">No media extension</span>
                             {% else %}
                             <span title="Original exists at {{ backup.restore_path }}">Original exists</span>
                             {% endif %}
@@ -278,7 +297,7 @@
 {% endif %}
 
 <!-- Quick Cleanup Actions -->
-{% if results.stale_exclude_entries or results.stale_timestamp_entries %}
+{% if results.stale_exclude_entries or results.stale_timestamp_entries or results.extensionless_files %}
 <div class="card mb-2">
     <div class="card-header">
         <i data-lucide="sparkles"></i>
@@ -386,12 +405,74 @@
             </div>
         </div>
         {% endif %}
+
+        {% if results.extensionless_files %}
+        <div class="cleanup-action{% if results.stale_exclude_entries or results.stale_timestamp_entries %} mt-1{% endif %}">
+            <div class="cleanup-info" style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <strong>Extensionless Duplicates ({{ results.extensionless_files|length }})</strong>
+                    <span class="badge badge-error" style="font-size: 0.7rem;">array</span>
+                    <button class="btn btn-sm btn-secondary" onclick="toggleStaleList('extensionless')" style="padding: 0.2rem 0.5rem;">
+                        <i data-lucide="chevron-down" id="extensionless-chevron" style="width: 14px; height: 14px;"></i>
+                        <span id="extensionless-toggle-text">View</span>
+                    </button>
+                </div>
+                <p class="text-muted" style="margin: 0.25rem 0 0 0;">
+                    Files without a media extension found next to their <code>.mkv</code> counterpart on the array.
+                    <span style="display: block; margin-top: 0.25rem; font-size: 0.85em; opacity: 0.8;">
+                        <i data-lucide="info" style="width: 12px; height: 12px; vertical-align: middle;"></i>
+                        Created by a malformed <code>.plexcached</code> restore. The proper media file is preserved.
+                    </span>
+                </p>
+                <!-- Expandable list -->
+                <div id="stale-extensionless-list" class="stale-entries-list" style="display: none;">
+                    <div class="table-container" style="max-height: 200px; overflow-y: auto; margin-top: 0.75rem;">
+                        <table style="font-size: 0.85rem;">
+                            <thead>
+                                <tr>
+                                    <th>File</th>
+                                    <th>Size</th>
+                                    <th>Matching Media File</th>
+                                    <th>Match</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for file in results.extensionless_files %}
+                                <tr>
+                                    <td class="text-muted" title="{{ file.file_path }}" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        {{ file.filename }}
+                                    </td>
+                                    <td class="text-muted">{{ file.size_display }}</td>
+                                    <td class="text-muted" title="{{ file.matching_media_path }}" style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        {{ file.matching_media_file }}
+                                    </td>
+                                    <td>
+                                        {% if file.size_match %}
+                                        <span class="badge badge-error" title="Same name + same size">Exact</span>
+                                        {% else %}
+                                        <span class="badge badge-warning" title="Same name, different size">Name only</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="cleanup-buttons flex gap-1">
+                <button class="btn btn-sm btn-danger" onclick="deleteAllExtensionless(false)">
+                    <i data-lucide="trash-2"></i> Delete
+                </button>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endif %}
 
 <!-- No Issues Message -->
-{% if not results.unprotected_files and not results.orphaned_plexcached and not results.stale_exclude_entries and not results.stale_timestamp_entries %}
+{% if not results.unprotected_files and not results.orphaned_plexcached and not results.extensionless_files and not results.stale_exclude_entries and not results.stale_timestamp_entries %}
 <div class="card">
     <div class="card-body" style="text-align: center; padding: 3rem;">
         <i data-lucide="check-circle" style="width: 64px; height: 64px; color: var(--success); margin-bottom: 1rem;"></i>
@@ -400,6 +481,29 @@
     </div>
 </div>
 {% endif %}
+
+<!-- Plex Duplicate Files Section -->
+<div class="card mb-2">
+    <div class="card-header" style="cursor: pointer;" onclick="toggleDuplicateSection()">
+        <i data-lucide="copy"></i>
+        <h2>Plex Duplicate Files</h2>
+        <div style="margin-left: auto; display: flex; align-items: center;">
+            <i data-lucide="chevron-down" id="dup-section-chevron" style="width: 18px; height: 18px; transition: transform 0.2s;"></i>
+        </div>
+    </div>
+    <div id="dup-section-content" style="display: none;">
+        <div id="duplicate-results-container"
+             hx-get="/maintenance/duplicates"
+             hx-trigger="revealed"
+             hx-swap="innerHTML">
+            <!-- Loading skeleton -->
+            <div style="padding: 2rem; text-align: center;">
+                <div class="spinner" style="width: 20px; height: 20px; margin: 0 auto 0.5rem;"></div>
+                <span class="text-muted">Loading duplicate scan data...</span>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Action History Section -->
 <div class="card mb-2">
@@ -496,8 +600,8 @@ th.sortable .sort-icon i {
 </style>
 
 <script>
-// Table sorting state
-const sortState = {
+// Table sorting state (var allows re-declaration on HTMX swaps)
+var sortState = sortState || {
     untracked: { column: 'filename', direction: 'asc' },
     orphaned: { column: 'filename', direction: 'asc' }
 };

@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Optional
 from dataclasses import dataclass
 
 from web.config import PROJECT_ROOT, DATA_DIR
+from core.system_utils import format_bytes, format_duration
 
 
 @dataclass
@@ -240,13 +241,16 @@ CACHE_KEY_MAINTENANCE_HEALTH = "maintenance_health"
 
 # Singleton instance
 _web_cache_service: Optional[WebCacheService] = None
+_web_cache_service_lock = threading.Lock()
 
 
 def get_web_cache_service() -> WebCacheService:
     """Get or create the web cache service singleton"""
     global _web_cache_service
     if _web_cache_service is None:
-        _web_cache_service = WebCacheService()
+        with _web_cache_service_lock:
+            if _web_cache_service is None:
+                _web_cache_service = WebCacheService()
     return _web_cache_service
 
 
@@ -267,6 +271,8 @@ def init_web_cache():
 
     def refresh_dashboard_stats():
         """Refresh dashboard stats - mirrors _get_dashboard_stats in dashboard.py"""
+        from web.services.operation_runner import load_last_run_summary, OperationRunner as _OR
+
         cache_svc = get_cache_service()
         settings_svc = get_settings_service()
         operation_runner = get_operation_runner()
@@ -279,7 +285,7 @@ def init_web_cache():
         schedule_status = scheduler_svc.get_status()
         health = maintenance_svc.get_health_summary()
 
-        return {
+        stats = {
             "cache_files": cache_stats["cache_files"],
             "cache_size": cache_stats["cache_size"],
             "cache_limit": cache_stats["cache_limit"],
@@ -294,8 +300,25 @@ def init_web_cache():
             "next_run_relative": schedule_status.get("next_run_relative"),
             "health_status": health["status"],
             "health_issues": health["orphaned_count"],
-            "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"]
+            "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"],
+            "health_orphaned_count": health["orphaned_count"],
+            "health_stale_exclude_count": health["stale_exclude_count"],
+            "health_stale_timestamp_count": health["stale_timestamp_count"],
+            "last_run_summary": None,
         }
+
+        summary = load_last_run_summary()
+        if summary:
+            stats["last_run_summary"] = {
+                "status": summary.get("status", "unknown"),
+                "bytes_cached_display": format_bytes(summary["bytes_cached"]) if summary.get("bytes_cached") else "",
+                "bytes_restored_display": format_bytes(summary["bytes_restored"]) if summary.get("bytes_restored") else "",
+                "duration_display": format_duration(summary.get("duration_seconds", 0)),
+                "error_count": summary.get("error_count", 0),
+                "dry_run": summary.get("dry_run", False),
+            }
+
+        return stats
 
     def refresh_maintenance_audit():
         """Refresh maintenance audit - convert to dict for serialization"""

@@ -61,7 +61,8 @@ def _make_file_filter(tmp_path, *, is_unraid=True, is_docker=False,
 
 
 def _make_file_mover(tmp_path, *, is_unraid=True, path_modifier=None,
-                     timestamp_tracker=None, create_backups=True):
+                     timestamp_tracker=None, create_backups=True,
+                     use_symlinks=False):
     """Build a FileMover wired to tmp_path directories."""
     exclude_file = os.path.join(str(tmp_path), "exclude.txt")
     with open(exclude_file, "w") as f:
@@ -83,6 +84,7 @@ def _make_file_mover(tmp_path, *, is_unraid=True, path_modifier=None,
         timestamp_tracker=timestamp_tracker,
         path_modifier=path_modifier,
         create_plexcached_backups=create_backups,
+        use_symlinks=use_symlinks,
     )
 
 
@@ -227,6 +229,449 @@ class TestShouldAddToCache:
 
 
 # ============================================================================
+# dry-run safety tests
+# ============================================================================
+
+class TestDryRunProtection:
+    """Dry-run mode must NEVER perform destructive file operations.
+
+    Bug: protect_cached_file() was unconditionally renaming array files to
+    .plexcached during dry-run, hiding them from Plex (data loss).
+    """
+
+    def test_dry_run_does_not_rename_to_plexcached(self, tmp_path):
+        """In dry-run, array files must NOT be renamed to .plexcached."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = create_test_file(os.path.join(array_dir, "Movie.mkv"), "array data")
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=os.path.join(str(tmp_path), "exclude.txt"),
+            dry_run=True,
+        )
+        with open(os.path.join(str(tmp_path), "exclude.txt"), "w"):
+            pass
+
+        result = filt.protect_cached_file(array_file, cache_file)
+
+        assert result is True
+        # Array file must still exist (NOT renamed)
+        assert os.path.isfile(array_file), "Array file was renamed during dry-run!"
+        # .plexcached must NOT have been created
+        plexcached = array_file + PLEXCACHED_EXTENSION
+        assert not os.path.isfile(plexcached), ".plexcached created during dry-run!"
+
+    def test_dry_run_does_not_delete_array_file(self, tmp_path):
+        """In dry-run, redundant array files must NOT be deleted."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = create_test_file(os.path.join(array_dir, "Movie.mkv"), "array data")
+        # Pre-existing .plexcached backup triggers the delete path
+        create_test_file(array_file + PLEXCACHED_EXTENSION, "backup data")
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=os.path.join(str(tmp_path), "exclude.txt"),
+            dry_run=True,
+        )
+        with open(os.path.join(str(tmp_path), "exclude.txt"), "w"):
+            pass
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        # Array file must still exist (NOT deleted)
+        assert os.path.isfile(array_file), "Array file was deleted during dry-run!"
+
+    def test_dry_run_does_not_modify_exclude_file(self, tmp_path):
+        """In dry-run, exclude file must NOT be modified."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(array_dir, "Movie.mkv")  # no array copy
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "w"):
+            pass
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=exclude_file,
+            dry_run=True,
+        )
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        # Exclude file must remain empty
+        with open(exclude_file) as f:
+            assert f.read().strip() == "", "Exclude file modified during dry-run!"
+
+    def test_dry_run_does_not_record_timestamps(self, tmp_path):
+        """In dry-run, timestamps must NOT be recorded."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "array", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(array_dir, "Movie.mkv")
+
+        ts_file = os.path.join(str(tmp_path), "timestamps.json")
+        tracker = CacheTimestampTracker(ts_file)
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "w"):
+            pass
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=exclude_file,
+            timestamp_tracker=tracker,
+            dry_run=True,
+        )
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        # Timestamp tracker must not have an entry for this file
+        # (get_source returns "unknown" for missing entries AND for recorded entries
+        # with no explicit source, so check the internal data directly)
+        assert cache_file not in tracker._timestamps, "Timestamp recorded during dry-run!"
+
+    def test_dry_run_still_counts_cached_files(self, tmp_path):
+        """In dry-run, already-cached count must still be tracked for summary."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(str(tmp_path), "array", "media", "Movies", "Movie.mkv")
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "w"):
+            pass
+
+        filt = FileFilter(
+            real_source=os.path.join(str(tmp_path), "array"),
+            cache_dir=os.path.join(str(tmp_path), "cache"),
+            is_unraid=False,
+            mover_cache_exclude_file=exclude_file,
+            dry_run=True,
+        )
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        assert filt.last_already_cached_count == 1
+
+
+# ============================================================================
+# _move_to_cache FUSE path safety tests
+# ============================================================================
+
+class TestMoveToCacheFusePathSafety:
+    """Test that _move_to_cache converts /mnt/user/ to /mnt/user0/ before rename.
+
+    Bug: On Unraid, after copying to /mnt/cache/, the FUSE layer at /mnt/user/
+    merges cache + array views. os.rename() through /mnt/user/ targets the cache
+    copy (FUSE prefers cache), leaving the array original untouched.
+    Fix: Direct filesystem probe converts to /mnt/user0/ (array-direct) before rename.
+    """
+
+    def test_converts_user_to_user0_before_rename(self, tmp_path):
+        """_move_to_cache must convert /mnt/user/ paths to /mnt/user0/ via direct probe."""
+        array_file_user = "/mnt/user/media/Movies/Movie.mkv"
+        user0_file = "/mnt/user0/media/Movies/Movie.mkv"
+        user0_plexcached = user0_file + PLEXCACHED_EXTENSION
+        cache_dir = "/mnt/cache/media/Movies"
+        cache_file = "/mnt/cache/media/Movies/Movie.mkv"
+
+        mover = _make_file_mover(tmp_path, is_unraid=True, create_backups=True)
+        mover.file_utils.copy_file_with_permissions = lambda src, dest, **kw: None
+
+        rename_calls = []
+        renamed_files = set()
+        real_isfile = os.path.isfile
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        known_files = {
+            user0_file: True,
+            user0_plexcached: False,
+            cache_file: True,
+        }
+        known_dirs = {'/mnt/user0': True, cache_dir: True}
+        known_sizes = {user0_file: 1000, cache_file: 1000}
+
+        def mock_isfile(path):
+            if path in renamed_files:
+                return True
+            if path in known_files:
+                return known_files[path]
+            return real_isfile(path)
+
+        def mock_exists(path):
+            if path in known_dirs:
+                return known_dirs[path]
+            return mock_isfile(path) or real_exists(path)
+
+        def mock_getsize(path):
+            if path in known_sizes:
+                return known_sizes[path]
+            return real_getsize(path)
+
+        def mock_rename(src, dest):
+            rename_calls.append((src, dest))
+            renamed_files.add(dest)
+            known_files[src] = False  # Source no longer exists after rename
+
+        with patch("os.path.isfile", side_effect=mock_isfile):
+            with patch("os.path.exists", side_effect=mock_exists):
+                with patch("os.path.getsize", side_effect=mock_getsize):
+                    with patch("os.rename", side_effect=mock_rename):
+                        with patch("core.file_operations.get_console_lock"):
+                            with patch("tqdm.tqdm.write"):
+                                with patch("core.logging_config.mark_file_activity"):
+                                    result = mover._move_to_cache(
+                                        array_file_user, cache_dir, cache_file
+                                    )
+
+        assert result == 0
+        # The rename must use the user0 path, NOT the FUSE path
+        assert (user0_file, user0_plexcached) in rename_calls, (
+            f"os.rename must be called with user0 path. Calls: {rename_calls}"
+        )
+
+    def test_raises_when_user0_not_accessible(self, tmp_path):
+        """_move_to_cache must raise IOError when /mnt/user0 is not accessible."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # /mnt/user/ path — on Windows/CI, /mnt/user0 doesn't exist,
+        # so the probe naturally triggers the IOError
+        array_file_user = "/mnt/user/media/Movies/Movie.mkv"
+
+        mover = _make_file_mover(tmp_path, is_unraid=True, create_backups=True)
+
+        with pytest.raises(IOError, match="Cannot safely create .plexcached backup"):
+            mover._move_to_cache(
+                array_file_user, cache_dir,
+                os.path.join(cache_dir, "Movie.mkv")
+            )
+
+    def test_no_conversion_when_path_not_mnt_user(self, tmp_path):
+        """When array_file doesn't start with /mnt/user/, no probe conversion happens."""
+        array_dir = os.path.join(str(tmp_path), "user0", "media", "Movies")
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+
+        array_file = create_test_file(
+            os.path.join(array_dir, "Movie.mkv"), "array data"
+        )
+        cache_file = os.path.join(cache_dir, "Movie.mkv")
+
+        mover = _make_file_mover(tmp_path, is_unraid=True, create_backups=True)
+
+        def fake_copy(src, dest, **kwargs):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w") as f:
+                f.write("cache data")
+
+        mover.file_utils.copy_file_with_permissions = fake_copy
+
+        with patch("core.file_operations.get_console_lock"):
+            with patch("tqdm.tqdm.write"):
+                with patch("core.logging_config.mark_file_activity"):
+                    result = mover._move_to_cache(
+                        array_file, cache_dir, cache_file
+                    )
+
+        assert result == 0
+        # .plexcached at the original path
+        assert os.path.isfile(array_file + PLEXCACHED_EXTENSION)
+
+    def test_no_conversion_when_backups_disabled(self, tmp_path):
+        """When create_plexcached_backups is False, the file is deleted (no rename)."""
+        array_dir = os.path.join(str(tmp_path), "user", "media", "Movies")
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+
+        array_file = create_test_file(
+            os.path.join(array_dir, "Movie.mkv"), "array data"
+        )
+        cache_file = os.path.join(cache_dir, "Movie.mkv")
+
+        mover = _make_file_mover(tmp_path, is_unraid=False, create_backups=False)
+
+        def fake_copy(src, dest, **kwargs):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w") as f:
+                f.write("cache data")
+
+        mover.file_utils.copy_file_with_permissions = fake_copy
+
+        with patch("core.file_operations.get_console_lock"):
+            with patch("tqdm.tqdm.write"):
+                with patch("core.logging_config.mark_file_activity"):
+                    result = mover._move_to_cache(
+                        array_file, cache_dir, cache_file
+                    )
+
+        assert result == 0
+        # File deleted, no .plexcached
+        assert not os.path.isfile(array_file)
+        assert not os.path.isfile(array_file + PLEXCACHED_EXTENSION)
+
+    def test_converts_user_to_user0_even_with_zfs_detection(self, tmp_path):
+        """Direct probe finds user0 file even when ZFS detection says pool-only.
+
+        Regression test: ZFS detection incorrectly marks hybrid shares as pool-only,
+        causing get_array_direct_path() to return unchanged FUSE paths. The direct
+        probe bypasses this by checking the filesystem directly.
+        """
+        from core.system_utils import set_zfs_prefixes, _zfs_user_prefixes
+
+        array_file_user = "/mnt/user/media/Movies/Movie.mkv"
+        user0_file = "/mnt/user0/media/Movies/Movie.mkv"
+        user0_plexcached = user0_file + PLEXCACHED_EXTENSION
+        cache_dir = "/mnt/cache/media/Movies"
+        cache_file = "/mnt/cache/media/Movies/Movie.mkv"
+
+        mover = _make_file_mover(tmp_path, is_unraid=True, create_backups=True)
+        mover.file_utils.copy_file_with_permissions = lambda src, dest, **kw: None
+
+        # Simulate incorrect ZFS detection: share marked as pool-only
+        old_prefixes = _zfs_user_prefixes.copy()
+        set_zfs_prefixes({'/mnt/user/media/'})
+
+        rename_calls = []
+        renamed_files = set()
+        real_isfile = os.path.isfile
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        known_files = {
+            user0_file: True,           # File exists at user0 (hybrid share)
+            user0_plexcached: False,
+            cache_file: True,
+        }
+        known_dirs = {'/mnt/user0': True, cache_dir: True}
+        known_sizes = {user0_file: 1000, cache_file: 1000}
+
+        def mock_isfile(path):
+            if path in renamed_files:
+                return True
+            if path in known_files:
+                return known_files[path]
+            return real_isfile(path)
+
+        def mock_exists(path):
+            if path in known_dirs:
+                return known_dirs[path]
+            return mock_isfile(path) or real_exists(path)
+
+        def mock_getsize(path):
+            if path in known_sizes:
+                return known_sizes[path]
+            return real_getsize(path)
+
+        def mock_rename(src, dest):
+            rename_calls.append((src, dest))
+            renamed_files.add(dest)
+            known_files[src] = False  # Source no longer exists after rename
+
+        try:
+            with patch("os.path.isfile", side_effect=mock_isfile):
+                with patch("os.path.exists", side_effect=mock_exists):
+                    with patch("os.path.getsize", side_effect=mock_getsize):
+                        with patch("os.rename", side_effect=mock_rename):
+                            with patch("core.file_operations.get_console_lock"):
+                                with patch("tqdm.tqdm.write"):
+                                    with patch("core.logging_config.mark_file_activity"):
+                                        result = mover._move_to_cache(
+                                            array_file_user, cache_dir, cache_file
+                                        )
+        finally:
+            set_zfs_prefixes(old_prefixes)
+
+        assert result == 0
+        # Despite ZFS detection, probe found the user0 file → rename uses user0
+        assert (user0_file, user0_plexcached) in rename_calls, (
+            f"Direct probe should override ZFS detection. Rename calls: {rename_calls}"
+        )
+
+    def test_zfs_pool_only_uses_fuse_path(self, tmp_path):
+        """True pool-only: /mnt/user0 accessible but file not there → keeps FUSE path."""
+        array_file_user = "/mnt/user/media/Movies/Movie.mkv"
+        user0_file = "/mnt/user0/media/Movies/Movie.mkv"
+        fuse_plexcached = array_file_user + PLEXCACHED_EXTENSION
+        cache_dir = "/mnt/cache/media/Movies"
+        cache_file = "/mnt/cache/media/Movies/Movie.mkv"
+
+        mover = _make_file_mover(tmp_path, is_unraid=True, create_backups=True)
+        mover.file_utils.copy_file_with_permissions = lambda src, dest, **kw: None
+
+        rename_calls = []
+        renamed_files = set()
+        real_isfile = os.path.isfile
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        known_files = {
+            user0_file: False,              # NOT on user0 (true pool-only)
+            array_file_user: True,          # File at FUSE path
+            fuse_plexcached: False,
+            cache_file: True,
+        }
+        known_dirs = {'/mnt/user0': True, cache_dir: True}
+        known_sizes = {array_file_user: 1000, cache_file: 1000}
+
+        def mock_isfile(path):
+            if path in renamed_files:
+                return True
+            if path in known_files:
+                return known_files[path]
+            return real_isfile(path)
+
+        def mock_exists(path):
+            if path in known_dirs:
+                return known_dirs[path]
+            return mock_isfile(path) or real_exists(path)
+
+        def mock_getsize(path):
+            if path in known_sizes:
+                return known_sizes[path]
+            return real_getsize(path)
+
+        def mock_rename(src, dest):
+            rename_calls.append((src, dest))
+            renamed_files.add(dest)
+            known_files[src] = False  # Source no longer exists after rename
+
+        with patch("os.path.isfile", side_effect=mock_isfile):
+            with patch("os.path.exists", side_effect=mock_exists):
+                with patch("os.path.getsize", side_effect=mock_getsize):
+                    with patch("os.rename", side_effect=mock_rename):
+                        with patch("core.file_operations.get_console_lock"):
+                            with patch("tqdm.tqdm.write"):
+                                with patch("core.logging_config.mark_file_activity"):
+                                    result = mover._move_to_cache(
+                                        array_file_user, cache_dir, cache_file
+                                    )
+
+        assert result == 0
+        # Rename should use the FUSE path (file not at user0, true pool-only)
+        assert (array_file_user, fuse_plexcached) in rename_calls, (
+            f"Pool-only share should rename via FUSE path. Calls: {rename_calls}"
+        )
+
+
+# ============================================================================
 # _move_to_array tests
 # ============================================================================
 
@@ -249,12 +694,9 @@ class TestMoveToArray:
         ts_file = os.path.join(str(tmp_path), "timestamps.json")
         mover.timestamp_tracker = CacheTimestampTracker(ts_file)
 
-        # Patch get_array_direct_path to be identity for non-Unraid
-        with patch("core.file_operations.get_array_direct_path", side_effect=lambda p: p):
-            # Patch tqdm.write to avoid import error
-            with patch("core.file_operations.get_console_lock"):
-                with patch("tqdm.tqdm.write"):
-                    result = mover._move_to_array(cache_file, array_dir, cache_file)
+        with patch("core.file_operations.get_console_lock"):
+            with patch("tqdm.tqdm.write"):
+                result = mover._move_to_array(cache_file, array_dir, cache_file)
 
         assert result == 0
         # .plexcached should be renamed to original
@@ -301,10 +743,9 @@ class TestMoveToArray:
 
         mover = _make_file_mover(tmp_path, is_unraid=False)
 
-        with patch("core.file_operations.get_array_direct_path", side_effect=lambda p: p):
-            with patch("core.file_operations.get_console_lock"):
-                with patch("tqdm.tqdm.write"):
-                    result = mover._move_to_array(cache_file, array_dir, cache_file)
+        with patch("core.file_operations.get_console_lock"):
+            with patch("tqdm.tqdm.write"):
+                result = mover._move_to_array(cache_file, array_dir, cache_file)
 
         assert result == 0
         restored = os.path.join(array_dir, "Movie (2024).mkv")
@@ -331,10 +772,9 @@ class TestMoveToArray:
 
         mover.file_utils.copy_file_with_permissions = fake_copy
 
-        with patch("core.file_operations.get_array_direct_path", side_effect=lambda p: p):
-            with patch("core.file_operations.get_console_lock"):
-                with patch("tqdm.tqdm.write"):
-                    result = mover._move_to_array(cache_file, array_dir, cache_file)
+        with patch("core.file_operations.get_console_lock"):
+            with patch("tqdm.tqdm.write"):
+                result = mover._move_to_array(cache_file, array_dir, cache_file)
 
         assert result == 0
         assert os.path.isfile(array_file_path)
@@ -355,8 +795,7 @@ class TestMoveToArray:
             side_effect=RuntimeError("Permission denied")
         )
 
-        with patch("core.file_operations.get_array_direct_path", side_effect=lambda p: p):
-            result = mover._move_to_array(cache_file, array_dir, cache_file)
+        result = mover._move_to_array(cache_file, array_dir, cache_file)
 
         assert result == 1  # Error code
         # Cache file must still exist (data preserved)
@@ -385,8 +824,7 @@ class TestMoveToArray:
 
         mover.file_utils.copy_file_with_permissions = fake_partial_copy
 
-        with patch("core.file_operations.get_array_direct_path", side_effect=lambda p: p):
-            result = mover._move_to_array(cache_file, array_dir, cache_file)
+        result = mover._move_to_array(cache_file, array_dir, cache_file)
 
         assert result == 1  # Error (size mismatch)
         # Cache file must still exist
@@ -921,3 +1359,118 @@ class TestWatchlistTrackerSafety:
             data = json.load(f)
 
         assert "/mnt/cache/Movie.mkv" not in data
+
+
+# ============================================================================
+# protect_cached_file tests
+# ============================================================================
+
+class TestProtectCachedFile:
+    """Test FileFilter.protect_cached_file() early protection pass."""
+
+    def test_returns_true_when_file_on_cache(self, tmp_path):
+        """protect_cached_file returns True and runs side effects when file is on cache."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        result = filt.protect_cached_file(array_file, cache_file)
+        assert result is True
+        assert filt.last_already_cached_count == 1
+
+    def test_returns_false_when_file_not_on_cache(self, tmp_path):
+        """protect_cached_file returns False when cache file does not exist."""
+        cache_file = os.path.join(str(tmp_path), "cache", "media", "Movies", "Movie.mkv")
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+
+        result = filt.protect_cached_file(array_file, cache_file)
+        assert result is False
+        assert filt.last_already_cached_count == 0
+
+    def test_adds_to_exclude_file(self, tmp_path):
+        """protect_cached_file adds the cache file to the exclude list."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        exclude_file = os.path.join(str(tmp_path), "exclude.txt")
+        with open(exclude_file, "r") as f:
+            content = f.read()
+        assert cache_file in content
+
+    def test_records_timestamp(self, tmp_path):
+        """protect_cached_file records cache timestamp when tracker is available."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        tracker = MagicMock()
+        filt = _make_file_filter(tmp_path, is_unraid=False, timestamp_tracker=tracker)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        filt.protect_cached_file(array_file, cache_file)
+
+        tracker.record_cache_time.assert_called_once_with(cache_file, "pre-existing")
+
+    def test_renames_array_file_to_plexcached(self, tmp_path):
+        """protect_cached_file renames array file to .plexcached backup."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        array_dir = os.path.join(str(tmp_path), "user0", "media", "Movies")
+
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = create_test_file(os.path.join(array_dir, "Movie.mkv"), "array data")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        result = filt.protect_cached_file(array_file, cache_file)
+        assert result is True
+
+        plexcached = array_file + PLEXCACHED_EXTENSION
+        assert os.path.isfile(plexcached)
+        assert not os.path.isfile(array_file)
+        with open(plexcached, "r") as f:
+            assert f.read() == "array data"
+
+    def test_resolves_cache_path_when_not_provided(self, tmp_path):
+        """protect_cached_file resolves cache path via _get_cache_paths when cache_file_name is None."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.real_source = os.path.join(str(tmp_path), "user0")
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        # Use the real_source-based path so _get_cache_paths can resolve it
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        result = filt.protect_cached_file(array_file)
+        assert result is True
+        assert filt.last_already_cached_count == 1
+
+    def test_idempotent_on_repeated_calls(self, tmp_path):
+        """protect_cached_file is safe to call multiple times on the same file."""
+        cache_dir = os.path.join(str(tmp_path), "cache", "media", "Movies")
+        cache_file = create_test_file(os.path.join(cache_dir, "Movie.mkv"), "cache data")
+        array_file = os.path.join(str(tmp_path), "user0", "media", "Movies", "Movie.mkv")
+
+        filt = _make_file_filter(tmp_path, is_unraid=False)
+        filt.cache_dir = os.path.join(str(tmp_path), "cache")
+
+        # Call twice
+        assert filt.protect_cached_file(array_file, cache_file) is True
+        assert filt.protect_cached_file(array_file, cache_file) is True
+        # Counter increments each time (expected — caller controls reset)
+        assert filt.last_already_cached_count == 2

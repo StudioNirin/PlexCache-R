@@ -1,0 +1,114 @@
+<!-- Arr instance card partial for HTMX responses -->
+<div class="arr-instance-card" id="arr-instance-{{ index }}"
+     data-url="{{ instance.url }}" data-api-key="{{ instance.api_key }}" data-type="{{ instance.type }}">
+    <!-- View Mode -->
+    <div class="instance-view" id="instance-view-{{ index }}">
+        <div class="card mb-2" style="background: var(--plex-bg-darker);">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <strong>{{ instance.name }}</strong>
+                        {% if instance.type == 'sonarr' %}
+                        <span class="badge" style="background: rgba(93, 188, 210, 0.15); color: #5dbcd2;">Sonarr</span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(255, 165, 0, 0.15); color: #ffa500;">Radarr</span>
+                        {% endif %}
+                    </div>
+                    <div class="flex gap-1 items-center">
+                        {% if not instance.enabled %}
+                        <span class="badge badge-muted">Disabled</span>
+                        {% endif %}
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="testInstanceConnection({{ index }})" id="test-btn-{{ index }}">
+                            <i data-lucide="plug"></i> Test
+                        </button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleInstanceEdit({{ index }})">
+                            <i data-lucide="pencil"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-danger"
+                                hx-delete="/settings/integrations/instances/{{ index }}"
+                                hx-target="#arr-instances"
+                                hx-swap="innerHTML"
+                                hx-confirm="Delete instance '{{ instance.name }}'?">
+                            <i data-lucide="trash-2"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-2" style="font-size: 0.85rem;">
+                    <div>
+                        <span class="text-muted">URL:</span><br>
+                        <code>{{ instance.url or 'Not set' }}</code>
+                    </div>
+                    <div>
+                        <span class="text-muted">API Key:</span><br>
+                        <code>{{ '••••••••' if instance.api_key else 'Not set' }}</code>
+                    </div>
+                </div>
+                <span id="test-result-{{ index }}" style="font-size: 0.85rem;"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Mode (hidden by default) -->
+    <div class="instance-edit" id="instance-edit-{{ index }}" style="display: none;">
+        <div class="card mb-2" style="background: var(--plex-bg-darker); border-color: var(--plex-orange);">
+            <div class="card-body">
+                <form hx-put="/settings/integrations/instances/{{ index }}" hx-target="#arr-instance-{{ index }}" hx-swap="outerHTML">
+                    <div class="flex items-center justify-between mb-2">
+                        <strong style="color: var(--plex-orange);">Editing: {{ instance.name }}</strong>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleInstanceEdit({{ index }})">
+                            <i data-lucide="x"></i> Cancel
+                        </button>
+                    </div>
+
+                    <div class="grid grid-2 mb-2">
+                        <div class="form-group mb-1">
+                            <label>Name</label>
+                            <input type="text" name="name" value="{{ instance.name }}" required>
+                        </div>
+                        <div class="form-group mb-1">
+                            <label>Type</label>
+                            <select name="arr_type" required>
+                                <option value="sonarr" {% if instance.type == 'sonarr' %}selected{% endif %}>Sonarr</option>
+                                <option value="radarr" {% if instance.type == 'radarr' %}selected{% endif %}>Radarr</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-2 mb-2">
+                        <div class="form-group mb-1">
+                            <label>URL</label>
+                            <input type="url" name="url" value="{{ instance.url }}" placeholder="http://localhost:8989">
+                        </div>
+                        <div class="form-group mb-1">
+                            <label>API Key</label>
+                            <div class="flex gap-1">
+                                <input type="password" name="api_key" id="edit-api-key-{{ index }}"
+                                       value="{{ instance.api_key }}" placeholder="Your API key" style="flex: 1;">
+                                <button type="button" class="btn btn-sm btn-secondary"
+                                        onclick="toggleEditPassword('edit-api-key-{{ index }}', this)" title="Show/hide">
+                                    <i data-lucide="eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-2 items-center">
+                        <label class="switch">
+                            <input type="checkbox" name="enabled" {% if instance.enabled %}checked{% endif %}>
+                            <span>Enabled</span>
+                        </label>
+                        <div style="flex: 1;"></div>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="testInstanceConnection({{ index }})" id="edit-test-btn-{{ index }}">
+                            <i data-lucide="plug"></i> Test
+                        </button>
+                        <span id="edit-test-result-{{ index }}" style="font-size: 0.85rem;"></span>
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <i data-lucide="save"></i> Save
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<script>lucide.createIcons();</script>

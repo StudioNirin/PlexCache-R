@@ -13,7 +13,32 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Any, Tuple
 
 from web.config import PROJECT_ROOT, DATA_DIR, CONFIG_DIR, SETTINGS_FILE
-from core.system_utils import get_array_direct_path
+from core.system_utils import get_array_direct_path, format_bytes, translate_container_to_host_path, translate_host_to_container_path, remove_from_exclude_file, remove_from_timestamps_file
+from core.file_operations import PLEXCACHED_EXTENSION
+
+# Common media extensions for validation
+_MEDIA_EXTENSIONS = {
+    '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.ts',
+    '.mpg', '.mpeg', '.webm', '.ogv', '.3gp', '.divx', '.vob',
+}
+
+
+def _strip_plexcached(path: str) -> str:
+    """Safely strip .plexcached suffix from a path.
+
+    Returns the original path (with media extension intact).
+    Raises ValueError if the result would lack a media extension,
+    which indicates a malformed .plexcached file.
+    """
+    if not path.endswith(PLEXCACHED_EXTENSION):
+        raise ValueError(f"Not a .plexcached file: {path}")
+    original = path[:-len(PLEXCACHED_EXTENSION)]
+    _, ext = os.path.splitext(original)
+    if ext.lower() not in _MEDIA_EXTENSIONS:
+        raise ValueError(
+            f"Malformed .plexcached file (no media extension): {os.path.basename(path)}"
+        )
+    return original
 
 
 @dataclass
@@ -41,11 +66,27 @@ class OrphanedBackup:
     size: int
     size_display: str
     restore_path: str
-    backup_type: str = "orphaned"  # "orphaned", "redundant", or "superseded"
+    backup_type: str = "orphaned"  # "orphaned", "redundant", "superseded", "malformed", or "repairable"
     # "orphaned" = no cache file AND no original on array (needs restore or delete)
     # "redundant" = no cache file BUT original exists on array (safe to delete)
     # "superseded" = old backup replaced by upgraded version on cache (safe to delete after review)
+    # "malformed" = .plexcached without valid media extension (delete only — cannot restore)
+    # "repairable" = malformed .plexcached with a media sibling (can be auto-repaired by adding extension)
     replacement_file: Optional[str] = None  # Path to the replacement file (for superseded backups)
+    repair_path: Optional[str] = None  # Target path after repair (for repairable backups)
+
+
+@dataclass
+class ExtensionlessFile:
+    """File without media extension found alongside its media counterpart.
+    Likely created by a malformed .plexcached restore that stripped the extension."""
+    file_path: str
+    filename: str
+    size: int
+    size_display: str
+    matching_media_file: str
+    matching_media_path: str
+    size_match: bool  # True if sizes match (strong indicator of exact duplicate)
 
 
 @dataclass
@@ -68,6 +109,7 @@ class AuditResults:
     # Issues
     unprotected_files: List[UnprotectedFile] = field(default_factory=list)
     orphaned_plexcached: List[OrphanedBackup] = field(default_factory=list)
+    extensionless_files: List[ExtensionlessFile] = field(default_factory=list)
     stale_exclude_entries: List[str] = field(default_factory=list)
     stale_timestamp_entries: List[str] = field(default_factory=list)
     duplicates: List[DuplicateFile] = field(default_factory=list)
@@ -87,7 +129,7 @@ class AuditResults:
         if truly_orphaned:
             self.health_status = "critical"
         # Warnings: stale entries need cleanup, superseded/redundant backups can be cleaned
-        elif self.stale_exclude_entries or self.stale_timestamp_entries or self.orphaned_plexcached:
+        elif self.stale_exclude_entries or self.stale_timestamp_entries or self.orphaned_plexcached or self.extensionless_files:
             self.health_status = "warnings"
         else:
             self.health_status = "healthy"
@@ -96,6 +138,7 @@ class AuditResults:
     def total_issues(self) -> int:
         """Count of issues needing attention (excludes untracked files which are informational)"""
         return (len(self.orphaned_plexcached) +
+                len(self.extensionless_files) +
                 len(self.stale_exclude_entries) +
                 len(self.stale_timestamp_entries))
 
@@ -173,55 +216,14 @@ class MaintenanceService:
             return {}
 
     def _translate_host_to_container_path(self, path: str) -> str:
-        """Translate host cache path back to container path.
-
-        The exclude file contains host paths (for Unraid mover), but cache_files
-        uses container paths. This translates host paths back to container paths
-        for accurate comparison.
-        """
+        """Translate host cache path to container path."""
         settings = self._load_settings()
-        path_mappings = settings.get('path_mappings', [])
-
-        for mapping in path_mappings:
-            host_cache_path = mapping.get('host_cache_path', '')
-            cache_path = mapping.get('cache_path', '')
-
-            if not host_cache_path or not cache_path:
-                continue
-            if host_cache_path == cache_path:
-                continue  # No translation needed
-
-            host_prefix = host_cache_path.rstrip('/')
-            if path.startswith(host_prefix):
-                container_prefix = cache_path.rstrip('/')
-                return path.replace(host_prefix, container_prefix, 1)
-
-        return path
+        return translate_host_to_container_path(path, settings.get('path_mappings', []))
 
     def _translate_container_to_host_path(self, path: str) -> str:
-        """Translate container cache path to host path for exclude file.
-
-        When writing to the exclude file, paths must be host paths so the
-        Unraid mover can understand them.
-        """
+        """Translate container cache path to host path for exclude file."""
         settings = self._load_settings()
-        path_mappings = settings.get('path_mappings', [])
-
-        for mapping in path_mappings:
-            host_cache_path = mapping.get('host_cache_path', '')
-            cache_path = mapping.get('cache_path', '')
-
-            if not host_cache_path or not cache_path:
-                continue
-            if host_cache_path == cache_path:
-                continue  # No translation needed
-
-            container_prefix = cache_path.rstrip('/')
-            if path.startswith(container_prefix):
-                host_prefix = host_cache_path.rstrip('/')
-                return path.replace(container_prefix, host_prefix, 1)
-
-        return path
+        return translate_container_to_host_path(path, settings.get('path_mappings', []))
 
     def _should_skip_directory(self, dirname: str) -> bool:
         """Check if directory should be skipped during scanning.
@@ -278,22 +280,6 @@ class MaintenanceService:
         self._array_dirs = array_dirs
         return cache_dirs, array_dirs
 
-    def _format_size(self, size_bytes: int) -> str:
-        """Format bytes into human-readable string"""
-        if size_bytes == 0:
-            return "0 B"
-
-        units = ['B', 'KB', 'MB', 'GB', 'TB']
-        unit_index = 0
-        size = float(size_bytes)
-
-        while size >= 1024 and unit_index < len(units) - 1:
-            size /= 1024
-            unit_index += 1
-
-        if unit_index == 0:
-            return f"{int(size)} B"
-        return f"{size:.2f} {units[unit_index]}"
 
     def _copy_with_progress(self, src: str, dst: str,
                              bytes_progress_callback: Optional[Callable] = None) -> None:
@@ -479,6 +465,14 @@ class MaintenanceService:
                 return cache_file.replace(cache_dir, array_dirs[i], 1)
         return None
 
+    def _array_to_cache_path(self, array_file: str) -> Optional[str]:
+        """Convert an array file path to its corresponding cache path"""
+        cache_dirs, array_dirs = self._get_paths()
+        for i, array_dir in enumerate(array_dirs):
+            if array_file.startswith(array_dir):
+                return array_file.replace(array_dir, cache_dirs[i], 1)
+        return None
+
     def _check_plexcached_backup(self, cache_file: str) -> tuple:
         """Check if a .plexcached backup exists on array for a cache file"""
         array_file = self._cache_to_array_path(cache_file)
@@ -561,7 +555,7 @@ class MaintenanceService:
                 cache_path=cache_path,
                 filename=filename,
                 size=size,
-                size_display=self._format_size(size),
+                size_display=format_bytes(size),
                 has_plexcached_backup=has_backup,
                 backup_path=backup_path,
                 has_array_duplicate=has_dup,
@@ -575,11 +569,25 @@ class MaintenanceService:
         # Sort unprotected files by filename (default)
         results.unprotected_files.sort(key=lambda f: f.filename.lower())
 
-        # Find orphaned .plexcached files
-        results.orphaned_plexcached = self._get_orphaned_plexcached()
+        # Find orphaned .plexcached files and extensionless duplicates
+        results.orphaned_plexcached, results.extensionless_files = self._get_orphaned_plexcached()
 
         # Find stale exclude entries (in exclude but not on cache)
         results.stale_exclude_entries = sorted(list(exclude_files - cache_files))
+
+        # Check if stale entries are actually media upgrades (Sonarr/Radarr file swaps)
+        if results.stale_exclude_entries:
+            try:
+                from web.services.cache_service import get_cache_service
+                cache_service = get_cache_service()
+                upgrade_result = cache_service.check_for_upgrades(results.stale_exclude_entries)
+                if upgrade_result.get("upgrades_resolved", 0) > 0:
+                    # Recompute stale entries after upgrade resolution
+                    exclude_files = self.get_exclude_files()
+                    timestamp_files = self.get_timestamp_files()
+                    results.stale_exclude_entries = sorted(list(exclude_files - cache_files))
+            except Exception as e:
+                logging.warning(f"Upgrade check during audit failed (non-fatal): {e}")
 
         # Find stale timestamp entries (in timestamps but not on cache)
         results.stale_timestamp_entries = sorted(list(timestamp_files - cache_files))
@@ -599,7 +607,7 @@ class MaintenanceService:
                     array_path=array_path,
                     filename=filename,
                     size=size,
-                    size_display=self._format_size(size)
+                    size_display=format_bytes(size)
                 ))
 
         results.duplicates.sort(key=lambda f: f.size, reverse=True)
@@ -609,17 +617,17 @@ class MaintenanceService:
 
         return results
 
-    def _get_orphaned_plexcached(self) -> List[OrphanedBackup]:
-        """Find .plexcached files on array that need cleanup.
+    def _get_orphaned_plexcached(self) -> Tuple[List[OrphanedBackup], List[ExtensionlessFile]]:
+        """Find .plexcached files on array that need cleanup, plus extensionless duplicates.
 
-        Returns three types of backups:
-        - "orphaned": No cache file AND no original on array (needs restore or delete)
-        - "redundant": No cache file BUT original exists on array (safe to delete)
-        - "superseded": Old backup replaced by an upgraded version on cache (safe to delete after review)
+        Returns a tuple of:
+        1. Backup list with types: "orphaned", "redundant", "superseded", "malformed"
+        2. Extensionless files (from malformed .plexcached restores) with matching media siblings
         """
         cache_dirs, array_dirs = self._get_paths()
         cache_files = self.get_cache_files()
         backups_to_cleanup = []
+        extensionless_files = []
 
         for i, array_dir in enumerate(array_dirs):
             if not os.path.exists(array_dir):
@@ -630,10 +638,67 @@ class MaintenanceService:
             for root, dirs, files in os.walk(array_dir):
                 # Prune excluded directories
                 dirs[:] = [d for d in dirs if not self._should_skip_directory(d)]
+                file_set = set(files)  # O(1) sibling lookups
                 for f in files:
                     if f.endswith('.plexcached'):
                         plexcached_path = os.path.join(root, f)
-                        original_name = f[:-11]  # Remove .plexcached suffix
+                        try:
+                            original_name = _strip_plexcached(f)
+                        except ValueError:
+                            # Malformed .plexcached (no media extension)
+                            # Check if a media sibling exists — if so, we can repair the backup
+                            # by renaming e.g. "Name.plexcached" → "Name.mkv.plexcached"
+                            #
+                            # The sibling .mkv may be on the array (file_set) OR on the cache
+                            # (cache_files). After Sonarr/Radarr renames, the .mkv typically
+                            # lives on cache while the malformed .plexcached is on the array.
+                            stem = f[:-len(PLEXCACHED_EXTENSION)]  # strip .plexcached
+                            repair_ext = None
+                            for ext in _MEDIA_EXTENSIONS:
+                                # Check array sibling first
+                                if (stem + ext) in file_set:
+                                    repair_ext = ext
+                                    break
+                                # Check corresponding cache path
+                                relative = os.path.relpath(
+                                    os.path.join(root, stem + ext), array_dir
+                                )
+                                cache_candidate = os.path.join(cache_dir, relative)
+                                if cache_candidate in cache_files:
+                                    repair_ext = ext
+                                    break
+
+                            try:
+                                size = os.path.getsize(plexcached_path)
+                            except OSError:
+                                size = 0
+
+                            if repair_ext:
+                                # Repairable: media sibling found — can auto-fix by adding extension
+                                repaired_name = stem + repair_ext + PLEXCACHED_EXTENSION
+                                repair_target = os.path.join(root, repaired_name)
+                                logging.info(f"Repairable .plexcached file: {f} → {repaired_name}")
+                                backups_to_cleanup.append(OrphanedBackup(
+                                    plexcached_path=plexcached_path,
+                                    original_filename=f,
+                                    size=size,
+                                    size_display=format_bytes(size),
+                                    restore_path="",
+                                    backup_type="repairable",
+                                    repair_path=repair_target,
+                                ))
+                            else:
+                                # Truly malformed — no sibling to infer extension from
+                                logging.warning(f"Malformed .plexcached file (no media extension): {f}")
+                                backups_to_cleanup.append(OrphanedBackup(
+                                    plexcached_path=plexcached_path,
+                                    original_filename=f,
+                                    size=size,
+                                    size_display=format_bytes(size),
+                                    restore_path="",
+                                    backup_type="malformed",
+                                ))
+                            continue
                         original_array_path = os.path.join(root, original_name)
 
                         # Find corresponding cache path
@@ -660,7 +725,7 @@ class MaintenanceService:
                                 plexcached_path=plexcached_path,
                                 original_filename=original_name,
                                 size=size,
-                                size_display=self._format_size(size),
+                                size_display=format_bytes(size),
                                 restore_path=original_array_path,
                                 backup_type="redundant"
                             ))
@@ -684,7 +749,7 @@ class MaintenanceService:
                                     plexcached_path=plexcached_path,
                                     original_filename=original_name,
                                     size=size,
-                                    size_display=self._format_size(size),
+                                    size_display=format_bytes(size),
                                     restore_path=original_array_path,
                                     backup_type="superseded",
                                     replacement_file=replacement
@@ -695,13 +760,42 @@ class MaintenanceService:
                                     plexcached_path=plexcached_path,
                                     original_filename=original_name,
                                     size=size,
-                                    size_display=self._format_size(size),
+                                    size_display=format_bytes(size),
                                     restore_path=original_array_path,
                                     backup_type="orphaned"
                                 ))
+                    else:
+                        # Check for extensionless files with matching media siblings
+                        # (created by malformed .plexcached restores that stripped the extension)
+                        _, ext = os.path.splitext(f)
+                        if ext.lower() not in _MEDIA_EXTENSIONS:
+                            for media_ext in _MEDIA_EXTENSIONS:
+                                sibling_name = f + media_ext
+                                if sibling_name in file_set:
+                                    file_path = os.path.join(root, f)
+                                    sibling_path = os.path.join(root, sibling_name)
+                                    try:
+                                        size = os.path.getsize(file_path)
+                                        sibling_size = os.path.getsize(sibling_path)
+                                    except OSError:
+                                        size = 0
+                                        sibling_size = 0
+                                    # Only flag files >= 1MB to avoid noise from small metadata files
+                                    if size >= 1_000_000:
+                                        extensionless_files.append(ExtensionlessFile(
+                                            file_path=file_path,
+                                            filename=f,
+                                            size=size,
+                                            size_display=format_bytes(size),
+                                            matching_media_file=sibling_name,
+                                            matching_media_path=sibling_path,
+                                            size_match=size == sibling_size and size > 0,
+                                        ))
+                                    break
 
         backups_to_cleanup.sort(key=lambda f: f.size, reverse=True)
-        return backups_to_cleanup
+        extensionless_files.sort(key=lambda f: f.size, reverse=True)
+        return backups_to_cleanup, extensionless_files
 
     def _find_replacement_file(self, original_name: str, cache_directory: str,
                                cache_files: Set[str]) -> Optional[str]:
@@ -786,8 +880,15 @@ class MaintenanceService:
                 if not plexcached_path.endswith('.plexcached'):
                     return (plexcached_path, False, f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
                 try:
-                    original_path = plexcached_path[:-11]
-                    if os.path.exists(original_path):
+                    original_path = _strip_plexcached(plexcached_path)
+                except ValueError as e:
+                    return (plexcached_path, False, str(e))
+                try:
+                    if os.path.islink(original_path):
+                        # Symlink at original location (from use_symlinks mode) - remove it, then restore
+                        os.remove(original_path)
+                        os.rename(plexcached_path, original_path)
+                    elif os.path.exists(original_path):
                         os.remove(plexcached_path)
                     else:
                         os.rename(plexcached_path, original_path)
@@ -822,14 +923,22 @@ class MaintenanceService:
                 errors.append(f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
                 continue
 
-            original_path = plexcached_path[:-11]  # Remove .plexcached suffix
+            try:
+                original_path = _strip_plexcached(plexcached_path)
+            except ValueError as e:
+                errors.append(str(e))
+                continue
 
             if dry_run:
                 affected += 1
             else:
                 try:
-                    # Check if original already exists (redundant backup scenario)
-                    if os.path.exists(original_path):
+                    if os.path.islink(original_path):
+                        # Symlink at original location (from use_symlinks mode) - remove it, then restore
+                        os.remove(original_path)
+                        os.rename(plexcached_path, original_path)
+                        logging.debug(f"Removed symlink and restored: {plexcached_path}")
+                    elif os.path.exists(original_path):
                         # Original exists - just delete the redundant backup
                         os.remove(plexcached_path)
                         logging.debug(f"Deleted redundant .plexcached (original exists): {plexcached_path}")
@@ -842,28 +951,28 @@ class MaintenanceService:
 
         action = "Would restore" if dry_run else "Restored"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} backup file(s)",
             affected_count=affected,
             errors=errors,
             affected_paths=affected_paths
         )
 
-    def restore_all_plexcached(self, dry_run: bool = True, orphaned_only: bool = False) -> ActionResult:
+    def restore_all_plexcached(self, dry_run: bool = True, orphaned_only: bool = False, **kwargs) -> ActionResult:
         """Restore all orphaned .plexcached files
 
         Args:
             dry_run: If True, only simulate the restore
             orphaned_only: If True, only restore truly orphaned backups (not redundant ones)
         """
-        backups = self._get_orphaned_plexcached()
+        backups, _ = self._get_orphaned_plexcached()
 
         if orphaned_only:
             # Filter to only include truly orphaned backups (not redundant)
             backups = [b for b in backups if b.backup_type == "orphaned"]
 
         paths = [b.plexcached_path for b in backups]
-        return self.restore_plexcached(paths, dry_run)
+        return self.restore_plexcached(paths, dry_run, **kwargs)
 
     def delete_plexcached(self, paths: List[str], dry_run: bool = True,
                           stop_check: Optional[Callable[[], bool]] = None,
@@ -931,18 +1040,171 @@ class MaintenanceService:
 
         action = "Would delete" if dry_run else "Deleted"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} backup file(s)",
             affected_count=affected,
             errors=errors,
             affected_paths=affected_paths
         )
 
-    def delete_all_plexcached(self, dry_run: bool = True) -> ActionResult:
+    def delete_all_plexcached(self, dry_run: bool = True, **kwargs) -> ActionResult:
         """Delete all orphaned .plexcached files"""
-        orphaned = self._get_orphaned_plexcached()
+        orphaned, _ = self._get_orphaned_plexcached()
         paths = [o.plexcached_path for o in orphaned]
-        return self.delete_plexcached(paths, dry_run)
+        return self.delete_plexcached(paths, dry_run, **kwargs)
+
+    def repair_plexcached(self, paths: List[str], dry_run: bool = True,
+                          stop_check: Optional[Callable[[], bool]] = None,
+                          progress_callback: Optional[Callable] = None,
+                          bytes_progress_callback: Optional[Callable] = None,
+                          max_workers: int = 1,
+                          active_callback: Optional[Callable] = None) -> ActionResult:
+        """Repair malformed .plexcached files by adding the missing media extension.
+
+        Sonarr/Radarr renames treat .plexcached as the file extension, turning
+        e.g. OldName.mkv.plexcached into NewName.plexcached (dropping .mkv).
+        When a media sibling exists (NewName.mkv), we can repair the backup by
+        renaming NewName.plexcached → NewName.mkv.plexcached.
+        """
+        if not paths:
+            return ActionResult(success=False, message="No paths provided")
+
+        # Build a lookup from current path → repair target
+        backups, _ = self._get_orphaned_plexcached()
+        repair_map = {
+            b.plexcached_path: b.repair_path
+            for b in backups
+            if b.backup_type == "repairable" and b.repair_path
+        }
+
+        affected = 0
+        errors = []
+        affected_paths = []
+
+        for i, plexcached_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(plexcached_path))
+
+            if not plexcached_path.endswith('.plexcached'):
+                errors.append(f"Not a .plexcached file: {os.path.basename(plexcached_path)}")
+                continue
+
+            repair_target = repair_map.get(plexcached_path)
+            if not repair_target:
+                errors.append(f"{os.path.basename(plexcached_path)}: No repair target found")
+                continue
+
+            # Verify the media sibling still exists (on array or cache)
+            # repair_target = "Name.mkv.plexcached", sibling = "Name.mkv"
+            array_sibling = repair_target[:-len(PLEXCACHED_EXTENSION)]
+            cache_sibling = self._array_to_cache_path(array_sibling)
+
+            if not os.path.exists(array_sibling) and not (cache_sibling and os.path.exists(cache_sibling)):
+                errors.append(f"{os.path.basename(plexcached_path)}: Media sibling no longer exists")
+                continue
+
+            if dry_run:
+                affected += 1
+            else:
+                try:
+                    if os.path.exists(plexcached_path):
+                        os.rename(plexcached_path, repair_target)
+                        affected += 1
+                        affected_paths.append(plexcached_path)
+                        logging.info(f"Repaired: {os.path.basename(plexcached_path)} → {os.path.basename(repair_target)}")
+                    else:
+                        errors.append(f"{os.path.basename(plexcached_path)}: File not found")
+                except OSError as e:
+                    errors.append(f"{os.path.basename(plexcached_path)}: {str(e)}")
+
+        action = "Would repair" if dry_run else "Repaired"
+        return ActionResult(
+            success=len(errors) == 0,
+            message=f"{action} {affected} backup file(s)",
+            affected_count=affected,
+            errors=errors,
+            affected_paths=affected_paths
+        )
+
+    def repair_all_plexcached(self, dry_run: bool = True, **kwargs) -> ActionResult:
+        """Repair all repairable .plexcached files"""
+        backups, _ = self._get_orphaned_plexcached()
+        repairable = [b for b in backups if b.backup_type == "repairable"]
+        paths = [b.plexcached_path for b in repairable]
+        return self.repair_plexcached(paths, dry_run, **kwargs)
+
+    def delete_extensionless_files(self, paths: List[str], dry_run: bool = True,
+                                   stop_check: Optional[Callable[[], bool]] = None,
+                                   progress_callback: Optional[Callable] = None,
+                                   bytes_progress_callback: Optional[Callable] = None,
+                                   max_workers: int = 1,
+                                   active_callback: Optional[Callable] = None) -> ActionResult:
+        """Delete extensionless duplicate files (from malformed .plexcached restores).
+
+        Safety: Only deletes files that have no media extension AND have a matching
+        media file sibling in the same directory.
+        """
+        if not paths:
+            return ActionResult(success=False, message="No paths provided")
+
+        affected = 0
+        errors = []
+        affected_paths = []
+
+        for i, file_path in enumerate(paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(paths), os.path.basename(file_path))
+
+            filename = os.path.basename(file_path)
+            _, ext = os.path.splitext(filename)
+
+            # Safety check 1: Must not have a media extension
+            if ext.lower() in _MEDIA_EXTENSIONS:
+                errors.append(f"{filename}: Has media extension, refusing to delete")
+                continue
+
+            # Safety check 2: Must have a matching media sibling
+            has_sibling = False
+            for media_ext in _MEDIA_EXTENSIONS:
+                if os.path.exists(file_path + media_ext):
+                    has_sibling = True
+                    break
+
+            if not has_sibling:
+                errors.append(f"{filename}: No matching media file found, refusing to delete")
+                continue
+
+            if dry_run:
+                affected += 1
+            else:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        affected += 1
+                        affected_paths.append(file_path)
+                    else:
+                        errors.append(f"{filename}: File not found")
+                except OSError as e:
+                    errors.append(f"{filename}: {str(e)}")
+
+        action = "Would delete" if dry_run else "Deleted"
+        return ActionResult(
+            success=len(errors) == 0,
+            message=f"{action} {affected} extensionless file(s)",
+            affected_count=affected,
+            errors=errors,
+            affected_paths=affected_paths
+        )
+
+    def delete_all_extensionless(self, dry_run: bool = True, **kwargs) -> ActionResult:
+        """Delete all extensionless duplicate files found on array"""
+        _, extensionless = self._get_orphaned_plexcached()
+        paths = [f.file_path for f in extensionless]
+        return self.delete_extensionless_files(paths, dry_run, **kwargs)
 
     def fix_with_backup(self, paths: List[str], dry_run: bool = True,
                         stop_check: Optional[Callable[[], bool]] = None,
@@ -965,7 +1227,10 @@ class MaintenanceService:
                         return (cache_path, False, f"{os.path.basename(cache_path)}: No backup or array copy found")
 
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            return (cache_path, False, str(e))
                         os.rename(backup_path, original_array_path)
 
                     if os.path.exists(cache_path):
@@ -1013,7 +1278,11 @@ class MaintenanceService:
                 try:
                     # If it's a .plexcached backup, rename it back FIRST (safer order)
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            errors.append(str(e))
+                            continue
                         os.rename(backup_path, original_array_path)
 
                     # Delete cache copy
@@ -1030,7 +1299,7 @@ class MaintenanceService:
 
         action = "Would fix" if dry_run else "Fixed"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} file(s) with backup",
             affected_count=affected,
             errors=errors,
@@ -1083,7 +1352,10 @@ class MaintenanceService:
                     has_dup, _ = self._check_array_duplicate(cache_path)
 
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            return (cache_path, False, str(e))
                         if os.path.exists(original_array_path):
                             os.remove(backup_path)
                         else:
@@ -1157,7 +1429,11 @@ class MaintenanceService:
             else:
                 try:
                     if has_backup and backup_path:
-                        original_array_path = backup_path[:-11]  # Remove .plexcached suffix
+                        try:
+                            original_array_path = _strip_plexcached(backup_path)
+                        except ValueError as e:
+                            errors.append(str(e))
+                            continue
 
                         # Check if original already exists (redundant backup scenario)
                         if os.path.exists(original_array_path):
@@ -1211,11 +1487,49 @@ class MaintenanceService:
 
         action = "Would move" if dry_run else "Moved"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} {affected} file(s) to array",
             affected_count=affected,
             errors=errors,
             affected_paths=affected_paths
+        )
+
+    def evict_files(self, cache_paths: List[str], dry_run: bool = False,
+                    stop_check: Optional[Callable[[], bool]] = None,
+                    progress_callback: Optional[Callable] = None,
+                    bytes_progress_callback: Optional[Callable] = None,
+                    max_workers: int = 1,
+                    active_callback: Optional[Callable] = None) -> 'ActionResult':
+        """Evict files from cache via the background runner.
+
+        Delegates to CacheService.evict_file() per file, reporting progress.
+        """
+        from web.services import get_cache_service
+        cache_service = get_cache_service()
+
+        affected = 0
+        errors = []
+        affected_paths = []
+
+        for i, cache_path in enumerate(cache_paths):
+            if stop_check and stop_check():
+                break
+            if progress_callback:
+                progress_callback(i + 1, len(cache_paths), os.path.basename(cache_path))
+
+            result = cache_service.evict_file(cache_path)
+            if result.get("success"):
+                affected += 1
+                affected_paths.append(cache_path)
+            else:
+                errors.append(f"{os.path.basename(cache_path)}: {result.get('message', 'Unknown error')}")
+
+        return ActionResult(
+            success=affected > 0,
+            message=f"Evicted {affected} of {len(cache_paths)} file(s) from cache",
+            affected_count=affected,
+            errors=errors,
+            affected_paths=affected_paths,
         )
 
     def add_to_exclude(self, paths: List[str], dry_run: bool = True) -> ActionResult:
@@ -1331,7 +1645,7 @@ class MaintenanceService:
             if errors:
                 logging.warning(f"protect_with_backup errors: {errors}")
             return ActionResult(
-                success=affected > 0,
+                success=len(errors) == 0,
                 message=f"Protected {affected} file(s) with array backup",
                 affected_count=affected,
                 errors=errors,
@@ -1414,7 +1728,7 @@ class MaintenanceService:
         if errors:
             logging.warning(f"protect_with_backup errors: {errors}")
         return ActionResult(
-            success=affected > 0 or (dry_run and not errors),
+            success=len(errors) == 0,
             message=f"{action} {affected} file(s) with array backup",
             affected_count=affected,
             errors=errors,
@@ -1573,7 +1887,7 @@ class MaintenanceService:
 
         action = "Would fix" if dry_run else "Fixed"
         return ActionResult(
-            success=affected > 0,
+            success=len(errors) == 0,
             message=f"{action} timestamps on {affected} file(s)",
             affected_count=affected,
             errors=errors
@@ -1645,48 +1959,24 @@ class MaintenanceService:
 
     def _remove_from_exclude_file(self, cache_path: str):
         """Remove a path from the exclude file"""
-        if not self.exclude_file.exists():
-            return
-
-        try:
-            with open(self.exclude_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-            # Translate container path to host path for comparison
-            # (exclude file contains host paths for Unraid mover)
-            host_path = self._translate_container_to_host_path(cache_path)
-            new_lines = [line for line in lines if line.strip() != host_path]
-
-            with open(self.exclude_file, 'w', encoding='utf-8') as f:
-                f.writelines(new_lines)
-        except IOError:
-            pass
+        settings = self._load_settings()
+        remove_from_exclude_file(self.exclude_file, cache_path, settings.get('path_mappings', []))
 
     def _remove_from_timestamps(self, cache_path: str):
         """Remove a path from the timestamps file"""
-        if not self.timestamps_file.exists():
-            return
-
-        try:
-            with open(self.timestamps_file, 'r', encoding='utf-8') as f:
-                timestamps = json.load(f)
-
-            if cache_path in timestamps:
-                del timestamps[cache_path]
-
-                with open(self.timestamps_file, 'w', encoding='utf-8') as f:
-                    json.dump(timestamps, f, indent=2)
-        except (IOError, json.JSONDecodeError):
-            pass
+        remove_from_timestamps_file(self.timestamps_file, cache_path)
 
 
 # Singleton instance
 _maintenance_service: Optional[MaintenanceService] = None
+_maintenance_service_lock = threading.Lock()
 
 
 def get_maintenance_service() -> MaintenanceService:
     """Get or create the maintenance service singleton"""
     global _maintenance_service
     if _maintenance_service is None:
-        _maintenance_service = MaintenanceService()
+        with _maintenance_service_lock:
+            if _maintenance_service is None:
+                _maintenance_service = MaintenanceService()
     return _maintenance_service

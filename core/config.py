@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
+from core.system_utils import parse_size_bytes
 
 # Get the directory where config.py is located
 _SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -66,6 +67,7 @@ class PathMapping:
     host_cache_path: Optional[str] = None  # For Docker: host-side cache path
     cacheable: bool = True
     enabled: bool = True
+    section_id: Optional[int] = None  # Plex library section ID (links mapping to library)
 
 
 @dataclass
@@ -141,6 +143,12 @@ class CacheConfig:
     # Supports fractional days (e.g., 0.5 = 12 hours) for testing
     watchlist_retention_days: float = 0
 
+    # OnDeck retention: auto-expire OnDeck items after X days
+    # Items are no longer protected after this period, becoming eligible for move-back and eviction
+    # 0 = disabled (items stay as long as they're on any user's OnDeck)
+    # Supports fractional days (e.g., 0.5 = 12 hours) for testing
+    ondeck_retention_days: float = 0
+
     # Cache drive size: manual override for total cache drive capacity
     # Useful for ZFS pools where auto-detection shows dataset size instead of pool size
     # Supports formats: "3.7TB", "500GB", "250" (defaults to GB)
@@ -160,6 +168,13 @@ class CacheConfig:
     # Empty string or "0" means disabled
     min_free_space: str = ""
     min_free_space_bytes: int = 0  # Parsed value in bytes (computed from min_free_space)
+
+    # PlexCache quota: maximum space for PlexCache-managed files only
+    # Unlike cache_limit (which counts all drive usage), this only counts tracked files
+    # Supports formats: "500GB", "250MB", "50%", or just "500" (defaults to GB)
+    # Empty string or "0" means disabled
+    plexcache_quota: str = ""
+    plexcache_quota_bytes: int = 0  # Parsed value in bytes
 
     # Smart cache eviction settings
     # cache_eviction_mode: "smart" (priority-based), "fifo" (oldest first), or "none" (disabled)
@@ -183,6 +198,19 @@ class CacheConfig:
     # Clean up empty parent folders on cache after moving files to array
     # Disable if you use year-based or other intentional empty folder structures
     cleanup_empty_folders: bool = True
+
+    # Create symlinks at original file locations after caching (non-Unraid systems)
+    # On non-Unraid/non-mergerfs systems, Plex loses access when originals are renamed to .plexcached.
+    # Symlinks let Plex still find files at their original paths via the cache copy.
+    use_symlinks: bool = False
+
+    # Auto-transfer tracking when Sonarr/Radarr upgrades a cached file
+    # Detects file swaps via Plex rating_key and transfers exclude list + tracker entries
+    auto_transfer_upgrades: bool = True
+
+    # Create .plexcached backup for upgraded files (only if old backup existed)
+    # When a cached file is upgraded, copy the new file to array as .plexcached backup
+    backup_upgraded_files: bool = True
 
     # Excluded folders: skip these directories during cache scanning
     # Hidden directories (dot-prefixed like .Trash, .Recycle.Bin) are always skipped automatically
@@ -386,9 +414,12 @@ class ConfigManager:
         # Load watchlist retention setting (default 0 = disabled)
         self.cache.watchlist_retention_days = self.settings_data.get('watchlist_retention_days', 0)
 
+        # Load OnDeck retention setting (default 0 = disabled)
+        self.cache.ondeck_retention_days = self.settings_data.get('ondeck_retention_days', 0)
+
         # Load and parse cache drive size override (for ZFS/etc)
         self.cache.cache_drive_size = self.settings_data.get('cache_drive_size', "")
-        self.cache.cache_drive_size_bytes = self._parse_size_bytes(self.cache.cache_drive_size)
+        self.cache.cache_drive_size_bytes = parse_size_bytes(self.cache.cache_drive_size)
 
         # Load and parse cache limit setting
         self.cache.cache_limit = self.settings_data.get('cache_limit', "")
@@ -397,6 +428,10 @@ class ConfigManager:
         # Load and parse min free space setting
         self.cache.min_free_space = self.settings_data.get('min_free_space', "")
         self.cache.min_free_space_bytes = self._parse_cache_limit(self.cache.min_free_space)
+
+        # Load and parse plexcache quota setting
+        self.cache.plexcache_quota = self.settings_data.get('plexcache_quota', "")
+        self.cache.plexcache_quota_bytes = self._parse_cache_limit(self.cache.plexcache_quota)
 
         # Load smart eviction settings (default: disabled)
         self.cache.cache_eviction_mode = self.settings_data.get('cache_eviction_mode', "none")
@@ -426,6 +461,13 @@ class ConfigManager:
 
         # Load cleanup_empty_folders setting (default True to preserve existing behavior)
         self.cache.cleanup_empty_folders = self.settings_data.get('cleanup_empty_folders', True)
+
+        # Load symlink setting (default False - only needed for non-Unraid systems)
+        self.cache.use_symlinks = self.settings_data.get('use_symlinks', False)
+
+        # Load auto-transfer upgrade tracking settings
+        self.cache.auto_transfer_upgrades = self.settings_data.get('auto_transfer_upgrades', True)
+        self.cache.backup_upgraded_files = self.settings_data.get('backup_upgraded_files', True)
 
         # Load excluded folders for directory scanning
         excluded_folders = self.settings_data.get('excluded_folders', [])
@@ -466,7 +508,8 @@ class ConfigManager:
                 cache_path=cache_path,
                 host_cache_path=host_cache_path,
                 cacheable=mapping_data.get('cacheable', True),
-                enabled=mapping_data.get('enabled', True)
+                enabled=mapping_data.get('enabled', True),
+                section_id=mapping_data.get('section_id')
             )
             self.paths.path_mappings.append(mapping)
             if host_cache_path and host_cache_path != cache_path:
@@ -746,7 +789,8 @@ class ConfigManager:
                         'cache_path': m.cache_path,
                         'host_cache_path': m.host_cache_path,
                         'cacheable': m.cacheable,
-                        'enabled': m.enabled
+                        'enabled': m.enabled,
+                        'section_id': m.section_id
                     }
                     for m in self.paths.path_mappings
                 ]
@@ -804,52 +848,6 @@ class ConfigManager:
             logging.warning(f"Invalid cache_limit value '{limit_str}'. Using no limit.")
             return 0
 
-    def _parse_size_bytes(self, size_str: str) -> int:
-        """Parse size string and return bytes.
-
-        Supports formats:
-        - "3.7TB" or "3.7tb" -> 3.7 * 1024^4 bytes
-        - "250GB" or "250gb" -> 250 * 1024^3 bytes
-        - "500MB" or "500mb" -> 500 * 1024^2 bytes
-        - "250" -> defaults to GB (250 * 1024^3 bytes)
-        - "" -> 0 (auto-detect)
-
-        Returns:
-            Bytes as int, or 0 for auto-detect
-        """
-        if not size_str or size_str.strip() == "0":
-            return 0
-
-        size_str = size_str.strip().upper()
-
-        try:
-            # Check for size units
-            if size_str.endswith('TB'):
-                size = float(size_str[:-2])
-                return int(size * 1024 * 1024 * 1024 * 1024)
-            elif size_str.endswith('GB'):
-                size = float(size_str[:-2])
-                return int(size * 1024 * 1024 * 1024)
-            elif size_str.endswith('MB'):
-                size = float(size_str[:-2])
-                return int(size * 1024 * 1024)
-            elif size_str.endswith('T'):
-                size = float(size_str[:-1])
-                return int(size * 1024 * 1024 * 1024 * 1024)
-            elif size_str.endswith('G'):
-                size = float(size_str[:-1])
-                return int(size * 1024 * 1024 * 1024)
-            elif size_str.endswith('M'):
-                size = float(size_str[:-1])
-                return int(size * 1024 * 1024)
-            else:
-                # No unit specified, default to GB
-                size = float(size_str)
-                return int(size * 1024 * 1024 * 1024)
-
-        except ValueError:
-            logging.warning(f"Invalid size value '{size_str}'. Using auto-detect.")
-            return 0
 
     @staticmethod
     def _add_trailing_slashes(value: str) -> str:

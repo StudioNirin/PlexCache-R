@@ -36,59 +36,11 @@
 </div>
 
 <div class="card">
-    <div class="card-header">
-        <i data-lucide="library"></i>
-        <h2>Library Settings</h2>
-    </div>
-    <div class="card-body">
-        <div class="form-group">
-            <label>Library Sections</label>
-            <div class="library-checkboxes" id="library-sections">
-                {% if libraries %}
-                    {% for lib in libraries %}
-                    <label class="checkbox-card">
-                        <input type="checkbox" name="valid_sections" value="{{ lib.id }}"
-                               {% if lib.id in settings.valid_sections %}checked{% endif %}>
-                        <span class="checkbox-content">
-                            <span class="library-name">{{ lib.title }}</span>
-                            <span class="library-meta">{{ lib.type_label }} &middot; Section {{ lib.id }}</span>
-                        </span>
-                    </label>
-                    {% endfor %}
-                {% else %}
-                    <div class="no-libraries">
-                        <i data-lucide="alert-circle"></i>
-                        <span>Unable to fetch libraries. Check Plex URL and token.</span>
-                    </div>
-                {% endif %}
-            </div>
-            <div class="form-hint">Leave all unchecked to include all sections</div>
-        </div>
-
-        <div class="grid grid-2">
-            <div class="form-group">
-                <label for="number_episodes">Episodes to Prefetch</label>
-                <input type="number" id="number_episodes" name="number_episodes"
-                       value="{{ settings.number_episodes | default(3) }}" min="0" max="10">
-                <div class="form-hint">Number of upcoming episodes to cache for in-progress shows</div>
-            </div>
-
-            <div class="form-group mb-0">
-                <label for="days_to_monitor">Days to Monitor</label>
-                <input type="number" id="days_to_monitor" name="days_to_monitor"
-                       value="{{ settings.days_to_monitor | default(7) }}" min="1" max="999">
-                <div class="form-hint">How far back to check OnDeck for recently watched items</div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="card">
     <div class="card-body" style="padding: 1rem 1.25rem;">
         <div class="form-group mb-0" style="display: flex; gap: 1rem; align-items: center;">
             <button type="submit" class="btn btn-primary">
                 <i data-lucide="save"></i>
-                Save All Plex Settings
+                Save Connection
             </button>
             <button type="button" class="btn btn-secondary"
                     hx-post="/settings/plex/test"

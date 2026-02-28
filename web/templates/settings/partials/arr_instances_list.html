@@ -1,0 +1,11 @@
+{% if instances %}
+    {% for instance in instances %}
+    {% set index = loop.index0 %}
+    {% include "settings/partials/arr_instance_card.html" %}
+    {% endfor %}
+{% else %}
+    <div class="alert alert-info" id="no-instances-alert">
+        <i data-lucide="info"></i>
+        No Sonarr/Radarr instances configured. Add one above.
+    </div>
+{% endif %}

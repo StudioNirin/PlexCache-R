@@ -1,4 +1,4 @@
-import json, os, requests, ntpath, posixpath, uuid, time, webbrowser
+import json, os, requests, uuid, time, webbrowser
 from urllib.parse import urlparse
 from plexapi.server import PlexServer
 from plexapi.exceptions import BadRequest
@@ -36,14 +36,6 @@ def write_settings(filename, data):
     except (IOError, OSError) as e:
         print(f"Error writing settings file: {e}")
         raise
-
-def convert_path_to_posix(path):
-    path = path.replace(ntpath.sep, posixpath.sep)
-    return posixpath.normpath(path)
-
-def convert_path_to_nt(path):
-    path = path.replace(posixpath.sep, ntpath.sep)
-    return ntpath.normpath(path)
 
 def prompt_user_for_number(prompt_message, default_value, data_key, data_type=int):
     while True:
@@ -130,31 +122,6 @@ def is_valid_plex_url(url):
         return all([result.scheme, result.netloc])
     except ValueError:
         return False
-
-# Helper to compute a common root for a list of paths
-def find_common_root(paths):
-    """Return the deepest common directory for all given paths."""
-    if not paths:
-        return "/"
-
-    # Normalize trailing slashes and split
-    normed = [p.rstrip('/') for p in paths]
-    split_paths = [p.split('/') for p in normed]
-
-    common_parts = []
-    for parts in zip(*split_paths):
-        if all(part == parts[0] for part in parts):
-            common_parts.append(parts[0])
-        else:
-            break
-
-    # Handle leading empty string (absolute paths)
-    if common_parts and common_parts[0] == '':
-        if len(common_parts) == 1:
-            return '/'
-        return "/" + "/".join(common_parts[1:])
-    return "/" + "/".join(common_parts) if common_parts else "/"
-
 
 def is_unraid():
     """Check if running on Unraid."""
@@ -442,7 +409,7 @@ def configure_path_mappings(settings):
 # PlexCache-D client identifier - stored in settings for consistency
 PLEXCACHE_CLIENT_ID_KEY = 'plexcache_client_id'
 PLEXCACHE_PRODUCT_NAME = 'PlexCache-D'
-PLEXCACHE_PRODUCT_VERSION = '1.0'
+from core import __version__ as PLEXCACHE_PRODUCT_VERSION
 
 
 def get_or_create_client_id(settings: dict) -> str:
@@ -1002,6 +969,18 @@ def _setup_advanced_settings():
             hardlink_choice = 'skip'
         settings_data['hardlinked_files'] = hardlink_choice
 
+    # Symlink Support (non-Unraid systems)
+    if 'use_symlinks' not in settings_data:
+        print('\n--- Symlink Support ---')
+        print('On non-Unraid systems (standard Linux, Docker without mergerfs/FUSE),')
+        print('Plex loses access to files when they are renamed to .plexcached.')
+        print('Enabling symlinks creates a symbolic link at the original file location')
+        print('pointing to the cached copy, so Plex can still find files.')
+        print('')
+        print('Not needed on Unraid or mergerfs (FUSE handles path transparency).')
+        symlink_choice = input('Create symlinks after caching? [y/N] ') or 'no'
+        settings_data['use_symlinks'] = symlink_choice.lower() in ['y', 'yes']
+
     # Smart Cache Eviction
     if 'cache_eviction_mode' not in settings_data:
         _configure_eviction_settings()
@@ -1461,6 +1440,7 @@ def check_for_missing_settings(settings: dict) -> list:
         'webhook_level',
         'create_plexcached_backups',
         'hardlinked_files',
+        'use_symlinks',
     ]
     missing = [s for s in optional_new_settings if s not in settings]
     return missing

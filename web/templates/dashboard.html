@@ -52,7 +52,14 @@
     <div class="card-header">
         <i data-lucide="activity"></i>
         <h2>Recent Activity</h2>
-        <span class="text-muted" style="font-size: 0.75rem; margin-left: auto;">Last 24 hours</span>
+        <span class="text-muted" style="font-size: 0.75rem; margin-left: auto;">Last {{ retention_label }}</span>
+    </div>
+    <div class="activity-filter-bar" style="padding: 0.75rem 1.25rem;">
+        <button class="activity-filter-pill active" data-filter="all">All</button>
+        <button class="activity-filter-pill" data-filter="Cached">Cached</button>
+        <button class="activity-filter-pill" data-filter="Restored">Restored</button>
+        <button class="activity-filter-pill" data-filter="Moved to Array">Moved</button>
+        <button class="activity-filter-pill" data-filter="other">Other</button>
     </div>
     <div class="card-body" style="padding: 0;">
         <div class="recent-activity-scroll">
@@ -66,11 +73,11 @@
                         <th>Size</th>
                     </tr>
                 </thead>
-                <tbody id="recent-activity" hx-get="/operations/activity" hx-trigger="load">
+                <tbody id="recent-activity" hx-get="/operations/activity" hx-trigger="load, every 60s">
                     <tr>
                         <td colspan="5" class="text-muted" style="text-align: center; padding: 2rem;">
-                            <i data-lucide="inbox" style="width: 32px; height: 32px; margin-bottom: 0.5rem; display: block; margin: 0 auto 0.5rem;"></i>
-                            No recent activity
+                            <span class="di-spinner" style="width: 20px; height: 20px; display: inline-block; margin-bottom: 0.5rem; border-top-color: var(--plex-text-muted); border-right-color: transparent;"></span>
+                            <div style="font-size: 0.85rem;">Loading activity...</div>
                         </td>
                     </tr>
                 </tbody>
@@ -100,5 +107,52 @@ document.addEventListener('DOMContentLoaded', loadVerbosePreference);
 
 // Save preference when toggle changes
 document.getElementById('verbose-toggle').addEventListener('change', saveVerbosePreference);
+
+// ── Activity Filter Pills ──────────────────────────────
+const KNOWN_ACTIONS = ['Cached', 'Restored', 'Moved to Array', 'Protected'];
+
+function getActiveFilter() {
+    const active = document.querySelector('.activity-filter-pill.active');
+    return active ? active.getAttribute('data-filter') : 'all';
+}
+
+function applyActivityFilter(filter) {
+    const rows = document.querySelectorAll('#recent-activity tr[data-action]');
+    rows.forEach(row => {
+        const action = row.getAttribute('data-action');
+        if (filter === 'all') {
+            row.style.display = '';
+        } else if (filter === 'other') {
+            row.style.display = KNOWN_ACTIONS.includes(action) ? 'none' : '';
+        } else {
+            row.style.display = (action === filter) ? '' : 'none';
+        }
+    });
+
+    // Show/hide date group headers based on visible rows in each group
+    document.querySelectorAll('#recent-activity tr.date-group-header').forEach(header => {
+        const dateKey = header.getAttribute('data-date-group');
+        const groupRows = document.querySelectorAll(
+            '#recent-activity tr[data-action][data-date-group="' + dateKey + '"]'
+        );
+        const anyVisible = Array.from(groupRows).some(r => r.style.display !== 'none');
+        header.style.display = anyVisible ? '' : 'none';
+    });
+}
+
+document.querySelector('.activity-filter-bar')?.addEventListener('click', function(e) {
+    const pill = e.target.closest('.activity-filter-pill');
+    if (!pill) return;
+    document.querySelectorAll('.activity-filter-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    applyActivityFilter(pill.getAttribute('data-filter'));
+});
+
+// Re-apply filter after HTMX refreshes activity table
+document.body.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target && e.detail.target.id === 'recent-activity') {
+        applyActivityFilter(getActiveFilter());
+    }
+});
 </script>
 {% endblock %}

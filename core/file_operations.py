@@ -31,6 +31,34 @@ MINIMUM_SPACE_FOR_RENAME = 100 * 1024 * 1024  # 100 MB
 SUBTITLE_EXTENSIONS = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx', '.sbv'}
 
 
+def save_json_atomically(filepath: str, data, label: str = "data") -> None:
+    """Save JSON data to file atomically (write-to-temp-then-rename).
+
+    Creates a temp file in the same directory, writes data, then atomically
+    replaces the target file. This prevents corruption from interrupted writes.
+
+    Args:
+        filepath: Target file path.
+        data: JSON-serializable data to write.
+        label: Human-readable label for error messages.
+    """
+    try:
+        dir_name = os.path.dirname(filepath) or '.'
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, filepath)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except IOError as e:
+        logging.error(f"Could not save {label} file: {type(e).__name__}: {e}")
+
+
 def is_subtitle_file(filepath: str) -> bool:
     """Check if a file is a subtitle based on its extension."""
     ext = os.path.splitext(filepath)[1].lower()
@@ -40,22 +68,21 @@ def is_subtitle_file(filepath: str) -> bool:
 def format_bytes(bytes_value: int) -> str:
     """Format bytes into human-readable string (e.g., '1.5 GB').
 
-    Args:
-        bytes_value: Size in bytes to format.
-
-    Returns:
-        Human-readable string with appropriate unit.
+    Canonical implementation — import from core.system_utils.
+    Re-exported here for convenience.
     """
-    if bytes_value < 1024:
-        return f"{bytes_value} B"
-    elif bytes_value < 1024 ** 2:
-        return f"{bytes_value / 1024:.2f} KB"
-    elif bytes_value < 1024 ** 3:
-        return f"{bytes_value / (1024 ** 2):.2f} MB"
-    elif bytes_value < 1024 ** 4:
-        return f"{bytes_value / (1024 ** 3):.2f} GB"
-    else:
-        return f"{bytes_value / (1024 ** 4):.2f} TB"
+    from core.system_utils import format_bytes as _fb
+    return _fb(bytes_value)
+
+
+def format_duration(seconds: float) -> str:
+    """Format seconds into human-readable duration like '1m 23s' or '45s'.
+
+    Canonical implementation — import from core.system_utils.
+    Re-exported here for convenience.
+    """
+    from core.system_utils import format_duration as _fd
+    return _fd(seconds)
 
 
 def get_media_identity(filepath: str) -> str:
@@ -121,7 +148,7 @@ def find_matching_plexcached(array_path: str, media_identity: str, source_file: 
                 if entry_identity == media_identity:
                     return entry.path
     except (OSError, PermissionError) as e:
-        logging.debug(f"Error scanning for .plexcached files in {array_path}: {e}")
+        logging.warning(f"Error scanning for .plexcached files in {array_path}: {e}")
 
     return None
 
@@ -169,21 +196,7 @@ class JSONTracker:
 
     def _save(self) -> None:
         """Save tracker data to file atomically (write-to-temp-then-rename)."""
-        try:
-            dir_name = os.path.dirname(self.tracker_file) or '.'
-            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
-            try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                    json.dump(self._data, f, indent=2)
-                os.replace(tmp_path, self.tracker_file)
-            except BaseException:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-        except IOError as e:
-            logging.error(f"Could not save {self._tracker_name} file: {type(e).__name__}: {e}")
+        save_json_atomically(self.tracker_file, self._data, self._tracker_name)
 
     def _find_entry_by_filename(self, file_path: str) -> Optional[Tuple[str, dict]]:
         """Find a tracker entry by matching filename when full path doesn't match.
@@ -268,6 +281,78 @@ class JSONTracker:
 
             return len(stale)
 
+    def mark_cached(self, file_path: str, source: str, cached_at: Optional[str] = None) -> None:
+        """Mark an entry as cached with source and timestamp.
+
+        Sets is_cached=True, cache_source, and cached_at on the matching entry.
+        Uses filename fallback if full path doesn't match directly.
+        No-op if entry doesn't exist (file may not be on OnDeck/Watchlist).
+
+        Args:
+            file_path: Path to the media file.
+            source: Cache source (e.g., "ondeck", "watchlist", "pre-existing").
+            cached_at: ISO timestamp string. Defaults to now.
+        """
+        with self._lock:
+            entry = None
+            key = file_path
+            if file_path in self._data:
+                entry = self._data[file_path]
+            else:
+                result = self._find_entry_by_filename(file_path)
+                if result:
+                    key, entry = result
+
+            if entry is None:
+                return
+
+            entry['is_cached'] = True
+            entry['cache_source'] = source
+            entry['cached_at'] = cached_at or datetime.now().isoformat()
+            self._save()
+            logging.debug(f"Marked {self._tracker_name} entry as cached: {os.path.basename(key)} (source={source})")
+
+    def mark_uncached(self, file_path: str) -> None:
+        """Clear cache status from an entry.
+
+        Sets is_cached=False and removes cache_source and cached_at.
+        No-op if entry doesn't exist.
+
+        Args:
+            file_path: Path to the media file.
+        """
+        with self._lock:
+            entry = None
+            key = file_path
+            if file_path in self._data:
+                entry = self._data[file_path]
+            else:
+                result = self._find_entry_by_filename(file_path)
+                if result:
+                    key, entry = result
+
+            if entry is None:
+                return
+
+            entry['is_cached'] = False
+            entry.pop('cache_source', None)
+            entry.pop('cached_at', None)
+            self._save()
+            logging.debug(f"Marked {self._tracker_name} entry as uncached: {os.path.basename(key)}")
+
+    def get_cached_entries(self) -> Dict[str, dict]:
+        """Return entries that are currently marked as cached.
+
+        Returns:
+            Dict of {path: entry} for entries where is_cached is True.
+        """
+        with self._lock:
+            return {
+                path: dict(entry)
+                for path, entry in self._data.items()
+                if entry.get('is_cached', False)
+            }
+
 
 class CacheTimestampTracker:
     """Thread-safe tracker for when files were cached and their source.
@@ -296,6 +381,7 @@ class CacheTimestampTracker:
         self.timestamp_file = timestamp_file
         self._lock = threading.Lock()
         self._timestamps: Dict[str, dict] = {}
+        self._subtitle_to_parent: Dict[str, str] = {}  # reverse index: subtitle path -> parent video path
         self._load()
 
     def _load(self) -> None:
@@ -323,7 +409,13 @@ class CacheTimestampTracker:
 
                 if migrated:
                     self._save()
-                    logging.info("Migrated timestamp file to new format with source tracking")
+                    logging.info("[MIGRATION] Migrated timestamp file to new format with source tracking")
+
+                # Build reverse index from existing subtitle associations
+                self._build_subtitle_reverse_index()
+
+                # Migrate standalone subtitle entries to parent associations
+                self._migrate_standalone_subtitles()
 
                 logging.debug(f"Loaded {len(self._timestamps)} timestamps from {self.timestamp_file}")
         except (json.JSONDecodeError, IOError) as e:
@@ -332,24 +424,13 @@ class CacheTimestampTracker:
 
     def _save(self) -> None:
         """Save timestamps to file atomically (write-to-temp-then-rename)."""
-        try:
-            dir_name = os.path.dirname(self.timestamp_file) or '.'
-            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
-            try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                    json.dump(self._timestamps, f, indent=2)
-                os.replace(tmp_path, self.timestamp_file)
-            except BaseException:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-        except IOError as e:
-            logging.error(f"Could not save timestamp file: {type(e).__name__}: {e}")
+        save_json_atomically(self.timestamp_file, self._timestamps, "timestamp")
 
     def record_cache_time(self, cache_file_path: str, source: str = "unknown",
-                          original_inode: Optional[int] = None) -> None:
+                          original_inode: Optional[int] = None,
+                          media_type: Optional[str] = None,
+                          episode_info: Optional[Dict] = None,
+                          rating_key: Optional[str] = None) -> None:
         """Record the current time and source when a file was cached.
 
         Only records if no entry exists - never overwrites existing timestamps.
@@ -358,6 +439,9 @@ class CacheTimestampTracker:
             cache_file_path: The path to the cached file.
             source: Where the file came from - "ondeck", "watchlist", "pre-existing", or "unknown".
             original_inode: For hard-linked files, the original inode number for restoration.
+            media_type: Plex media type - "episode" or "movie" (None for legacy/unknown).
+            episode_info: For episodes, dict with 'show', 'season', 'episode' keys.
+            rating_key: Plex rating key for upgrade tracking (None for legacy/unknown).
         """
         with self._lock:
             # Never overwrite existing timestamps - file was cached when it was first recorded
@@ -371,6 +455,12 @@ class CacheTimestampTracker:
             }
             if original_inode is not None:
                 entry["original_inode"] = original_inode
+            if media_type is not None:
+                entry["media_type"] = media_type
+            if episode_info is not None:
+                entry["episode_info"] = episode_info
+            if rating_key is not None:
+                entry["rating_key"] = rating_key
             self._timestamps[cache_file_path] = entry
             self._save()
             logging.debug(f"Recorded cache timestamp for: {cache_file_path} (source: {source})")
@@ -378,14 +468,47 @@ class CacheTimestampTracker:
     def remove_entry(self, cache_file_path: str) -> None:
         """Remove a file's timestamp entry (when file is restored to array).
 
+        If removing a parent video, also clears its subtitles from the reverse index.
+        If removing a subtitle, also removes it from the parent's subtitles list.
+
         Args:
             cache_file_path: The path to the cached file.
         """
         with self._lock:
             if cache_file_path in self._timestamps:
+                # If this is a parent with subtitles, clear reverse index entries
+                entry = self._timestamps[cache_file_path]
+                if isinstance(entry, dict) and "subtitles" in entry:
+                    for sub_path in entry["subtitles"]:
+                        self._subtitle_to_parent.pop(sub_path, None)
                 del self._timestamps[cache_file_path]
                 self._save()
                 logging.debug(f"Removed cache timestamp for: {cache_file_path}")
+            elif cache_file_path in self._subtitle_to_parent:
+                # This is a subtitle — remove from parent's list and reverse index
+                parent_path = self._subtitle_to_parent.pop(cache_file_path)
+                parent_entry = self._timestamps.get(parent_path)
+                if parent_entry and isinstance(parent_entry, dict) and "subtitles" in parent_entry:
+                    try:
+                        parent_entry["subtitles"].remove(cache_file_path)
+                    except ValueError:
+                        pass
+                    if not parent_entry["subtitles"]:
+                        del parent_entry["subtitles"]
+                self._save()
+                logging.debug(f"Removed subtitle entry for: {cache_file_path}")
+
+    def get_entry(self, cache_file_path: str) -> Optional[Dict]:
+        """Get the timestamp entry for a cached file.
+
+        Args:
+            cache_file_path: The path to the cached file.
+
+        Returns:
+            The entry dict or None if not found.
+        """
+        with self._lock:
+            return self._timestamps.get(cache_file_path)
 
     def get_original_inode(self, cache_file_path: str) -> Optional[int]:
         """Get the original inode for a hard-linked file (for restoration).
@@ -405,6 +528,8 @@ class CacheTimestampTracker:
     def is_within_retention_period(self, cache_file_path: str, retention_hours: int) -> bool:
         """Check if a file is still within its cache retention period.
 
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
         Args:
             cache_file_path: The path to the cached file.
             retention_hours: How many hours files should stay on cache.
@@ -415,9 +540,14 @@ class CacheTimestampTracker:
         """
         with self._lock:
             if cache_file_path not in self._timestamps:
-                # No timestamp means we don't know when it was cached
-                # Default to allowing the move
-                return False
+                # Check if this is a subtitle with a parent
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent and parent in self._timestamps:
+                    cache_file_path = parent
+                else:
+                    # No timestamp means we don't know when it was cached
+                    # Default to allowing the move
+                    return False
 
             try:
                 entry = self._timestamps[cache_file_path]
@@ -452,6 +582,8 @@ class CacheTimestampTracker:
     def get_retention_remaining(self, cache_file_path: str, retention_hours: int) -> float:
         """Get hours remaining in retention period for a cached file.
 
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
         Args:
             cache_file_path: The path to the cached file.
             retention_hours: The configured retention period in hours.
@@ -462,7 +594,11 @@ class CacheTimestampTracker:
         """
         with self._lock:
             if cache_file_path not in self._timestamps:
-                return 0
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent and parent in self._timestamps:
+                    cache_file_path = parent
+                else:
+                    return 0
 
             try:
                 entry = self._timestamps[cache_file_path]
@@ -483,6 +619,8 @@ class CacheTimestampTracker:
     def get_source(self, cache_file_path: str) -> str:
         """Get the source (ondeck/watchlist) for a cached file.
 
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
         Args:
             cache_file_path: The path to the cached file.
 
@@ -491,14 +629,242 @@ class CacheTimestampTracker:
         """
         with self._lock:
             if cache_file_path not in self._timestamps:
-                return "unknown"
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent and parent in self._timestamps:
+                    cache_file_path = parent
+                else:
+                    return "unknown"
             entry = self._timestamps[cache_file_path]
             if isinstance(entry, dict):
                 return entry.get("source", "unknown")
             return "unknown"
 
+    def get_media_type(self, cache_file_path: str) -> Optional[str]:
+        """Get the Plex media type for a cached file.
+
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
+        Args:
+            cache_file_path: The path to the cached file.
+
+        Returns:
+            "episode", "movie", or None if not stored.
+        """
+        with self._lock:
+            entry = self._timestamps.get(cache_file_path)
+            if not entry:
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent:
+                    entry = self._timestamps.get(parent)
+            if entry and isinstance(entry, dict):
+                return entry.get("media_type")
+            return None
+
+    def get_episode_info(self, cache_file_path: str) -> Optional[Dict]:
+        """Get episode info for a cached file.
+
+        For subtitles associated with a parent video, delegates to the parent's entry.
+
+        Args:
+            cache_file_path: The path to the cached file.
+
+        Returns:
+            Dict with 'show', 'season', 'episode' keys, or None if not stored.
+        """
+        with self._lock:
+            entry = self._timestamps.get(cache_file_path)
+            if not entry:
+                parent = self._subtitle_to_parent.get(cache_file_path)
+                if parent:
+                    entry = self._timestamps.get(parent)
+            if entry and isinstance(entry, dict):
+                return entry.get("episode_info")
+            return None
+
+    def associate_subtitles(self, subtitle_map: Dict[str, List[str]]) -> None:
+        """Bulk-link subtitle files to their parent video entries.
+
+        For each (video, [subtitles]) pair:
+        - Adds a "subtitles" list to the parent's timestamp entry
+        - Removes any standalone subtitle entries from _timestamps
+        - Updates the reverse index
+
+        Args:
+            subtitle_map: Dict mapping parent video cache paths to lists of subtitle cache paths.
+        """
+        with self._lock:
+            changed = False
+            for parent_path, sub_paths in subtitle_map.items():
+                if not sub_paths:
+                    continue
+                parent_entry = self._timestamps.get(parent_path)
+                if parent_entry is None or not isinstance(parent_entry, dict):
+                    # Parent not tracked — leave subtitles as standalone
+                    continue
+
+                existing_subs = set(parent_entry.get("subtitles", []))
+                for sub_path in sub_paths:
+                    if sub_path not in existing_subs:
+                        existing_subs.add(sub_path)
+                        changed = True
+                    # Remove standalone subtitle entry if it exists
+                    if sub_path in self._timestamps:
+                        del self._timestamps[sub_path]
+                        changed = True
+                    # Update reverse index
+                    self._subtitle_to_parent[sub_path] = parent_path
+
+                parent_entry["subtitles"] = sorted(existing_subs)
+
+            if changed:
+                self._save()
+                logging.debug(f"Associated subtitles for {len(subtitle_map)} parent videos")
+
+    def get_subtitles(self, parent_path: str) -> List[str]:
+        """Get the list of subtitle files associated with a parent video.
+
+        Args:
+            parent_path: Cache path of the parent video file.
+
+        Returns:
+            List of subtitle cache paths, or empty list if none.
+        """
+        with self._lock:
+            entry = self._timestamps.get(parent_path)
+            if entry and isinstance(entry, dict):
+                return list(entry.get("subtitles", []))
+            return []
+
+    def find_parent_video(self, subtitle_path: str) -> Optional[str]:
+        """Find the parent video for a subtitle file via the reverse index.
+
+        Args:
+            subtitle_path: Cache path of the subtitle file.
+
+        Returns:
+            Cache path of the parent video, or None if not associated.
+        """
+        with self._lock:
+            return self._subtitle_to_parent.get(subtitle_path)
+
+    def _build_subtitle_reverse_index(self) -> None:
+        """Build _subtitle_to_parent from existing subtitle lists in entries.
+
+        Called during _load() — no lock needed (called within __init__).
+        """
+        self._subtitle_to_parent.clear()
+        for parent_path, entry in self._timestamps.items():
+            if isinstance(entry, dict) and "subtitles" in entry:
+                for sub_path in entry["subtitles"]:
+                    self._subtitle_to_parent[sub_path] = parent_path
+
+    def _migrate_standalone_subtitles(self) -> None:
+        """One-time migration: move standalone subtitle entries to parent associations.
+
+        Scans all entries for subtitle files not already in _subtitle_to_parent.
+        Derives the parent video path and links them if the parent exists.
+        Called during _load() — no lock needed (called within __init__).
+        """
+        standalone_subs = []
+        for path in list(self._timestamps.keys()):
+            if is_subtitle_file(path) and path not in self._subtitle_to_parent:
+                standalone_subs.append(path)
+
+        if not standalone_subs:
+            return
+
+        migrated_count = 0
+        for sub_path in standalone_subs:
+            parent_path = self._derive_parent_video_path(sub_path)
+            if parent_path and parent_path in self._timestamps:
+                # Link to parent
+                parent_entry = self._timestamps[parent_path]
+                if isinstance(parent_entry, dict):
+                    subs = parent_entry.get("subtitles", [])
+                    if sub_path not in subs:
+                        subs.append(sub_path)
+                    parent_entry["subtitles"] = sorted(subs)
+                    self._subtitle_to_parent[sub_path] = parent_path
+                    del self._timestamps[sub_path]
+                    migrated_count += 1
+
+        if migrated_count:
+            self._save()
+            logging.info(f"[MIGRATION] Migrated {migrated_count} subtitle entries to parent video associations")
+
+    @staticmethod
+    def _derive_parent_video_path(subtitle_path: str) -> Optional[str]:
+        """Derive the parent video path from a subtitle path.
+
+        Strips subtitle extension and optional language code to get the base name,
+        then checks for common video extensions in the same directory.
+
+        Args:
+            subtitle_path: Path to the subtitle file.
+
+        Returns:
+            Path to the likely parent video file, or None if not determinable.
+        """
+        directory = os.path.dirname(subtitle_path)
+        filename = os.path.basename(subtitle_path)
+        lower_name = filename.lower()
+
+        # Strip subtitle extension
+        for ext in SUBTITLE_EXTENSIONS:
+            if lower_name.endswith(ext):
+                filename = filename[:-len(ext)]
+                lower_name = lower_name[:-len(ext)]
+                break
+        else:
+            return None  # Not a subtitle file
+
+        # Strip optional language code (e.g., .en, .es, .pt-br, .zh-hans)
+        lang_pattern = r'\.[a-z]{2,3}(-[a-z]{2,4})?$'
+        match = re.search(lang_pattern, lower_name, re.IGNORECASE)
+        if match:
+            filename = filename[:match.start()]
+
+        # Try common video extensions
+        video_extensions = ['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.flv', '.mov', '.ts']
+        for vext in video_extensions:
+            candidate = os.path.join(directory, filename + vext)
+            if os.path.exists(candidate):
+                return candidate
+
+        return None
+
+    def enrich_media_info(self, cache_file_path: str, media_type: Optional[str] = None,
+                          episode_info: Optional[Dict] = None) -> None:
+        """Enrich an existing entry with media type metadata.
+
+        Only updates fields that are currently None/missing. Used to backfill
+        metadata on pre-existing cached files when they appear in OnDeck/Watchlist.
+        Does nothing if the entry doesn't exist or already has media_type set.
+
+        Args:
+            cache_file_path: The path to the cached file.
+            media_type: "episode" or "movie".
+            episode_info: For episodes, dict with 'show', 'season', 'episode' keys.
+        """
+        if media_type is None:
+            return
+        with self._lock:
+            entry = self._timestamps.get(cache_file_path)
+            if entry is None or not isinstance(entry, dict):
+                return
+            if entry.get("media_type") is not None:
+                return  # Already has metadata, don't overwrite
+            entry["media_type"] = media_type
+            if episode_info is not None:
+                entry["episode_info"] = episode_info
+            self._save()
+            logging.debug(f"Enriched media info for: {cache_file_path} (type: {media_type})")
+
     def cleanup_missing_files(self) -> int:
         """Remove entries for files that no longer exist on cache.
+
+        Also prunes missing subtitle files from parent entries' subtitle lists
+        and updates the reverse index.
 
         Returns:
             Number of entries removed.
@@ -506,11 +872,37 @@ class CacheTimestampTracker:
         with self._lock:
             missing = [path for path in self._timestamps if not os.path.exists(path)]
             for path in missing:
+                # If parent with subtitles, clear reverse index
+                entry = self._timestamps[path]
+                if isinstance(entry, dict) and "subtitles" in entry:
+                    for sub_path in entry["subtitles"]:
+                        self._subtitle_to_parent.pop(sub_path, None)
                 del self._timestamps[path]
-            if missing:
+
+            # Prune missing subtitle files from remaining parent entries
+            missing_subs = 0
+            for path, entry in self._timestamps.items():
+                if isinstance(entry, dict) and "subtitles" in entry:
+                    original_count = len(entry["subtitles"])
+                    entry["subtitles"] = [s for s in entry["subtitles"] if os.path.exists(s)]
+                    removed_count = original_count - len(entry["subtitles"])
+                    if removed_count > 0:
+                        missing_subs += removed_count
+                        # Update reverse index
+                        for sub_path in list(self._subtitle_to_parent):
+                            if self._subtitle_to_parent[sub_path] == path and sub_path not in entry["subtitles"]:
+                                del self._subtitle_to_parent[sub_path]
+                    if not entry["subtitles"]:
+                        del entry["subtitles"]
+
+            total_removed = len(missing) + missing_subs
+            if total_removed:
                 self._save()
-                logging.info(f"Cleaned up {len(missing)} stale timestamp entries")
-            return len(missing)
+                if missing_subs:
+                    logging.info(f"[CACHE] Cleaned up {len(missing)} stale timestamp entries and {missing_subs} missing subtitle references")
+                else:
+                    logging.info(f"[CACHE] Cleaned up {len(missing)} stale timestamp entries")
+            return total_removed
 
 
 class WatchlistTracker(JSONTracker):
@@ -538,7 +930,8 @@ class WatchlistTracker(JSONTracker):
         """
         super().__init__(tracker_file, "watchlist")
 
-    def update_entry(self, file_path: str, username: str, watchlisted_at: Optional[datetime]) -> None:
+    def update_entry(self, file_path: str, username: str, watchlisted_at: Optional[datetime],
+                     rating_key: Optional[str] = None) -> None:
         """Update or create an entry for a watchlist item.
 
         If the item already exists and the new watchlisted_at is more recent,
@@ -548,6 +941,7 @@ class WatchlistTracker(JSONTracker):
             file_path: The path to the media file.
             username: The user who has this on their watchlist.
             watchlisted_at: When the user added it to their watchlist (from Plex API).
+            rating_key: Plex rating key for upgrade tracking (None to leave unchanged).
         """
         with self._lock:
             now_iso = datetime.now().isoformat()
@@ -577,6 +971,10 @@ class WatchlistTracker(JSONTracker):
                     else:
                         entry['watchlisted_at'] = new_ts_iso
 
+                # Store rating_key if provided (never overwrite with None)
+                if rating_key is not None:
+                    entry['rating_key'] = rating_key
+
                 # Always update last_seen
                 entry['last_seen'] = now_iso
             else:
@@ -586,11 +984,14 @@ class WatchlistTracker(JSONTracker):
                     watchlisted_at_iso = watchlisted_at_naive.isoformat()
                 else:
                     watchlisted_at_iso = now_iso
-                self._data[file_path] = {
+                new_entry = {
                     'watchlisted_at': watchlisted_at_iso,
                     'users': [username],
                     'last_seen': now_iso
                 }
+                if rating_key is not None:
+                    new_entry['rating_key'] = rating_key
+                self._data[file_path] = new_entry
                 logging.debug(f"[USER:{username}] Added new watchlist entry: {file_path}")
 
             self._save()
@@ -675,6 +1076,10 @@ class OnDeckTracker(JSONTracker):
             "users": ["Brandon", "Home"],
             "first_seen": "2025-12-01T10:00:00.000000",
             "last_seen": "2025-12-03T10:00:00.000000",
+            "user_first_seen": {
+                "Brandon": "2025-12-01T10:00:00.000000",
+                "Home": "2025-12-03T10:00:00.000000"
+            },
             "episode_info": {
                 "show": "Foundation",
                 "season": 2,
@@ -689,6 +1094,7 @@ class OnDeckTracker(JSONTracker):
     - users: All users who have this file in their OnDeck queue (current or prefetched)
     - first_seen: When item was first added to OnDeck (for staleness calculation)
     - last_seen: When item was last seen during a scan
+    - user_first_seen: Per-user first_seen timestamps (for per-user retention expiry)
     - episode_info: For TV episodes, contains show/season/episode and whether this is
                    the actual OnDeck episode vs a prefetched next episode
     - ondeck_users: Users for whom this is the CURRENT OnDeck episode (not prefetched)
@@ -702,9 +1108,32 @@ class OnDeckTracker(JSONTracker):
         """
         super().__init__(tracker_file, "OnDeck")
 
+    def _post_load(self) -> None:
+        """Build the rating_key reverse index after loading data from disk."""
+        self._rating_key_index = {}
+        for file_path, entry in self._data.items():
+            rk = entry.get('rating_key')
+            if rk:
+                self._rating_key_index[rk] = file_path
+
+    def find_by_rating_key(self, rating_key: str) -> Optional[str]:
+        """Find a file path by its Plex rating key.
+
+        Args:
+            rating_key: The Plex rating key to look up.
+
+        Returns:
+            The file path associated with the rating key, or None.
+        """
+        with self._lock:
+            if not hasattr(self, '_rating_key_index'):
+                self._rating_key_index = {}
+            return self._rating_key_index.get(rating_key)
+
     def update_entry(self, file_path: str, username: str,
                      episode_info: Optional[Dict[str, any]] = None,
-                     is_current_ondeck: bool = False) -> None:
+                     is_current_ondeck: bool = False,
+                     rating_key: Optional[str] = None) -> None:
         """Update or create an entry for an OnDeck item.
 
         Args:
@@ -712,9 +1141,18 @@ class OnDeckTracker(JSONTracker):
             username: The user who has this on their OnDeck.
             episode_info: For TV episodes, dict with 'show', 'season', 'episode' keys.
             is_current_ondeck: True if this is the actual OnDeck episode (not prefetched next).
+            rating_key: Plex rating key for upgrade tracking (None to leave unchanged).
         """
         with self._lock:
             now_iso = datetime.now().isoformat()
+
+            # Track that this entry was seen this run (for cleanup_unseen)
+            if hasattr(self, '_seen_this_run'):
+                self._seen_this_run.add(file_path)
+
+            # Ensure rating_key index exists
+            if not hasattr(self, '_rating_key_index'):
+                self._rating_key_index = {}
 
             if file_path in self._data:
                 entry = self._data[file_path]
@@ -726,11 +1164,20 @@ class OnDeckTracker(JSONTracker):
                 # Backfill first_seen for existing entries (migration)
                 if 'first_seen' not in entry:
                     entry['first_seen'] = now_iso
+                # Per-user first_seen (for per-user retention expiry)
+                ufs = entry.setdefault('user_first_seen', {})
+                if username not in ufs:
+                    ufs[username] = now_iso
 
                 # Track ondeck_users separately (users for whom this is current ondeck)
                 if is_current_ondeck:
                     if username not in entry.get('ondeck_users', []):
                         entry.setdefault('ondeck_users', []).append(username)
+
+                # Store rating_key if provided (never overwrite with None)
+                if rating_key is not None:
+                    entry['rating_key'] = rating_key
+                    self._rating_key_index[rating_key] = file_path
 
                 # Update episode_info if provided and not already set, or update is_current_ondeck
                 if episode_info:
@@ -749,10 +1196,14 @@ class OnDeckTracker(JSONTracker):
                 new_entry = {
                     'users': [username],
                     'first_seen': now_iso,
-                    'last_seen': now_iso
+                    'last_seen': now_iso,
+                    'user_first_seen': {username: now_iso}
                 }
                 if is_current_ondeck:
                     new_entry['ondeck_users'] = [username]
+                if rating_key is not None:
+                    new_entry['rating_key'] = rating_key
+                    self._rating_key_index[rating_key] = file_path
                 if episode_info:
                     new_entry['episode_info'] = {
                         'show': episode_info.get('show'),
@@ -840,16 +1291,41 @@ class OnDeckTracker(JSONTracker):
         positions.sort()
         return positions[0]
 
-    def clear_for_run(self) -> None:
-        """Clear all entries at the start of a run.
+    def remove_entry(self, file_path: str) -> None:
+        """Remove a file's tracker entry and clean up the rating_key index.
 
-        OnDeck status is ephemeral - items are only OnDeck for the current run.
-        This is called at the start of each run to reset the tracker.
+        Args:
+            file_path: The path to the file.
         """
         with self._lock:
-            self._data = {}
-            self._save()
-            logging.debug("Cleared OnDeck tracker for new run")
+            if file_path in self._data:
+                entry = self._data[file_path]
+                # Clean up rating_key index
+                rk = entry.get('rating_key')
+                if rk and hasattr(self, '_rating_key_index'):
+                    self._rating_key_index.pop(rk, None)
+                del self._data[file_path]
+                self._save()
+                logging.debug(f"Removed {self._tracker_name} entry for: {file_path}")
+
+    def prepare_for_run(self) -> None:
+        """Prepare tracker for a new run while preserving first_seen timestamps.
+
+        Clears per-run fields (users, ondeck_users, episode_info) on all entries
+        so they can be repopulated by update_entry() calls. Initializes the
+        _seen_this_run set to track which entries are refreshed this run.
+
+        Unlike the old clear_for_run(), this does NOT delete entries — first_seen
+        timestamps are preserved so OnDeck retention can accumulate correctly.
+        """
+        with self._lock:
+            self._seen_this_run = set()
+            for file_path, entry in self._data.items():
+                entry['users'] = []
+                entry['ondeck_users'] = []
+                entry.pop('episode_info', None)
+            # Don't save yet — update_entry() calls will save as entries are refreshed
+            logging.debug("Prepared OnDeck tracker for new run (preserved first_seen timestamps)")
 
     def cleanup_stale_entries(self, max_days_since_seen: int = 1) -> int:
         """Remove entries that haven't been seen recently.
@@ -879,6 +1355,10 @@ class OnDeckTracker(JSONTracker):
                     stale.append(path)
 
             for path in stale:
+                # Clean up rating_key index
+                rk = self._data[path].get('rating_key')
+                if rk and hasattr(self, '_rating_key_index'):
+                    self._rating_key_index.pop(rk, None)
                 del self._data[path]
 
             if stale:
@@ -886,6 +1366,107 @@ class OnDeckTracker(JSONTracker):
                 logging.debug(f"Cleaned up {len(stale)} stale OnDeck tracker entries")
 
             return len(stale)
+
+    def cleanup_unseen(self) -> int:
+        """Remove entries not seen during the current run.
+
+        Called after all update_entry() calls to remove items that fell off
+        OnDeck naturally (no longer reported by Plex for any user).
+        Also trims user_first_seen on surviving entries to only include
+        current users.
+
+        Returns:
+            Number of entries removed.
+        """
+        with self._lock:
+            seen = getattr(self, '_seen_this_run', None)
+            if seen is None:
+                # prepare_for_run() wasn't called, skip cleanup
+                return 0
+
+            unseen = [path for path in self._data if path not in seen]
+            for path in unseen:
+                # Clean up rating_key index
+                rk = self._data[path].get('rating_key')
+                if rk and hasattr(self, '_rating_key_index'):
+                    self._rating_key_index.pop(rk, None)
+                del self._data[path]
+
+            # Trim user_first_seen on surviving entries to only include current users
+            for path, entry in self._data.items():
+                ufs = entry.get('user_first_seen')
+                if ufs:
+                    current_users = set(entry.get('users', []))
+                    stale_users = [u for u in ufs if u not in current_users]
+                    for u in stale_users:
+                        del ufs[u]
+
+            if unseen:
+                self._save()
+                logging.debug(f"Removed {len(unseen)} OnDeck entries no longer on any user's OnDeck")
+
+            return len(unseen)
+
+    def is_expired(self, file_path: str, retention_days: float) -> bool:
+        """Check if an OnDeck item has expired based on per-user retention.
+
+        An item only expires when ALL current users have exceeded the retention
+        period. If ANY user is still within retention, the item stays protected.
+
+        Args:
+            file_path: The path to the media file.
+            retention_days: Number of days before expiry. 0 = disabled.
+
+        Returns:
+            True if all current users have exceeded retention_days.
+            Returns False if disabled, no entry exists, no users, or any
+            user is still within retention.
+        """
+        if retention_days <= 0:
+            return False
+
+        with self._lock:
+            entry = self._data.get(file_path)
+            if entry is None:
+                return False
+
+            now = datetime.now()
+            current_users = entry.get('users', [])
+            user_first_seen = entry.get('user_first_seen', {})
+
+            if not current_users:
+                return False  # No users = conservative, don't expire
+
+            filename = os.path.basename(file_path)
+            max_age = 0.0
+
+            for user in current_users:
+                ufs_str = user_first_seen.get(user)
+                if not ufs_str:
+                    # Migration: no per-user data, fall back to file-level first_seen
+                    ufs_str = entry.get('first_seen')
+                if not ufs_str:
+                    return False  # No timestamp = conservative
+
+                try:
+                    first_seen = datetime.fromisoformat(ufs_str)
+                    age_days = (now - first_seen).total_seconds() / 86400
+                    max_age = max(max_age, age_days)
+                    if age_days <= retention_days:
+                        logging.debug(
+                            f"OnDeck retention: {filename} kept alive by {user} "
+                            f"({age_days:.1f} days <= {retention_days} days)"
+                        )
+                        return False  # This user is still within retention
+                except (ValueError, TypeError):
+                    return False  # Bad timestamp = conservative
+
+            # All current users exceeded retention
+            logging.debug(
+                f"OnDeck retention expired for all {len(current_users)} user(s) "
+                f"({max_age:.1f} days > {retention_days} days): {filename}"
+            )
+            return True
 
 
 # Priority score ranges for UI display and documentation
@@ -945,12 +1526,14 @@ class CachePriorityManager:
         self.ondeck_tracker = ondeck_tracker
         self.eviction_min_priority = eviction_min_priority
         self.number_episodes = number_episodes
+        self.active_ondeck_paths: Optional[Set[str]] = None  # Set by app when retention is enabled
 
     def calculate_priority(self, cache_path: str) -> int:
         """Calculate 0-100 priority score for a cached file.
 
         Higher score = more likely to be watched soon = keep longer.
         Lower score = evict first when space is needed.
+        Subtitle files delegate to their parent video's score.
 
         Eviction philosophy: Watchlist items evicted first, OnDeck protected.
 
@@ -960,6 +1543,12 @@ class CachePriorityManager:
         Returns:
             Priority score between 0 and 100.
         """
+        # Subtitle delegation: use parent's priority so they're evicted together
+        if is_subtitle_file(cache_path):
+            parent = self.timestamp_tracker.find_parent_video(cache_path)
+            if parent:
+                return self.calculate_priority(parent)
+
         score = 50  # Base score
 
         # Factor 1: Source Type (+15 for ondeck, +0 for watchlist)
@@ -1028,7 +1617,11 @@ class CachePriorityManager:
         # Factor 6: Episode Position (+15 for current OnDeck, +10 for next X episodes, 0 otherwise)
         # Current/next episodes in a series get higher priority
         # X = half of number_episodes setting (so if prefetching 5 episodes, prioritize next 2-3)
-        if self._is_tv_episode(cache_path):
+        # Only award bonus if item is actively protected (not expired from ondeck retention)
+        # active_ondeck_paths=None means retention is disabled, so all ondeck items get bonus
+        if self._is_tv_episode(cache_path) and (
+            self.active_ondeck_paths is None or cache_path in self.active_ondeck_paths
+        ):
             episodes_ahead = self._get_episodes_ahead_of_ondeck(cache_path)
             if episodes_ahead >= 0:  # -1 means not applicable
                 if episodes_ahead == 0:
@@ -1289,8 +1882,10 @@ class CachePriorityManager:
             - 1-N: Number of episodes ahead
             - -1: Not a TV episode, or no OnDeck position found for this show
         """
-        # Get episode info for this file
+        # Get episode info for this file (try OnDeck first, then persistent tracker)
         ep_info = self.ondeck_tracker.get_episode_info(cache_path)
+        if not ep_info:
+            ep_info = self.timestamp_tracker.get_episode_info(cache_path)
         if not ep_info:
             return -1  # Not a TV episode or no info available
 
@@ -1335,14 +1930,24 @@ class CachePriorityManager:
     def _is_tv_episode(self, cache_path: str) -> bool:
         """Check if a cached file is a TV episode.
 
+        Checks OnDeckTracker first (current run), then CacheTimestampTracker
+        (persistent metadata from Plex API).
+
         Args:
             cache_path: Path to the cached file.
 
         Returns:
             True if this is a TV episode with episode info, False otherwise.
         """
+        # Check OnDeckTracker (current run)
         ep_info = self.ondeck_tracker.get_episode_info(cache_path)
-        return ep_info is not None and ep_info.get('show') is not None
+        if ep_info is not None and ep_info.get('show') is not None:
+            return True
+        # Check CacheTimestampTracker (persistent Plex API metadata)
+        mt = self.timestamp_tracker.get_media_type(cache_path)
+        if mt is not None:
+            return mt == "episode"
+        return False
 
 
 class PlexcachedMigration:
@@ -1563,7 +2168,7 @@ class PlexcachedMigration:
                         del self._active_files[thread_id]
                     self._print_progress()
                 # Log to file (outside lock for performance)
-                logging.info(f"Migrated: {filename} ({format_bytes(file_size)})")
+                logging.info(f"[MIGRATION] Migrated: {filename} ({format_bytes(file_size)})")
                 return 0
             else:
                 logging.error(f"Failed to verify: {plexcached_file}")
@@ -1614,32 +2219,32 @@ class PlexcachedMigration:
             Tuple of (files_migrated, files_skipped, errors)
         """
         if not self.needs_migration():
-            logging.info("Migration already complete, skipping")
+            logging.info("[MIGRATION] Migration already complete, skipping")
             return 0, 0, 0
 
         # Read and deduplicate exclude file
         cache_files, duplicates_removed = self._read_exclude_file()
 
         if not cache_files:
-            logging.info("No exclude file or empty, nothing to migrate")
+            logging.info("[MIGRATION] No exclude file or empty, nothing to migrate")
             self._mark_complete()
             return 0, 0, 0
 
-        logging.info("=== PlexCache-D Migration ===")
+        logging.info("[MIGRATION] === PlexCache-D Migration ===")
         if duplicates_removed > 0:
-            logging.info(f"Removed {duplicates_removed} duplicate entries from exclude list")
-        logging.info(f"Checking {len(cache_files)} unique files in exclude list...")
+            logging.info(f"[MIGRATION] Removed {duplicates_removed} duplicate entries from exclude list")
+        logging.info(f"[MIGRATION] Checking {len(cache_files)} unique files in exclude list...")
 
         # Find files that need migration
         files_needing_migration, total_bytes = self._find_files_needing_migration(cache_files)
 
         if not files_needing_migration:
-            logging.info("All files already have backups, no migration needed")
+            logging.info("[MIGRATION] All files already have backups, no migration needed")
             self._mark_complete()
             return 0, len(cache_files), 0
 
         total_gb = total_bytes / (1024 ** 3)
-        logging.info(f"Found {len(files_needing_migration)} files needing .plexcached backup ({total_gb:.2f} GB)")
+        logging.info(f"[MIGRATION] Found {len(files_needing_migration)} files needing .plexcached backup ({total_gb:.2f} GB)")
 
         if dry_run:
             logging.info("[DRY RUN] Would create the following backups:")
@@ -1648,7 +2253,7 @@ class PlexcachedMigration:
             return 0, 0, 0
 
         # Perform migration with progress tracking
-        logging.info(f"Starting migration with {max_concurrent} concurrent copies...")
+        logging.info(f"[MIGRATION] Starting migration with {max_concurrent} concurrent copies...")
 
         # Initialize thread-safe counters
         self._migration_lock = threading.Lock()
@@ -1673,12 +2278,12 @@ class PlexcachedMigration:
         skipped = len(cache_files) - len(files_needing_migration)
 
         if self._critical_error:
-            logging.info(f"=== Migration Stopped (Critical Error) ===")
+            logging.info(f"[MIGRATION] === Migration Stopped (Critical Error) ===")
         else:
-            logging.info(f"=== Migration Complete ===")
-        logging.info(f"  Migrated: {migrated} files")
-        logging.info(f"  Skipped (already had backup): {skipped} files")
-        logging.info(f"  Errors: {errors}")
+            logging.info(f"[MIGRATION] === Migration Complete ===")
+        logging.info(f"[MIGRATION]   Migrated: {migrated} files")
+        logging.info(f"[MIGRATION]   Skipped (already had backup): {skipped} files")
+        logging.info(f"[MIGRATION]   Errors: {errors}")
 
         if errors == 0:
             self._mark_complete()
@@ -1695,7 +2300,7 @@ class PlexcachedMigration:
         try:
             with open(self.flag_file, 'w') as f:
                 f.write(f"Migration completed: {datetime.now().isoformat()}\n")
-            logging.info(f"Migration flag created: {self.flag_file}")
+            logging.info(f"[MIGRATION] Migration flag created: {self.flag_file}")
         except IOError as e:
             logging.error(f"Could not create migration flag: {type(e).__name__}: {e}")
 
@@ -1833,7 +2438,7 @@ class MultiPathModifier:
             library_hint = f"/{path_parts[0]}/"
         else:
             library_hint = plex_path
-        logging.info(f"Skipping unmapped path {library_hint} - add to path_mappings with enabled:false to silence")
+        logging.info(f"[CONFIG] Skipping unmapped path {library_hint} - add to path_mappings with enabled:false to silence")
         logging.debug(f"Full unmapped path: {plex_path}")
         return (plex_path, None)
 
@@ -1963,7 +2568,7 @@ class MultiPathModifier:
         if self._accumulated_disabled_skips:
             total_skipped = sum(self._accumulated_disabled_skips.values())
             mapping_names = ', '.join(sorted(self._accumulated_disabled_skips.keys()))
-            logging.info(f"Skipped {total_skipped} files from disabled libraries ({mapping_names})")
+            logging.info(f"[FILTER] Skipped {total_skipped} files from disabled libraries ({mapping_names})")
             self._accumulated_disabled_skips = {}
 
     def get_mapping_stats(self) -> Dict[str, Dict[str, any]]:
@@ -1992,27 +2597,55 @@ class SubtitleFinder:
             subtitle_extensions = [".srt", ".vtt", ".sbv", ".sub", ".idx"]
         self.subtitle_extensions = subtitle_extensions
     
-    def get_media_subtitles(self, media_files: List[str], files_to_skip: Optional[Set[str]] = None) -> List[str]:
-        """Get subtitle files for media files."""
-        logging.debug("Fetching subtitles...")
-        
+    def get_media_subtitles_grouped(self, media_files: List[str], files_to_skip: Optional[Set[str]] = None) -> Dict[str, List[str]]:
+        """Get subtitle files grouped by their parent video file.
+
+        Args:
+            media_files: List of media file paths.
+            files_to_skip: Set of file paths to skip.
+
+        Returns:
+            Dict mapping each video path to its list of subtitle paths.
+            Videos without subtitles have an empty list.
+        """
+        logging.debug("Fetching subtitles (grouped)...")
+
         files_to_skip = set() if files_to_skip is None else set(files_to_skip)
         processed_files = set()
-        all_media_files = media_files.copy()
-        
+        result: Dict[str, List[str]] = {}
+
         for file in media_files:
             if file in files_to_skip or file in processed_files:
                 continue
             processed_files.add(file)
-            
+
+            subtitle_files = []
             directory_path = os.path.dirname(file)
             if os.path.exists(directory_path):
                 subtitle_files = self._find_subtitle_files(directory_path, file)
-                all_media_files.extend(subtitle_files)
                 for subtitle_file in subtitle_files:
                     logging.debug(f"Subtitle found: {subtitle_file}")
 
-        return all_media_files
+            result[file] = subtitle_files
+
+        return result
+
+    def get_media_subtitles(self, media_files: List[str], files_to_skip: Optional[Set[str]] = None) -> List[str]:
+        """Get subtitle files for media files (flat list including originals).
+
+        Args:
+            media_files: List of media file paths.
+            files_to_skip: Set of file paths to skip.
+
+        Returns:
+            List of all media files plus their subtitle files.
+        """
+        logging.debug("Fetching subtitles...")
+        grouped = self.get_media_subtitles_grouped(media_files, files_to_skip)
+        all_files = list(media_files)
+        for subs in grouped.values():
+            all_files.extend(subs)
+        return all_files
     
     def _find_subtitle_files(self, directory_path: str, file: str) -> List[str]:
         """Find subtitle files in a directory for a given media file."""
@@ -2046,7 +2679,9 @@ class FileFilter:
                  ondeck_tracker: Optional['OnDeckTracker'] = None,
                  watchlist_tracker: Optional['WatchlistTracker'] = None,
                  path_modifier: Optional['MultiPathModifier'] = None,
-                 is_docker: bool = False):
+                 is_docker: bool = False,
+                 use_symlinks: bool = False,
+                 dry_run: bool = False):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
@@ -2057,7 +2692,79 @@ class FileFilter:
         self.watchlist_tracker = watchlist_tracker
         self.path_modifier = path_modifier  # For multi-path support
         self.is_docker = is_docker  # For path translation in Docker
+        self.use_symlinks = use_symlinks  # Whether to create/preserve symlinks at original locations
+        self.dry_run = dry_run  # Skip all file operations when True
         self.last_already_cached_count = 0  # Track files already on cache during filtering
+        self._media_info_map = {}  # Plex media type info (set via set_media_info_map)
+
+    def set_media_info_map(self, media_info_map: Dict[str, Dict]) -> None:
+        """Set the media info map for metadata-first classification.
+
+        Args:
+            media_info_map: Dict mapping file paths to {'media_type': str, 'episode_info': dict|None}.
+        """
+        self._media_info_map = media_info_map or {}
+
+    def _lookup_media_info(self, file_path: str) -> Optional[Tuple[str, Optional[Dict]]]:
+        """Look up media type from available sources (trackers > regex fallback).
+
+        Checks subtitle parent delegation first, then OnDeckTracker (current run),
+        media_info_map (watchlist), and CacheTimestampTracker (persistent) in order
+        of authority.
+
+        Args:
+            file_path: Path to the media file.
+
+        Returns:
+            Tuple of (media_type, episode_info) if found, None for regex fallback.
+        """
+        # 0. Subtitle delegation: if this is a subtitle with a tracked parent, use parent's info
+        if is_subtitle_file(file_path) and self.timestamp_tracker:
+            parent = self.timestamp_tracker.find_parent_video(file_path)
+            if parent:
+                return self._lookup_media_info(parent)
+
+        # 1. OnDeckTracker (current run, most authoritative for OnDeck items)
+        if self.ondeck_tracker:
+            ep_info = self.ondeck_tracker.get_episode_info(file_path)
+            if ep_info is not None:
+                return ("episode", ep_info)
+            # Check if it's a known entry without episode_info (movie)
+            entry = self.ondeck_tracker.get_entry(file_path)
+            if entry is not None and 'episode_info' not in entry:
+                return ("movie", None)
+
+        # 2. media_info_map (covers watchlist items not yet cached)
+        if self._media_info_map:
+            info = self._media_info_map.get(file_path)
+            if info and info.get("media_type"):
+                return (info["media_type"], info.get("episode_info"))
+
+        # 3. CacheTimestampTracker (persistent, covers cached files from prior runs)
+        if self.timestamp_tracker:
+            mt = self.timestamp_tracker.get_media_type(file_path)
+            if mt:
+                return (mt, self.timestamp_tracker.get_episode_info(file_path))
+
+        return None  # Caller falls back to regex
+
+    def _create_symlink(self, symlink_path: str, target_path: str) -> bool:
+        """Create a symlink at symlink_path pointing to target_path.
+
+        Non-fatal: logs warning on failure, returns False.
+        """
+        try:
+            if os.path.islink(symlink_path):
+                os.remove(symlink_path)
+            parent_dir = os.path.dirname(symlink_path)
+            if parent_dir and not os.path.isdir(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+            os.symlink(target_path, symlink_path)
+            logging.debug(f"Created symlink: {symlink_path} -> {target_path}")
+            return True
+        except OSError as e:
+            logging.warning(f"Could not create symlink at {symlink_path}: {e}")
+            return False
 
     def _translate_to_host_path(self, cache_path: str) -> str:
         """Translate container cache path to host cache path for exclude file.
@@ -2144,10 +2851,6 @@ class FileFilter:
         cache_files_to_exclude = []
         cache_files_removed = []  # Track cache files removed during filtering
 
-        # Reset already-cached counter for this filter run
-        if destination == 'cache':
-            self.last_already_cached_count = 0
-
         if not files:
             return []
 
@@ -2186,7 +2889,7 @@ class FileFilter:
 
         # Log non-cacheable files summary
         if non_cacheable_count > 0:
-            logging.info(f"Skipped {non_cacheable_count} files from non-cacheable path mappings")
+            logging.info(f"[FILTER] Skipped {non_cacheable_count} files from non-cacheable path mappings")
 
         return media_to
     
@@ -2230,14 +2933,18 @@ class FileFilter:
         array_file = get_array_direct_path(file) if self.is_unraid else file
         array_path = os.path.dirname(array_file)
 
-        # Check if exact file already exists on array
-        if os.path.isfile(array_file):
+        # Check if exact file already exists on array (symlinks don't count — they point to cache)
+        # Guard: If .plexcached exists, the original was renamed — don't trust the existence
+        # check (on ZFS Unraid, /mnt/user0/ FUSE can show cache files as array files).
+        # Let _move_to_array() handle the restore properly.
+        plexcached_on_array = array_file + PLEXCACHED_EXTENSION
+        if os.path.isfile(array_file) and not os.path.islink(array_file) and not os.path.isfile(plexcached_on_array):
             # File already exists in the array - check if there's a cache version to clean up
             cache_removed = False
             if os.path.isfile(cache_file_name):
                 try:
                     os.remove(cache_file_name)
-                    logging.info(f"Removed orphaned cache file (array copy exists): {os.path.basename(cache_file_name)}")
+                    logging.info(f"[CACHE] Removed orphaned cache file (array copy exists): {os.path.basename(cache_file_name)}")
                     cache_removed = True
                 except OSError as e:
                     logging.error(f"Failed to remove cache file {cache_file_name}: {type(e).__name__}: {e}")
@@ -2257,64 +2964,108 @@ class FileFilter:
 
         return True, False  # File should be added to the array
 
-    def _should_add_to_cache(self, file: str, cache_file_name: str) -> bool:
-        """Determine if a file should be added to the cache."""
-        array_file = get_array_direct_path(file) if self.is_unraid else file
+    def protect_cached_file(self, file: str, cache_file_name: str = None) -> bool:
+        """Protect a file that is already on the cache drive.
 
-        # Check if file already exists on cache
-        if os.path.isfile(cache_file_name):
-            # File already on cache - ensure it's protected
-            self._add_to_exclude_file(cache_file_name)
+        Runs all protection side effects: adds to exclude list, records timestamp,
+        renames array original to .plexcached backup, and re-creates symlinks if enabled.
 
-            # Record timestamp if not already tracked (for retention)
-            if self.timestamp_tracker:
-                self.timestamp_tracker.record_cache_time(cache_file_name, "pre-existing")
+        Args:
+            file: The real/array path of the file.
+            cache_file_name: Optional pre-resolved cache path. If None, resolved via _get_cache_paths().
 
-            logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
+        Returns:
+            True if the file is on cache and was protected, False if not on cache.
+        """
+        if cache_file_name is None:
+            _, cache_file_name = self._get_cache_paths(file)
+            if cache_file_name is None:
+                return False
 
-            # Track count of files already on cache
-            self.last_already_cached_count += 1
-
-            # If array version also exists, rename it to .plexcached (preserve as backup)
-            # This ensures we have a recovery option if the cache drive fails
-            #
-            # Defense in depth: If array_file is a /mnt/user/ path (ZFS, no conversion),
-            # probe /mnt/user0/ to verify a real array copy exists. On hybrid ZFS shares,
-            # /mnt/user/ shows the cache file through FUSE — operating on it would destroy
-            # the only copy.
-            actual_array_file = array_file
-            if array_file.startswith('/mnt/user/'):
-                user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
-                if os.path.isfile(user0_path):
-                    actual_array_file = user0_path
-                elif os.path.exists('/mnt/user0'):
-                    # /mnt/user0 exists but file not there — FUSE is showing cache file
-                    logging.debug(f"Skipping array backup: file not at {user0_path} (FUSE/cache only)")
-                    actual_array_file = None
-
-            if actual_array_file and os.path.isfile(actual_array_file):
-                plexcached_file = actual_array_file + PLEXCACHED_EXTENSION
-                # Only rename if .plexcached doesn't already exist
-                if not os.path.isfile(plexcached_file):
-                    try:
-                        os.rename(actual_array_file, plexcached_file)
-                        logging.info(f"Created backup of array file: {os.path.basename(plexcached_file)}")
-                    except FileNotFoundError:
-                        pass  # File already removed
-                    except OSError as e:
-                        logging.error(f"Failed to create backup of array file {actual_array_file}: {type(e).__name__}: {e}")
-                else:
-                    # .plexcached backup already exists, safe to remove duplicate array file
-                    try:
-                        os.remove(actual_array_file)
-                        logging.debug(f"Removed redundant array file (backup exists): {os.path.basename(actual_array_file)}")
-                    except FileNotFoundError:
-                        pass
-                    except OSError as e:
-                        logging.error(f"Failed to remove array file {actual_array_file}: {type(e).__name__}: {e}")
-
+        if not os.path.isfile(cache_file_name):
             return False
 
+        array_file = get_array_direct_path(file) if self.is_unraid else file
+
+        # Track count of files already on cache (always, even in dry-run)
+        self.last_already_cached_count += 1
+
+        # In dry-run mode, skip all file operations — only count and log
+        if self.dry_run:
+            logging.debug(f"[DRY RUN] File already on cache: {os.path.basename(cache_file_name)}")
+            return True
+
+        # Add to exclude list so Unraid mover doesn't move it back
+        self._add_to_exclude_file(cache_file_name)
+
+        # Record timestamp if not already tracked (for retention)
+        if self.timestamp_tracker:
+            self.timestamp_tracker.record_cache_time(cache_file_name, "pre-existing")
+
+        # Mark as cached in OnDeck/Watchlist trackers
+        if self.ondeck_tracker:
+            self.ondeck_tracker.mark_cached(file, "pre-existing")
+        if self.watchlist_tracker:
+            self.watchlist_tracker.mark_cached(file, "pre-existing")
+
+        logging.debug(f"File already on cache, added to exclude list: {os.path.basename(cache_file_name)}")
+
+        # If array version also exists, rename it to .plexcached (preserve as backup)
+        # This ensures we have a recovery option if the cache drive fails
+        #
+        # Defense in depth: If array_file is a /mnt/user/ path (ZFS, no conversion),
+        # probe /mnt/user0/ to verify a real array copy exists. On hybrid ZFS shares,
+        # /mnt/user/ shows the cache file through FUSE — operating on it would destroy
+        # the only copy.
+        actual_array_file = array_file
+        if array_file.startswith('/mnt/user/'):
+            user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
+            if os.path.isfile(user0_path):
+                actual_array_file = user0_path
+            elif os.path.exists('/mnt/user0'):
+                # /mnt/user0 exists but file not there — FUSE is showing cache file
+                logging.debug(f"Skipping array backup: file not at {user0_path} (FUSE/cache only)")
+                actual_array_file = None
+
+        # Symlinks don't count as real array files — they point to the cache copy
+        if actual_array_file and os.path.isfile(actual_array_file) and not os.path.islink(actual_array_file):
+            plexcached_file = actual_array_file + PLEXCACHED_EXTENSION
+            # Only rename if .plexcached doesn't already exist
+            if not os.path.isfile(plexcached_file):
+                try:
+                    os.rename(actual_array_file, plexcached_file)
+                    logging.info(f"[PLEXCACHED] Created backup of array file: {os.path.basename(plexcached_file)}")
+                except FileNotFoundError:
+                    pass  # File already removed
+                except OSError as e:
+                    logging.error(f"Failed to create backup of array file {actual_array_file}: {type(e).__name__}: {e}")
+                # Create symlink at original location if enabled
+                if self.use_symlinks:
+                    self._create_symlink(array_file, cache_file_name)
+            else:
+                # .plexcached backup already exists, safe to remove duplicate array file
+                try:
+                    os.remove(actual_array_file)
+                    logging.debug(f"Removed redundant array file (backup exists): {os.path.basename(actual_array_file)}")
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    logging.error(f"Failed to remove array file {actual_array_file}: {type(e).__name__}: {e}")
+                # Create symlink at original location if enabled
+                if self.use_symlinks:
+                    self._create_symlink(array_file, cache_file_name)
+
+        # Re-create symlink if it's missing (e.g., Plex scan or manual deletion removed it)
+        if self.use_symlinks and not os.path.islink(array_file) and not os.path.isfile(array_file):
+            self._create_symlink(array_file, cache_file_name)
+
+        return True
+
+    def _should_add_to_cache(self, file: str, cache_file_name: str) -> bool:
+        """Determine if a file should be added to the cache."""
+        if os.path.isfile(cache_file_name):
+            self.protect_cached_file(file, cache_file_name)
+            return False
         return True
     
     def _get_cache_paths(self, file: str) -> Tuple[str, Optional[str]]:
@@ -2342,6 +3093,9 @@ class FileFilter:
                                   current_watchlist_items: Set[str]) -> Tuple[Dict[str, Dict[int, int]], Set[str]]:
         """Build tracking sets of media that should be kept in cache.
 
+        Uses Plex API metadata when available (from OnDeckTracker, media_info_map, or
+        CacheTimestampTracker), falling back to regex path parsing for legacy entries.
+
         Args:
             current_ondeck_items: Set of OnDeck file paths.
             current_watchlist_items: Set of watchlist file paths.
@@ -2354,12 +3108,36 @@ class FileFilter:
         needed_movies: Set[str] = set()
 
         for item in current_ondeck_items | current_watchlist_items:
+            # Try Plex API metadata first (avoids regex misclassification)
+            lookup = self._lookup_media_info(item)
+            if lookup:
+                media_type, ep_info = lookup
+                if media_type == "episode" and ep_info:
+                    show_name = ep_info.get("show")
+                    season_num = ep_info.get("season")
+                    episode_num = ep_info.get("episode")
+                    if show_name and season_num is not None and episode_num is not None:
+                        if show_name not in tv_show_min_episodes:
+                            tv_show_min_episodes[show_name] = {}
+                        if season_num not in tv_show_min_episodes[show_name]:
+                            tv_show_min_episodes[show_name][season_num] = episode_num
+                        else:
+                            tv_show_min_episodes[show_name][season_num] = min(
+                                tv_show_min_episodes[show_name][season_num], episode_num
+                            )
+                        continue
+                if media_type == "movie":
+                    media_name = self._extract_media_name(item)
+                    if media_name:
+                        needed_movies.add(media_name)
+                    continue
+
+            # Fallback: regex classification (legacy/edge cases)
             tv_info = self._extract_tv_info(item)
             if tv_info:
                 show_name, season_num, episode_num = tv_info
                 if show_name not in tv_show_min_episodes:
                     tv_show_min_episodes[show_name] = {}
-                # Keep minimum episode for each season (the "current" episode)
                 if season_num not in tv_show_min_episodes[show_name]:
                     tv_show_min_episodes[show_name][season_num] = episode_num
                 else:
@@ -2367,7 +3145,6 @@ class FileFilter:
                         tv_show_min_episodes[show_name][season_num], episode_num
                     )
             else:
-                # It's a movie
                 media_name = self._extract_media_name(item)
                 if media_name:
                     needed_movies.add(media_name)
@@ -2445,7 +3222,7 @@ class FileFilter:
         try:
             # Read exclude file
             if not os.path.exists(self.mover_cache_exclude_file):
-                logging.info("No exclude file found, nothing to move back")
+                logging.info("[RESTORE] No exclude file found, nothing to move back")
                 return files_to_move_back, stale_entries, move_back_exclude_paths
 
             with open(self.mover_cache_exclude_file, 'r') as f:
@@ -2466,8 +3243,23 @@ class FileFilter:
                     stale_entries.append(cache_file)
                     continue
 
+                # Try stored metadata first for classification (check_path matches timestamp tracker keys)
+                tv_info = None
+                lookup = self._lookup_media_info(check_path)
+                if lookup:
+                    media_type, ep_info = lookup
+                    if media_type == "episode" and ep_info:
+                        show = ep_info.get("show")
+                        season = ep_info.get("season")
+                        episode = ep_info.get("episode")
+                        if show and season is not None and episode is not None:
+                            tv_info = (show, season, episode)
+
+                # Fallback to regex if no stored metadata
+                if tv_info is None:
+                    tv_info = self._extract_tv_info(cache_file)
+
                 # Determine if file should be kept
-                tv_info = self._extract_tv_info(cache_file)
                 if tv_info:
                     show_name, season_num, episode_num = tv_info
                     if self._is_tv_episode_still_needed(show_name, season_num, episode_num, tv_show_min_episodes):
@@ -2541,7 +3333,7 @@ class FileFilter:
 
             for i, part in enumerate(path_parts):
                 # Match Season folders
-                season_match = re.match(r'^(Season|Series)\s*(\d+)$', part, re.IGNORECASE)
+                season_match = re.match(r'^(Season|Series)\s*(\d+)', part, re.IGNORECASE)
                 if season_match:
                     season_num = int(season_match.group(2))
                     if i > 0:
@@ -2602,7 +3394,7 @@ class FileFilter:
             # Check if this is a TV show
             for i, part in enumerate(path_parts):
                 if (
-                    re.match(r'^(Season|Series)\s*\d+$', part, re.IGNORECASE)
+                    re.match(r'^(Season|Series)\s*\d+', part, re.IGNORECASE)
                     or re.match(r'^\d+$', part)
                     or re.match(r'^Specials$', part, re.IGNORECASE)
                 ):
@@ -2748,7 +3540,7 @@ class FileFilter:
                 with open(self.mover_cache_exclude_file, 'w') as f:
                     for file_path in updated_files:
                         f.write(f"{file_path}\n")
-                logging.info(f"Cleaned up {removed_count} stale entries from exclude list")
+                logging.info(f"[EXCLUDE] Cleaned up {removed_count} stale entries from exclude list")
 
             return True
 
@@ -2797,7 +3589,7 @@ class FileFilter:
                 with open(self.mover_cache_exclude_file, 'w') as f:
                     for entry in valid_entries:
                         f.write(entry + '\n')
-                logging.info(f"Cleaned {len(stale_entries)} stale entries from exclude list")
+                logging.info(f"[EXCLUDE] Cleaned {len(stale_entries)} stale entries from exclude list")
 
             return len(stale_entries)
 
@@ -2858,7 +3650,10 @@ class FileMover:
                  create_plexcached_backups: bool = True,
                  hardlinked_files: str = "skip",
                  cleanup_empty_folders: bool = True,
-                 bytes_progress_callback: Optional[Callable[[int, int], None]] = None):
+                 use_symlinks: bool = False,
+                 bytes_progress_callback: Optional[Callable[[int, int], None]] = None,
+                 ondeck_tracker: Optional['OnDeckTracker'] = None,
+                 watchlist_tracker: Optional['WatchlistTracker'] = None):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
@@ -2871,7 +3666,10 @@ class FileMover:
         self.create_plexcached_backups = create_plexcached_backups  # Whether to create .plexcached backups
         self.hardlinked_files = hardlinked_files  # How to handle hard-linked files: "skip" or "move"
         self.cleanup_empty_folders = cleanup_empty_folders  # Whether to remove empty parent folders after moves
+        self.use_symlinks = use_symlinks  # Whether to create symlinks at original locations after caching
         self._bytes_progress_callback = bytes_progress_callback  # Byte-level progress for operation banner
+        self.ondeck_tracker = ondeck_tracker
+        self.watchlist_tracker = watchlist_tracker
         self._exclude_file_lock = threading.Lock()
         # Progress tracking
         self._progress_lock = threading.Lock()
@@ -2895,7 +3693,8 @@ class FileMover:
 
     def move_media_files(self, files: List[str], destination: str,
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
-                        source_map: Optional[Dict[str, str]] = None) -> None:
+                        source_map: Optional[Dict[str, str]] = None,
+                        media_info_map: Optional[Dict[str, Dict]] = None) -> None:
         """Move media files to the specified destination.
 
         Args:
@@ -2904,9 +3703,11 @@ class FileMover:
             max_concurrent_moves_array: Max concurrent moves to array.
             max_concurrent_moves_cache: Max concurrent moves to cache.
             source_map: Optional dict mapping file paths to their source ('ondeck' or 'watchlist').
+            media_info_map: Optional dict mapping file paths to Plex media type info.
         """
-        # Store source map for use during moves
+        # Store source map and media info map for use during moves
         self._source_map = source_map or {}
+        self._media_info_map = media_info_map or {}
         # Reset successful array moves tracker for deferred exclude list cleanup
         if destination == 'array':
             self._successful_array_moves = []
@@ -3008,7 +3809,11 @@ class FileMover:
         move = None
         if destination == 'array':
             # Check if file already exists on array (no action needed)
-            if os.path.isfile(user_file_name):
+            # A symlink to the cache file makes isfile() return True, so exclude symlinks
+            # Guard: If .plexcached exists, the original was renamed — don't trust the
+            # existence check (ZFS FUSE leak). Let _move_to_array() handle the restore.
+            plexcached_on_array = user_file_name + PLEXCACHED_EXTENSION
+            if os.path.isfile(user_file_name) and not os.path.islink(user_file_name) and not os.path.isfile(plexcached_on_array):
                 logging.debug(f"File already exists on array, skipping: {user_file_name}")
                 return None
 
@@ -3068,7 +3873,7 @@ class FileMover:
                             return None
                         else:  # hardlinked_files == "move"
                             logging.info(
-                                f"Caching hard-linked file (has {stat_info.st_nlink} links, seed copy preserved): "
+                                f"[CACHE] Caching hard-linked file (has {stat_info.st_nlink} links, seed copy preserved): "
                                 f"{os.path.basename(user_file_name)}"
                             )
                             # Track inode for potential hard-link restoration when moving back
@@ -3255,7 +4060,7 @@ class FileMover:
                     for entry in stale_entries:
                         old_name = os.path.basename(entry)
                         new_name = os.path.basename(current_cache_file)
-                        logging.info(f"Cleaned up stale exclude entry from upgrade: {old_name} -> {new_name}")
+                        logging.info(f"[EXCLUDE] Cleaned up stale exclude entry from upgrade: {old_name} -> {new_name}")
 
             except Exception as e:
                 logging.warning(f"Failed to cleanup stale exclude entries: {e}")
@@ -3426,9 +4231,14 @@ class FileMover:
 
         (src, dest), cache_file_name, file_size, original_path = move_cmd_with_cache
         filename = os.path.basename(src)
+        thread_id = threading.get_ident()
 
         # Get per-worker byte progress callback
         worker_byte_cb = self._byte_aggregator.make_worker_callback() if self._byte_aggregator else None
+
+        # Register as active before starting
+        with self._progress_lock:
+            self._active_files[thread_id] = (filename, file_size)
 
         try:
             if destination == 'cache':
@@ -3446,9 +4256,10 @@ class FileMover:
             if worker_byte_cb and result in (0, 2) and file_size > 0:
                 worker_byte_cb(file_size, file_size)
 
-            # Update tqdm progress bar
+            # Update tqdm progress bar + remove from active
             with self._progress_lock:
                 self._completed_bytes += file_size
+                self._active_files.pop(thread_id, None)
                 if self._tqdm_pbar:
                     # Update description to show data progress
                     completed_str = format_bytes(self._completed_bytes)
@@ -3459,8 +4270,9 @@ class FileMover:
 
             return result
         except Exception as e:
-            # Still update progress on error
+            # Still update progress on error + remove from active
             with self._progress_lock:
+                self._active_files.pop(thread_id, None)
                 if self._tqdm_pbar:
                     self._tqdm_pbar.update(1)
             with get_console_lock():
@@ -3497,8 +4309,15 @@ class FileMover:
         if array_file.startswith('/mnt/user/'):
             user0_path = '/mnt/user0/' + array_file[len('/mnt/user/'):]
             if os.path.isfile(user0_path):
+                logging.debug(f"Using array-direct path for .plexcached rename: {user0_path}")
                 array_file = user0_path
-            elif os.path.exists('/mnt/user0'):
+            elif not os.path.exists('/mnt/user0'):
+                raise IOError(
+                    f"Cannot safely create .plexcached backup: /mnt/user0 not accessible. "
+                    f"If running in Docker, ensure /mnt/user0 is mounted as a volume "
+                    f"(e.g., -v /mnt/user0:/mnt/user0)."
+                )
+            else:
                 # /mnt/user0 exists but file not found — no array copy to back up
                 # The file visible at /mnt/user/ is the cache copy through FUSE
                 logging.debug(f"No array copy at {user0_path}, skipping .plexcached backup")
@@ -3517,7 +4336,7 @@ class FileMover:
                 if old_plexcached and old_plexcached != plexcached_file:
                     old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
                     new_name = os.path.basename(cache_file_name)
-                    logging.info(f"Upgrade detected during cache: {old_name} -> {new_name}")
+                    logging.info(f"[CACHE] Upgrade detected during cache: {old_name} -> {new_name}")
                     os.remove(old_plexcached)
                     logging.debug(f"Deleted old .plexcached: {old_plexcached}")
                     # Build the old cache file path for exclude list cleanup
@@ -3630,18 +4449,35 @@ class FileMover:
                 if os.path.isfile(array_file):
                     raise IOError(f"Delete verification failed: array file still exists at {array_file}")
 
-            # Step 3: Add to exclude file (and remove old entry if upgrade)
+            # Step 3: Create symlink at original location for non-Unraid Plex compatibility
+            if self.use_symlinks and original_path:
+                self._create_symlink(original_path, cache_file_name)
+
+            # Step 4: Add to exclude file (and remove old entry if upgrade)
             self._add_to_exclude_file(cache_file_name)
             if old_cache_file_to_remove:
                 self._remove_from_exclude_file(old_cache_file_to_remove)
 
-            # Step 4: Record timestamp for cache retention with source info
+            # Step 4: Record timestamp for cache retention with source and media type info
             if self.timestamp_tracker:
                 # Look up source from the source map using the original path (e.g., /mnt/user/...)
                 source = self._source_map.get(original_path, "unknown") if original_path else "unknown"
                 # Include original inode for hard-linked files (for restoration)
                 original_inode = self._hardlink_inodes.get(cache_file_name)
-                self.timestamp_tracker.record_cache_time(cache_file_name, source, original_inode)
+                # Look up media type info from Plex API metadata
+                media_info = self._media_info_map.get(original_path, {}) if original_path else {}
+                self.timestamp_tracker.record_cache_time(
+                    cache_file_name, source, original_inode,
+                    media_type=media_info.get("media_type"),
+                    episode_info=media_info.get("episode_info")
+                )
+
+            # Mark as cached in OnDeck/Watchlist trackers
+            cache_source = self._source_map.get(original_path, "unknown") if original_path else "unknown"
+            if self.ondeck_tracker:
+                self.ondeck_tracker.mark_cached(original_path or cache_file_name, cache_source)
+            if self.watchlist_tracker:
+                self.watchlist_tracker.mark_cached(original_path or cache_file_name, cache_source)
 
             # Log successful move - both to logging (for web UI) and tqdm (for CLI progress bar)
             from tqdm import tqdm
@@ -3661,12 +4497,12 @@ class FileMover:
         except InterruptedError as e:
             # Copy was cancelled by stop request - clean up partial file
             logging.info(f"Copy cancelled (stop requested): {os.path.basename(cache_file_name)}")
-            self._cleanup_failed_cache_copy(array_file, cache_file_name)
+            self._cleanup_failed_cache_copy(array_file, cache_file_name, original_path)
             return 4  # Stopped by user
         except Exception as e:
             logging.error(f"Error copying to cache: {type(e).__name__}: {e}")
             # Attempt cleanup on failure
-            self._cleanup_failed_cache_copy(array_file, cache_file_name)
+            self._cleanup_failed_cache_copy(array_file, cache_file_name, original_path)
             return 1
 
     def _check_array_disk_space(self, cache_file: str, plexcached_file: str,
@@ -3833,6 +4669,11 @@ class FileMover:
             # Derive the original array file path and .plexcached path
             array_file = os.path.join(array_path, os.path.basename(cache_file))
 
+            # Remove symlink at original location before restoring (must happen before
+            # user0 conversion since on non-Unraid, array_file IS the original path)
+            if self.use_symlinks and os.path.islink(array_file):
+                self._remove_symlink(array_file)
+
             # Defense in depth: If array_path is a /mnt/user/ path (ZFS, no conversion),
             # probe /mnt/user0/ for the real array location. On hybrid ZFS shares,
             # /mnt/user/ shows the cache file through FUSE.
@@ -3840,6 +4681,7 @@ class FileMover:
                 user0_file = '/mnt/user0/' + array_file[len('/mnt/user/'):]
                 user0_plexcached = user0_file + PLEXCACHED_EXTENSION
                 if os.path.isfile(user0_file) or os.path.isfile(user0_plexcached):
+                    logging.debug(f"Using array-direct path for restore: {user0_file}")
                     array_file = user0_file
                     array_path = os.path.dirname(user0_file)
                 elif os.path.exists('/mnt/user0'):
@@ -3873,7 +4715,7 @@ class FileMover:
                 if source_file:
                     try:
                         os.link(source_file, array_file)
-                        logging.info(f"Restored hard link from seed copy: {os.path.basename(array_file)}")
+                        logging.info(f"[RESTORE] Restored hard link from seed copy: {os.path.basename(array_file)}")
                         logging.debug(f"Hard link created: {source_file} -> {array_file}")
                         # Skip to cache deletion since array file is now restored
                         if os.path.isfile(cache_file):
@@ -3900,7 +4742,7 @@ class FileMover:
                 if cache_size > 0 and cache_size != plexcached_size:
                     # In-place upgrade: same filename but different file content
                     operation_type = "Moved"  # Copy operation
-                    logging.info(f"In-place upgrade detected ({format_bytes(plexcached_size)} -> {format_bytes(cache_size)}): {os.path.basename(cache_file)}")
+                    logging.info(f"[RESTORE] In-place upgrade detected ({format_bytes(plexcached_size)} -> {format_bytes(cache_size)}): {os.path.basename(cache_file)}")
                     os.remove(plexcached_file)
                     # For Docker: translate cache path to host path for log display
                     display_src = self._translate_to_host_path(cache_file) if self.file_utils.is_docker else None
@@ -3928,19 +4770,14 @@ class FileMover:
                             return 1
                 else:
                     # Same size (or cache missing), just rename back (fast)
-                    # But first check if array file already exists (redundant backup scenario)
-                    # CRITICAL: Use /mnt/user0/ (array direct) to avoid FUSE showing cache file
-                    array_direct = get_array_direct_path(array_file)
-                    if os.path.isfile(array_direct):
-                        # Array file truly exists (verified via array-direct path)
-                        # Just delete the redundant .plexcached backup
-                        operation_type = "Restored"  # Array already has it
-                        os.remove(plexcached_file)
-                        logging.debug(f"Deleted redundant .plexcached (array file exists): {plexcached_file}")
-                    else:
-                        operation_type = "Restored"  # Fast rename
-                        os.rename(plexcached_file, array_file)
-                        logging.debug(f"Restored array file: {plexcached_file} -> {array_file}")
+                    # Always rename rather than checking if original "exists" via /mnt/user0/.
+                    # On ZFS Unraid, /mnt/user0/ FUSE can show cache files as array files,
+                    # making existence checks unreliable. Renaming is always safe — if the
+                    # file genuinely exists, os.rename() atomically replaces it with the
+                    # identical .plexcached content (which IS the original, just renamed).
+                    operation_type = "Restored"
+                    os.rename(plexcached_file, array_file)
+                    logging.debug(f"Restored array file: {plexcached_file} -> {array_file}")
 
             # Scenario 2: Check for filename-change upgrade (different .plexcached with same media identity)
             elif os.path.isfile(cache_file):
@@ -3952,7 +4789,7 @@ class FileMover:
                     operation_type = "Moved"  # Copy operation (upgrade)
                     old_name = os.path.basename(old_plexcached).replace(PLEXCACHED_EXTENSION, '')
                     new_name = os.path.basename(cache_file)
-                    logging.info(f"Upgrade detected: {old_name} -> {new_name}")
+                    logging.info(f"[RESTORE] Upgrade detected: {old_name} -> {new_name}")
 
                     # Delete the old .plexcached (it's outdated)
                     os.remove(old_plexcached)
@@ -4065,14 +4902,14 @@ class FileMover:
                 try:
                     os.remove(array_direct_file)
                     logging.debug(f"Cleaned up partial array file: {array_direct_file}")
-                except OSError:
-                    pass
+                except OSError as e:
+                    logging.warning(f"Could not remove partial array file: {array_direct_file}: {e}")
             elif os.path.isfile(array_file):
                 try:
                     os.remove(array_file)
                     logging.debug(f"Cleaned up partial array file: {array_file}")
-                except OSError:
-                    pass
+                except OSError as e:
+                    logging.warning(f"Could not remove partial array file: {array_file}: {e}")
             return 4  # Stopped by user
         except Exception as e:
             logging.error(f"Error restoring to array: {type(e).__name__}: {e}")
@@ -4131,10 +4968,60 @@ class FileMover:
 
         return folders_removed
 
-    def _cleanup_failed_cache_copy(self, array_file: str, cache_file_name: str) -> None:
+    def _create_symlink(self, symlink_path: str, target_path: str) -> bool:
+        """Create a symlink at symlink_path pointing to target_path.
+
+        Used on non-Unraid systems so Plex can still find files at their original
+        locations after the original is renamed to .plexcached or deleted.
+
+        Non-fatal: logs warning on failure, returns False. Caching proceeds regardless.
+        Uses absolute paths for Docker compatibility.
+        """
+        try:
+            # Remove existing symlink if present (e.g., re-caching same file)
+            if os.path.islink(symlink_path):
+                os.remove(symlink_path)
+                logging.debug(f"Removed existing symlink: {symlink_path}")
+
+            # Ensure parent directory exists
+            parent_dir = os.path.dirname(symlink_path)
+            if parent_dir and not os.path.isdir(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+
+            os.symlink(target_path, symlink_path)
+            logging.debug(f"Created symlink: {symlink_path} -> {target_path}")
+            return True
+        except OSError as e:
+            logging.warning(f"Could not create symlink at {symlink_path}: {e}")
+            return False
+
+    def _remove_symlink(self, path: str) -> bool:
+        """Remove a symlink at the given path if it is a symlink.
+
+        Returns True if a symlink was removed, False if not a symlink.
+        """
+        if os.path.islink(path):
+            try:
+                os.remove(path)
+                logging.debug(f"Removed symlink: {path}")
+                return True
+            except OSError as e:
+                logging.warning(f"Could not remove symlink at {path}: {e}")
+                return False
+        return False
+
+    def _cleanup_failed_cache_copy(self, array_file: str, cache_file_name: str,
+                                   original_path: str = None) -> None:
         """Clean up after a failed cache copy operation."""
         plexcached_file = array_file + PLEXCACHED_EXTENSION
         try:
+            # Remove symlink if one was created before the failure
+            if self.use_symlinks:
+                symlink_location = original_path or array_file
+                if os.path.islink(symlink_location):
+                    os.remove(symlink_location)
+                    logging.debug(f"Cleanup: Removed symlink at {symlink_location}")
+
             # If we renamed the array file but copy failed, rename it back
             if os.path.isfile(plexcached_file) and not os.path.isfile(array_file):
                 os.rename(plexcached_file, array_file)
@@ -4179,7 +5066,7 @@ class PlexcachedRestorer:
             Tuple of (success_count, error_count)
         """
         plexcached_files = self.find_plexcached_files()
-        logging.info(f"Found {len(plexcached_files)} .plexcached files to restore")
+        logging.info(f"[RESTORE] Found {len(plexcached_files)} .plexcached files to restore")
 
         if not plexcached_files:
             return 0, 0
@@ -4197,20 +5084,29 @@ class PlexcachedRestorer:
                 continue
 
             try:
+                # Check if original location has a symlink (from use_symlinks mode)
+                if os.path.islink(original_file):
+                    try:
+                        os.remove(original_file)
+                        logging.info(f"[RESTORE] Removed symlink before restore: {original_file}")
+                    except OSError as e:
+                        logging.warning(f"Cannot remove symlink at {original_file}: {e}")
+                        error_count += 1
+                        continue
                 # Check if original already exists (shouldn't happen, but be safe)
-                if os.path.exists(original_file):
+                elif os.path.exists(original_file):
                     logging.warning(f"Original file already exists, skipping: {original_file}")
                     error_count += 1
                     continue
 
                 os.rename(plexcached_file, original_file)
-                logging.info(f"Restored: {plexcached_file} -> {original_file}")
+                logging.info(f"[RESTORE] Restored: {plexcached_file} -> {original_file}")
                 success_count += 1
             except Exception as e:
                 logging.error(f"Failed to restore {plexcached_file}: {type(e).__name__}: {e}")
                 error_count += 1
 
-        logging.info(f"Restore complete: {success_count} succeeded, {error_count} failed")
+        logging.info(f"[RESTORE] Restore complete: {success_count} succeeded, {error_count} failed")
         return success_count, error_count
 
 

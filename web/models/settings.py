@@ -12,6 +12,7 @@ class PathMappingModel(BaseModel):
     cache_path: Optional[str] = None
     cacheable: bool = True
     enabled: bool = True
+    section_id: Optional[int] = None
 
 
 class PlexSettingsModel(BaseModel):
@@ -35,6 +36,7 @@ class CacheSettingsModel(BaseModel):
     remote_watchlist_rss_url: str = ""
     cache_retention_hours: int = 12
     watchlist_retention_days: float = 14.0
+    ondeck_retention_days: float = 0
     cache_limit: str = "250GB"
     cache_eviction_mode: str = "smart"
     cache_eviction_threshold_percent: int = 90

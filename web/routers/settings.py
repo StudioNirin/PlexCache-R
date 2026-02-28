@@ -10,7 +10,7 @@ import requests
 from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from web.config import templates, CONFIG_DIR
+from web.config import templates, CONFIG_DIR, PLEXCACHE_PRODUCT_VERSION
 from web.services import get_settings_service, get_scheduler_service
 from core.system_utils import get_disk_usage, detect_zfs, parse_size_bytes
 from core.file_operations import (
@@ -20,15 +20,11 @@ from core.file_operations import (
     PRIORITY_RANGE_WATCHLIST_MAX,
 )
 
-# Backward-compatible alias
-_parse_size_bytes = parse_size_bytes
-
 
 router = APIRouter()
 
 # OAuth constants
 PLEXCACHE_PRODUCT_NAME = 'PlexCache-D'
-PLEXCACHE_PRODUCT_VERSION = '3.0'
 
 # Store OAuth state in memory (with lock for thread safety)
 _oauth_state: Dict[str, Any] = {}
@@ -36,11 +32,10 @@ _oauth_state_lock = threading.Lock()
 
 
 @router.get("/", response_class=HTMLResponse)
-async def settings_index(request: Request):
+def settings_index(request: Request):
     """Settings overview - redirects to plex tab"""
     settings_service = get_settings_service()
     settings = settings_service.get_plex_settings()
-    libraries = settings_service.get_plex_libraries()
 
     return templates.TemplateResponse(
         "settings/plex.html",
@@ -49,32 +44,29 @@ async def settings_index(request: Request):
             "page_title": "Settings",
             "active_tab": "plex",
             "settings": settings,
-            "libraries": libraries
         }
     )
 
 
 @router.get("/plex", response_class=HTMLResponse)
-async def settings_plex(request: Request):
-    """Plex settings tab (user settings moved to /settings/users)"""
+def settings_plex(request: Request):
+    """Plex Server connection settings tab"""
     settings_service = get_settings_service()
     settings = settings_service.get_plex_settings()
-    libraries = settings_service.get_plex_libraries()
 
     return templates.TemplateResponse(
         "settings/plex.html",
         {
             "request": request,
-            "page_title": "Plex Settings",
+            "page_title": "Plex Server Settings",
             "active_tab": "plex",
             "settings": settings,
-            "libraries": libraries
         }
     )
 
 
 @router.get("/plex/libraries", response_class=HTMLResponse)
-async def get_plex_libraries(request: Request):
+def get_plex_libraries(request: Request):
     """Fetch library sections from Plex (HTMX partial)"""
     settings_service = get_settings_service()
     settings = settings_service.get_plex_settings()
@@ -91,7 +83,7 @@ async def get_plex_libraries(request: Request):
 
 
 @router.get("/plex/users", response_class=HTMLResponse)
-async def get_plex_users(request: Request):
+def get_plex_users(request: Request):
     """Fetch users from Plex (HTMX partial)"""
     settings_service = get_settings_service()
     settings = settings_service.get_plex_settings()
@@ -110,7 +102,7 @@ async def get_plex_users(request: Request):
 
 
 @router.post("/plex/test", response_class=HTMLResponse)
-async def test_plex_connection(request: Request):
+def test_plex_connection(request: Request):
     """Test Plex connection and return detailed status"""
     settings_service = get_settings_service()
     settings = settings_service.get_plex_settings()
@@ -160,37 +152,16 @@ async def test_plex_connection(request: Request):
 
 @router.put("/plex", response_class=HTMLResponse)
 async def save_plex_settings(request: Request):
-    """Save Plex settings (user settings moved to /settings/users)"""
+    """Save Plex Server connection settings (URL + token only)"""
     settings_service = get_settings_service()
 
-    # Parse form data (need to handle multi-value checkbox fields)
     form = await request.form()
-
-    # Get single values
     plex_url = form.get("plex_url", "")
     plex_token = form.get("plex_token", "")
-    try:
-        days_to_monitor = int(form.get("days_to_monitor", 183))
-    except (ValueError, TypeError):
-        days_to_monitor = 183
-    try:
-        number_episodes = int(form.get("number_episodes", 5))
-    except (ValueError, TypeError):
-        number_episodes = 5
 
-    # Get multi-value checkbox fields
-    try:
-        valid_sections = [int(v) for v in form.getlist("valid_sections")]
-    except (ValueError, TypeError):
-        valid_sections = []
-
-    # Note: users_toggle, skip_ondeck, skip_watchlist are now managed by /settings/users
     success = settings_service.save_plex_settings({
         "plex_url": plex_url,
         "plex_token": plex_token,
-        "valid_sections": valid_sections,
-        "days_to_monitor": days_to_monitor,
-        "number_episodes": number_episodes
     })
 
     if success:
@@ -199,7 +170,7 @@ async def save_plex_settings(request: Request):
             {
                 "request": request,
                 "type": "success",
-                "message": "Plex settings saved successfully"
+                "message": "Connection settings saved successfully"
             }
         )
     else:
@@ -218,7 +189,7 @@ async def save_plex_settings(request: Request):
 # =============================================================================
 
 @router.get("/users", response_class=HTMLResponse)
-async def settings_users(request: Request):
+def settings_users(request: Request):
     """Users settings tab - renders with skeleton for lazy load"""
     settings_service = get_settings_service()
     user_settings = settings_service.get_user_settings()
@@ -240,7 +211,7 @@ async def settings_users(request: Request):
 
 
 @router.get("/users/list", response_class=HTMLResponse)
-async def get_users_list(request: Request):
+def get_users_list(request: Request):
     """Fetch users list for lazy loading (HTMX partial)"""
     import logging
     logger = logging.getLogger(__name__)
@@ -271,7 +242,7 @@ async def get_users_list(request: Request):
 
 
 @router.post("/users/sync", response_class=HTMLResponse)
-async def sync_users(request: Request):
+def sync_users(request: Request):
     """Sync users from Plex (HTMX)"""
     settings_service = get_settings_service()
     result = settings_service.sync_users_from_plex()
@@ -355,24 +326,14 @@ async def save_user_settings(request: Request):
 
 
 @router.get("/paths", response_class=HTMLResponse)
-async def settings_paths(request: Request):
-    """Path mappings tab"""
-    settings_service = get_settings_service()
-    mappings = settings_service.get_path_mappings()
-
-    return templates.TemplateResponse(
-        "settings/paths.html",
-        {
-            "request": request,
-            "page_title": "Path Settings",
-            "active_tab": "paths",
-            "mappings": mappings,
-        }
-    )
+def settings_paths(request: Request):
+    """Path mappings tab — redirects to Libraries tab"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/settings/libraries", status_code=302)
 
 
 @router.post("/paths", response_class=HTMLResponse)
-async def add_path_mapping(
+def add_path_mapping(
     request: Request,
     name: str = Form(...),
     plex_path: str = Form(...),
@@ -417,7 +378,7 @@ async def add_path_mapping(
 
 
 @router.put("/paths/{index}", response_class=HTMLResponse)
-async def update_path_mapping(
+def update_path_mapping(
     request: Request,
     index: int,
     name: str = Form(...),
@@ -460,7 +421,7 @@ async def update_path_mapping(
 
 
 @router.delete("/paths/{index}", response_class=HTMLResponse)
-async def delete_path_mapping(request: Request, index: int):
+def delete_path_mapping(request: Request, index: int):
     """Delete a path mapping and return the updated list"""
     settings_service = get_settings_service()
 
@@ -477,8 +438,204 @@ async def delete_path_mapping(request: Request, index: int):
         return HTMLResponse("<div class='alert alert-error'>Failed to delete mapping</div>")
 
 
+# =============================================================================
+# Libraries tab endpoints
+# =============================================================================
+
+@router.get("/libraries", response_class=HTMLResponse)
+def settings_libraries(request: Request):
+    """Libraries tab — combined library toggle + path mappings"""
+    settings_service = get_settings_service()
+
+    # Run one-time migration (links existing path_mappings to Plex libraries)
+    settings_service.migrate_link_path_mappings_to_libraries()
+
+    # Fetch libraries from Plex
+    libraries = settings_service.get_plex_libraries()
+
+    # Load path mappings
+    raw_settings = settings_service.get_all()
+    mappings = raw_settings.get("path_mappings", [])
+    valid_sections = raw_settings.get("valid_sections", [])
+
+    # Group mappings by section_id
+    library_mappings = {}  # section_id -> list of mappings (with _index)
+    orphan_mappings = []   # mappings without section_id
+    for i, m in enumerate(mappings):
+        m_copy = dict(m)
+        m_copy["_index"] = i
+        sid = m.get("section_id")
+        if sid is not None:
+            library_mappings.setdefault(sid, []).append(m_copy)
+        else:
+            orphan_mappings.append(m_copy)
+
+    # Build library cards
+    library_cards = []
+    for lib in libraries:
+        sid = lib["id"]
+        lib_maps = library_mappings.get(sid, [])
+        enabled = sid in valid_sections or any(m.get("enabled", True) for m in lib_maps)
+        library_cards.append({
+            "library": lib,
+            "enabled": enabled,
+            "mappings": lib_maps,
+            "has_mappings": bool(lib_maps),
+        })
+
+    return templates.TemplateResponse(
+        "settings/libraries.html",
+        {
+            "request": request,
+            "page_title": "Library Settings",
+            "active_tab": "libraries",
+            "library_cards": library_cards,
+            "orphan_mappings": orphan_mappings,
+        }
+    )
+
+
+@router.post("/libraries/{section_id}/toggle", response_class=HTMLResponse)
+def toggle_library(request: Request, section_id: int):
+    """Toggle a Plex library on/off"""
+    settings_service = get_settings_service()
+    raw = settings_service._load_raw()
+    mappings = raw.get("path_mappings", [])
+
+    # Check current state — any enabled mapping with this section_id?
+    current_mappings = [m for m in mappings if m.get("section_id") == section_id]
+    currently_enabled = any(m.get("enabled", True) for m in current_mappings)
+
+    if currently_enabled:
+        # Turn OFF: disable all mappings with this section_id
+        for m in mappings:
+            if m.get("section_id") == section_id:
+                m["enabled"] = False
+    else:
+        # Turn ON
+        if current_mappings:
+            # Re-enable existing mappings
+            for m in mappings:
+                if m.get("section_id") == section_id:
+                    m["enabled"] = True
+        else:
+            # Auto-create mappings from Plex library
+            libraries = settings_service.get_plex_libraries()
+            library = next((lib for lib in libraries if lib["id"] == section_id), None)
+            if library:
+                for loc in library.get("locations", []):
+                    new_mapping = settings_service.auto_fill_mapping(library, loc, raw)
+                    mappings.append(new_mapping)
+
+    raw["path_mappings"] = mappings
+    settings_service._rebuild_valid_sections(raw)
+    settings_service._save_raw(raw)
+
+    # Re-render this library card
+    libraries = settings_service.get_plex_libraries()
+    library = next((lib for lib in libraries if lib["id"] == section_id), None)
+    if not library:
+        return HTMLResponse("<div class='alert alert-error'>Library not found</div>")
+
+    # Reload mappings for this card
+    raw = settings_service._load_raw()
+    all_mappings = raw.get("path_mappings", [])
+    lib_maps = []
+    for i, m in enumerate(all_mappings):
+        if m.get("section_id") == section_id:
+            m_copy = dict(m)
+            m_copy["_index"] = i
+            lib_maps.append(m_copy)
+
+    enabled = any(m.get("enabled", True) for m in lib_maps)
+    card = {
+        "library": library,
+        "enabled": enabled,
+        "mappings": lib_maps,
+        "has_mappings": bool(lib_maps),
+    }
+
+    return templates.TemplateResponse(
+        "settings/partials/library_card.html",
+        {"request": request, "card": card}
+    )
+
+
+@router.put("/libraries/paths/{index}", response_class=HTMLResponse)
+def update_library_path(
+    request: Request,
+    index: int,
+    name: str = Form(...),
+    plex_path: str = Form(...),
+    real_path: str = Form(...),
+    cache_path: str = Form(""),
+    host_cache_path: str = Form(""),
+    cacheable: str = Form(None),
+):
+    """Update a library's path mapping and return refreshed library card"""
+    settings_service = get_settings_service()
+
+    effective_host_cache_path = host_cache_path if host_cache_path else cache_path
+
+    mapping = {
+        "name": name,
+        "plex_path": plex_path,
+        "real_path": real_path,
+        "cache_path": cache_path if cache_path else None,
+        "host_cache_path": effective_host_cache_path if effective_host_cache_path else None,
+        "cacheable": cacheable == "on",
+        "enabled": True,  # Editing implies enabled
+    }
+
+    success = settings_service.update_path_mapping(index, mapping)
+
+    if not success:
+        return HTMLResponse("<div class='alert alert-error'>Failed to update mapping</div>")
+
+    # Get the section_id to re-render the library card
+    raw = settings_service._load_raw()
+    all_mappings = raw.get("path_mappings", [])
+    section_id = all_mappings[index].get("section_id") if index < len(all_mappings) else None
+
+    if section_id is None:
+        # Orphan mapping — return a path_mapping_card
+        return templates.TemplateResponse(
+            "settings/partials/path_mapping_card.html",
+            {"request": request, "mapping": all_mappings[index], "index": index}
+        )
+
+    # Rebuild valid_sections after update
+    settings_service._rebuild_valid_sections(raw)
+    settings_service._save_raw(raw)
+
+    # Re-render the full library card
+    libraries = settings_service.get_plex_libraries()
+    library = next((lib for lib in libraries if lib["id"] == section_id), None)
+    if not library:
+        return HTMLResponse("<div class='alert alert-success'>Saved</div>")
+
+    lib_maps = []
+    for i, m in enumerate(all_mappings):
+        if m.get("section_id") == section_id:
+            m_copy = dict(m)
+            m_copy["_index"] = i
+            lib_maps.append(m_copy)
+
+    card = {
+        "library": library,
+        "enabled": any(m.get("enabled", True) for m in lib_maps),
+        "mappings": lib_maps,
+        "has_mappings": bool(lib_maps),
+    }
+
+    return templates.TemplateResponse(
+        "settings/partials/library_card.html",
+        {"request": request, "card": card}
+    )
+
+
 @router.get("/cache", response_class=HTMLResponse)
-async def settings_cache(request: Request):
+def settings_cache(request: Request):
     """Cache settings tab"""
     import shutil
     settings_service = get_settings_service()
@@ -500,7 +657,7 @@ async def settings_cache(request: Request):
 
     if cache_dir:
         try:
-            drive_size_override = _parse_size_bytes(all_settings.get("cache_drive_size", ""))
+            drive_size_override = parse_size_bytes(all_settings.get("cache_drive_size", ""))
             disk_usage = get_disk_usage(cache_dir, drive_size_override)
             drive_info["total_bytes"] = disk_usage.total
             # Format size
@@ -508,14 +665,14 @@ async def settings_cache(request: Request):
             if total_gb >= 1024:
                 drive_info["total_display"] = f"{total_gb/1024:.2f} TB"
             else:
-                drive_info["total_display"] = f"{total_gb:.1f} GB"
+                drive_info["total_display"] = f"{total_gb:.2f} GB"
             drive_info["free_bytes"] = disk_usage.free
             drive_info["used_bytes"] = disk_usage.used
             used_gb = disk_usage.used / (1024**3)
             if used_gb >= 1024:
                 drive_info["used_display"] = f"{used_gb/1024:.2f} TB"
             else:
-                drive_info["used_display"] = f"{used_gb:.1f} GB"
+                drive_info["used_display"] = f"{used_gb:.2f} GB"
             # Add flag to indicate if using manual override
             if drive_size_override > 0:
                 drive_info["is_manual_override"] = True
@@ -523,6 +680,15 @@ async def settings_cache(request: Request):
             drive_info["is_zfs"] = detect_zfs(cache_dir)
         except Exception:
             pass
+
+    # Get tracked PlexCache files size for quota calculations
+    try:
+        from web.services import get_cache_service
+        cache_service = get_cache_service()
+        all_files = cache_service.get_all_cached_files()
+        drive_info["cached_files_bytes"] = sum(f.size for f in all_files)
+    except Exception:
+        drive_info["cached_files_bytes"] = 0
 
     return templates.TemplateResponse(
         "settings/cache.html",
@@ -578,7 +744,7 @@ async def save_cache_settings(request: Request):
 
 
 @router.get("/notifications", response_class=HTMLResponse)
-async def settings_notifications(request: Request):
+def settings_notifications(request: Request):
     """Notification settings tab"""
     import os
 
@@ -605,7 +771,7 @@ async def settings_notifications(request: Request):
 
 
 @router.put("/notifications", response_class=HTMLResponse)
-async def save_notification_settings(
+def save_notification_settings(
     request: Request,
     notification_type: str = Form("system"),
     webhook_url: str = Form(""),
@@ -646,7 +812,7 @@ async def save_notification_settings(
 
 
 @router.post("/notifications/test", response_class=HTMLResponse)
-async def test_webhook(request: Request, webhook_url: str = Form(...)):
+def test_webhook(request: Request, webhook_url: str = Form(...)):
     """Send a test message to the configured webhook"""
     import json
     import requests
@@ -737,7 +903,7 @@ async def test_webhook(request: Request, webhook_url: str = Form(...)):
 
 
 @router.get("/logging", response_class=HTMLResponse)
-async def settings_logging(request: Request):
+def settings_logging(request: Request):
     """Logging settings tab"""
     settings_service = get_settings_service()
     settings = settings_service.get_logging_settings()
@@ -754,11 +920,12 @@ async def settings_logging(request: Request):
 
 
 @router.put("/logging", response_class=HTMLResponse)
-async def save_logging_settings(
+def save_logging_settings(
     request: Request,
     max_log_files: int = Form(24),
     keep_error_logs_days: int = Form(7),
-    time_format: str = Form("24h")
+    time_format: str = Form("24h"),
+    activity_retention_hours: int = Form(24)
 ):
     """Save logging settings"""
     settings_service = get_settings_service()
@@ -766,7 +933,8 @@ async def save_logging_settings(
     success = settings_service.save_logging_settings({
         "max_log_files": max_log_files,
         "keep_error_logs_days": keep_error_logs_days,
-        "time_format": time_format
+        "time_format": time_format,
+        "activity_retention_hours": activity_retention_hours
     })
 
     if success:
@@ -789,8 +957,148 @@ async def save_logging_settings(
         )
 
 
+# =============================================================================
+# Integrations tab endpoints (Sonarr/Radarr)
+# =============================================================================
+
+@router.get("/integrations", response_class=HTMLResponse)
+def settings_integrations(request: Request):
+    """Integrations settings tab"""
+    settings_service = get_settings_service()
+    instances = settings_service.get_arr_instances()
+
+    return templates.TemplateResponse(
+        "settings/integrations.html",
+        {
+            "request": request,
+            "page_title": "Integration Settings",
+            "active_tab": "integrations",
+            "instances": instances,
+        }
+    )
+
+
+@router.post("/integrations/instances", response_class=HTMLResponse)
+def add_arr_instance(
+    request: Request,
+    name: str = Form(...),
+    arr_type: str = Form(...),
+    url: str = Form(""),
+    api_key: str = Form(""),
+    enabled: str = Form(None),
+):
+    """Add a new Sonarr/Radarr instance"""
+    settings_service = get_settings_service()
+
+    instance = {
+        "name": name,
+        "type": arr_type,
+        "url": url,
+        "api_key": api_key,
+        "enabled": enabled == "on",
+    }
+
+    success = settings_service.add_arr_instance(instance)
+
+    if success:
+        instances = settings_service.get_arr_instances()
+        index = len(instances) - 1
+        return templates.TemplateResponse(
+            "settings/partials/arr_instance_card.html",
+            {"request": request, "instance": instances[index], "index": index}
+        )
+    else:
+        return HTMLResponse("<div class='alert alert-error'>Failed to add instance</div>")
+
+
+@router.put("/integrations/instances/{index}", response_class=HTMLResponse)
+def update_arr_instance(
+    request: Request,
+    index: int,
+    name: str = Form(...),
+    arr_type: str = Form(...),
+    url: str = Form(""),
+    api_key: str = Form(""),
+    enabled: str = Form(None),
+):
+    """Update an existing Sonarr/Radarr instance"""
+    settings_service = get_settings_service()
+
+    instance = {
+        "name": name,
+        "type": arr_type,
+        "url": url,
+        "api_key": api_key,
+        "enabled": enabled == "on",
+    }
+
+    success = settings_service.update_arr_instance(index, instance)
+
+    if success:
+        return templates.TemplateResponse(
+            "settings/partials/arr_instance_card.html",
+            {"request": request, "instance": instance, "index": index}
+        )
+    else:
+        return HTMLResponse("<div class='alert alert-error'>Failed to update instance</div>")
+
+
+@router.delete("/integrations/instances/{index}", response_class=HTMLResponse)
+def delete_arr_instance(request: Request, index: int):
+    """Delete a Sonarr/Radarr instance and return the updated list"""
+    settings_service = get_settings_service()
+
+    success = settings_service.delete_arr_instance(index)
+
+    if success:
+        instances = settings_service.get_arr_instances()
+        return templates.TemplateResponse(
+            "settings/partials/arr_instances_list.html",
+            {"request": request, "instances": instances}
+        )
+    else:
+        return HTMLResponse("<div class='alert alert-error'>Failed to delete instance</div>")
+
+
+@router.post("/integrations/test")
+def test_arr_connection(
+    url: str = Form(""),
+    api_key: str = Form(""),
+    arr_type: str = Form("sonarr"),
+):
+    """Test Sonarr/Radarr connection using form values (no save required)"""
+    url = url.strip()
+    api_key = api_key.strip()
+
+    if not url or not api_key:
+        return JSONResponse({"success": False, "message": "URL and API key are required"})
+
+    type_label = arr_type.title()  # "Sonarr" or "Radarr"
+
+    try:
+        resp = requests.get(
+            f'{url.rstrip("/")}/api/v3/system/status',
+            headers={'X-Api-Key': api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        version = data.get("version", "unknown")
+        return JSONResponse({"success": True, "message": f"Connected to {type_label} v{version}"})
+    except requests.Timeout:
+        return JSONResponse({"success": False, "message": "Connection timed out"})
+    except requests.ConnectionError:
+        return JSONResponse({"success": False, "message": f"Cannot connect. Is {type_label} running?"})
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 401:
+            return JSONResponse({"success": False, "message": "Invalid API key (401 Unauthorized)"})
+        return JSONResponse({"success": False, "message": f"HTTP error: {e}"})
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error: {str(e)[:150]}"})
+
+
 @router.get("/schedule", response_class=HTMLResponse)
-async def settings_schedule(request: Request):
+def settings_schedule(request: Request):
     """Schedule settings tab"""
     scheduler_service = get_scheduler_service()
     schedule = scheduler_service.get_status()
@@ -807,14 +1115,14 @@ async def settings_schedule(request: Request):
 
 
 @router.get("/import", response_class=HTMLResponse)
-async def settings_import(request: Request):
+def settings_import(request: Request):
     """Redirect old import tab to new import-export tab"""
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/settings/import-export", status_code=302)
 
 
 @router.get("/backup", response_class=HTMLResponse)
-async def settings_backup_redirect(request: Request):
+def settings_backup_redirect(request: Request):
     """Redirect old backup tab to new import-export tab"""
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/settings/import-export", status_code=302)
@@ -825,7 +1133,7 @@ async def settings_backup_redirect(request: Request):
 # =============================================================================
 
 @router.get("/import-export", response_class=HTMLResponse)
-async def settings_import_export(request: Request):
+def settings_import_export(request: Request):
     """Import/Export settings tab"""
     # Check if any previous CLI imports have been completed
     import_completed_dir = CONFIG_DIR / "import" / "completed"
@@ -843,7 +1151,7 @@ async def settings_import_export(request: Request):
 
 
 @router.get("/import-export/export")
-async def export_settings_file(request: Request, include_sensitive: bool = True):
+def export_settings_file(request: Request, include_sensitive: bool = True):
     """Export settings as downloadable JSON file"""
     import json
     from datetime import datetime
@@ -1038,7 +1346,7 @@ def _get_or_create_client_id() -> str:
 
 
 @router.post("/plex/oauth/start")
-async def oauth_start():
+def oauth_start():
     """Start Plex OAuth flow - returns auth URL"""
     client_id = _get_or_create_client_id()
 
@@ -1085,7 +1393,7 @@ async def oauth_start():
 
 
 @router.get("/plex/oauth/poll")
-async def oauth_poll(client_id: str = Query(...)):
+def oauth_poll(client_id: str = Query(...)):
     """Poll for OAuth completion"""
     with _oauth_state_lock:
         if client_id not in _oauth_state:

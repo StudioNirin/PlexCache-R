@@ -1,0 +1,193 @@
+<!-- Plex Duplicate Files - HTMX partial loaded inside audit_results.html -->
+
+{% if not scan_results %}
+<!-- State 1: No scan data -->
+<div style="text-align: center; padding: 2rem 1rem;">
+    <i data-lucide="scan-search" style="width: 40px; height: 40px; color: var(--plex-text-muted); margin-bottom: 0.75rem;"></i>
+    <p style="margin: 0 0 0.5rem 0; font-weight: 500;">No Scan Data</p>
+    <p class="text-muted" style="margin: 0 0 1rem 0; font-size: 0.9rem;">
+        Scan your Plex libraries to find items with duplicate media files.
+    </p>
+    {% if arr_configured %}
+    <p style="margin: 0 0 1rem 0; font-size: 0.85rem;">
+        <i data-lucide="check-circle" style="width: 14px; height: 14px; color: var(--success); vertical-align: middle;"></i>
+        <span style="color: var(--success);">Sonarr/Radarr integration active</span> — orphans will be auto-identified
+    </p>
+    {% else %}
+    <p style="margin: 0 0 1rem 0; font-size: 0.85rem;">
+        <i data-lucide="info" style="width: 14px; height: 14px; color: var(--plex-text-muted); vertical-align: middle;"></i>
+        <span class="text-muted">Configure <a href="/settings/integrations" style="color: var(--plex-orange);">Sonarr/Radarr</a> to auto-identify orphans</span>
+    </p>
+    {% endif %}
+    <button class="btn btn-primary" onclick="startDuplicateScan()">
+        <i data-lucide="scan-search"></i> Scan Libraries
+    </button>
+</div>
+
+{% elif scan_results.duplicate_count == 0 %}
+<!-- State 3: No duplicates found -->
+<div style="text-align: center; padding: 2rem 1rem;">
+    <i data-lucide="check-circle" style="width: 40px; height: 40px; color: var(--success); margin-bottom: 0.75rem;"></i>
+    <p style="margin: 0 0 0.5rem 0; font-weight: 500; color: var(--success);">No Duplicates Found</p>
+    <p class="text-muted" style="margin: 0 0 1rem 0; font-size: 0.9rem;">
+        Scanned {{ scan_results.total_items }} items across {{ scan_results.libraries_scanned|length }} libraries.
+        <br>
+        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at[:16].replace('T', ' ') }}</span>
+    </p>
+    <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
+        <i data-lucide="refresh-cw"></i> Re-scan
+    </button>
+</div>
+
+{% else %}
+<!-- State 2: Results with duplicates -->
+
+<!-- Summary Stats -->
+<div class="card-body" style="padding: 0.75rem;">
+    <div class="flex gap-1" style="flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem;">
+        <span class="badge badge-warning">{{ scan_results.duplicate_count }} items</span>
+        {% if scan_results.arr_enabled and scan_results.orphan_count > 0 %}
+        <span class="badge badge-error">{{ scan_results.orphan_count }} orphans</span>
+        <span class="badge badge-muted">{{ scan_results.orphan_bytes_display }}</span>
+        {% endif %}
+        {% if scan_results.unresolved_count > 0 %}
+        <span class="badge badge-info">{{ scan_results.unresolved_count }} unresolved</span>
+        {% endif %}
+        <span class="text-muted" style="margin-left: auto; font-size: 0.85rem;">
+            Scanned {{ scan_results.scanned_at[:16].replace('T', ' ') }}
+        </span>
+    </div>
+
+    {% if arr_configured and scan_results.arr_enabled %}
+    <p style="margin: 0 0 0.5rem 0; font-size: 0.85rem;">
+        <i data-lucide="check-circle" style="width: 14px; height: 14px; color: var(--success); vertical-align: middle;"></i>
+        <span style="color: var(--success);">Sonarr/Radarr integration active</span>
+    </p>
+    {% elif not arr_configured %}
+    <p style="margin: 0 0 0.5rem 0; font-size: 0.85rem;">
+        <i data-lucide="info" style="width: 14px; height: 14px; color: var(--plex-text-muted); vertical-align: middle;"></i>
+        <span class="text-muted">Configure <a href="/settings/integrations" style="color: var(--plex-orange);">Sonarr/Radarr</a> to auto-identify orphans</span>
+    </p>
+    {% endif %}
+
+    <!-- Bulk Actions -->
+    <div class="flex gap-1" style="flex-wrap: wrap;">
+        <div id="dup-bulk-actions" class="flex gap-1" style="display: none;">
+            <span class="text-muted">Selected: <strong id="dup-selected-count">0</strong></span>
+            <button class="btn btn-sm btn-secondary" onclick="deleteSelectedDuplicates(true)">
+                <i data-lucide="eye"></i> Preview
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="deleteSelectedDuplicates(false)">
+                <i data-lucide="trash-2"></i> Delete Selected
+            </button>
+        </div>
+        <div class="flex gap-1" style="margin-left: auto;">
+            {% if scan_results.arr_enabled and scan_results.orphan_count > 0 %}
+            <button class="btn btn-sm btn-danger" onclick="deleteAllOrphanDuplicates(false)">
+                <i data-lucide="trash-2"></i> Delete All Orphans ({{ scan_results.orphan_count }})
+            </button>
+            {% endif %}
+            <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
+                <i data-lucide="refresh-cw"></i> Re-scan
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Duplicate Items Table -->
+<div class="card-body" style="padding: 0;">
+    <div class="table-container" style="max-height: 600px; overflow-y: auto;">
+        <table id="duplicate-table">
+            <thead>
+                <tr>
+                    <th style="width: 40px;">
+                        <input type="checkbox" onclick="toggleSelectAllDuplicates(this)" title="Select all orphan files">
+                    </th>
+                    <th>Item</th>
+                    <th style="width: 80px;">Library</th>
+                    <th style="width: 60px;">Files</th>
+                    <th style="width: 100px;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in scan_results.items %}
+                <tr class="dup-item-row" data-rating-key="{{ item.rating_key }}" onclick="toggleDuplicateExpand(this)" style="cursor: pointer;">
+                    <td onclick="event.stopPropagation();">
+                        <!-- Only show checkbox if item has orphan files -->
+                    </td>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <i data-lucide="chevron-right" class="dup-expand-icon" style="width: 14px; height: 14px; transition: transform 0.2s; flex-shrink: 0;"></i>
+                            <span title="{{ item.title }}">
+                                {% if item.item_type == 'movie' %}
+                                <i data-lucide="film" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                                {% else %}
+                                <i data-lucide="tv" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                                {% endif %}
+                                {{ item.title }}
+                            </span>
+                        </div>
+                    </td>
+                    <td class="text-muted" style="font-size: 0.85rem;">{{ item.library }}</td>
+                    <td class="text-muted">{{ item.files|length }}</td>
+                    <td>
+                        {% if item.is_resolved %}
+                        <span class="badge badge-success">Resolved</span>
+                        {% else %}
+                        <span class="badge badge-info">Unresolved</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <!-- Expanded file details (hidden by default) -->
+                <tr class="dup-detail-row" data-parent="{{ item.rating_key }}" style="display: none;">
+                    <td colspan="5" style="padding: 0; background: var(--plex-bg);">
+                        <table style="margin: 0; font-size: 0.9rem;">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px;"></th>
+                                    <th>File</th>
+                                    <th style="width: 70px;">Resolution</th>
+                                    <th style="width: 70px;">Codec</th>
+                                    <th style="width: 90px;">Size</th>
+                                    <th style="width: 80px;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for file in item.files %}
+                                <tr>
+                                    <td>
+                                        {% if file.is_keeper is false %}
+                                        <input type="checkbox" class="dup-file-checkbox" value="{{ file.fs_path }}" onchange="toggleDuplicateFile(this)">
+                                        {% endif %}
+                                    </td>
+                                    <td title="{{ file.fs_path }}" style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        {{ file.fs_path.split('/')[-1] }}
+                                    </td>
+                                    <td class="text-muted">{{ file.resolution }}{% if file.resolution != '?' %}p{% endif %}</td>
+                                    <td class="text-muted">{{ file.video_codec }}</td>
+                                    <td class="text-muted">{{ file.size_display }}</td>
+                                    <td>
+                                        {% if file.is_keeper is true %}
+                                        <span class="badge badge-success">Keeper</span>
+                                        {% elif file.is_keeper is false %}
+                                        <span class="badge badge-error">Orphan</span>
+                                        {% else %}
+                                        <span class="badge badge-muted">Unknown</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<script>
+if (typeof lucide !== 'undefined') lucide.createIcons();
+</script>

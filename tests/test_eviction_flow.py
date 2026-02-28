@@ -86,10 +86,13 @@ def _build_app_for_eviction(
     app.config_manager = config_manager
     app.dry_run = dry_run
     app.media_to_cache = media_to_cache or []
+    app.all_active_media = []
     app.file_path_modifier = MagicMock()
     app.file_path_modifier.convert_real_to_cache.side_effect = lambda f: (f, None)
     app.file_filter = MagicMock()
     app.timestamp_tracker = MagicMock()
+    app.ondeck_tracker = MagicMock()
+    app.watchlist_tracker = MagicMock()
     app.priority_manager = MagicMock()
     app.evicted_count = 0
     app.evicted_bytes = 0

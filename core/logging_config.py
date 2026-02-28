@@ -16,6 +16,8 @@ from typing import Optional, List
 
 import requests
 
+from core.system_utils import format_bytes, format_duration
+
 # Global lock for thread-safe console output (shared with tqdm)
 _console_lock = threading.RLock()
 
@@ -81,11 +83,6 @@ def mark_error(message: str = None):
 def had_warnings_or_errors():
     """Check if any warnings or errors occurred during this run."""
     return _had_warnings or _had_errors
-
-
-def had_warnings():
-    """Check if any warnings occurred during this run."""
-    return _had_warnings
 
 
 def had_errors():
@@ -232,30 +229,6 @@ class UnraidHandler(logging.Handler):
             args = ['php', '-d', 'short_open_tag=1'] + args
         return args
 
-    def _format_bytes(self, bytes_value: int) -> str:
-        """Format bytes into human-readable string."""
-        if bytes_value < 1024:
-            return f"{bytes_value} B"
-        elif bytes_value < 1024 * 1024:
-            return f"{bytes_value / 1024:.1f} KB"
-        elif bytes_value < 1024 * 1024 * 1024:
-            return f"{bytes_value / (1024 * 1024):.2f} MB"
-        else:
-            return f"{bytes_value / (1024 * 1024 * 1024):.2f} GB"
-
-    def _format_duration(self, seconds: float) -> str:
-        """Format duration into human-readable string."""
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        elif seconds < 3600:
-            mins = int(seconds // 60)
-            secs = int(seconds % 60)
-            return f"{mins}m {secs}s" if secs > 0 else f"{mins}m"
-        else:
-            hours = int(seconds // 3600)
-            mins = int((seconds % 3600) // 60)
-            return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
-
     def send_summary_unraid_notification(self, record):
         icon = 'normal'
 
@@ -272,14 +245,14 @@ class UnraidHandler(logging.Handler):
             if data.get('cached_count', 0) > 0:
                 cached_str = f"Cached: {data['cached_count']} file{'s' if data['cached_count'] != 1 else ''}"
                 if data.get('cached_bytes', 0) > 0:
-                    cached_str += f" ({self._format_bytes(data['cached_bytes'])})"
+                    cached_str += f" ({format_bytes(data['cached_bytes'])})"
                 parts.append(cached_str)
 
             # Restored files
             if data.get('restored_count', 0) > 0:
                 restored_str = f"Restored: {data['restored_count']} file{'s' if data['restored_count'] != 1 else ''}"
                 if data.get('restored_bytes', 0) > 0:
-                    restored_str += f" ({self._format_bytes(data['restored_bytes'])})"
+                    restored_str += f" ({format_bytes(data['restored_bytes'])})"
                 parts.append(restored_str)
 
             # Already cached
@@ -288,7 +261,7 @@ class UnraidHandler(logging.Handler):
 
             # Duration
             if data.get('duration_seconds', 0) > 0:
-                parts.append(f"Duration: {self._format_duration(data['duration_seconds'])}")
+                parts.append(f"Duration: {format_duration(data['duration_seconds'])}")
 
             # Status
             if data.get('had_errors'):
@@ -454,29 +427,6 @@ class WebhookHandler(logging.Handler):
             logging.error(f"Webhook request failed: {e}")
             return False
 
-    def _format_bytes(self, bytes_val: int) -> str:
-        """Format bytes to human-readable string."""
-        if bytes_val >= 1024**3:
-            return f"{bytes_val / (1024**3):.2f} GB"
-        elif bytes_val >= 1024**2:
-            return f"{bytes_val / (1024**2):.2f} MB"
-        elif bytes_val >= 1024:
-            return f"{bytes_val / 1024:.2f} KB"
-        return f"{bytes_val} B"
-
-    def _format_duration(self, seconds: float) -> str:
-        """Format duration to human-readable string."""
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        elif seconds < 3600:
-            mins = int(seconds // 60)
-            secs = int(seconds % 60)
-            return f"{mins}m {secs}s" if secs > 0 else f"{mins}m"
-        else:
-            hours = int(seconds // 3600)
-            mins = int((seconds % 3600) // 60)
-            return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
-
     def _get_status_color(self) -> int:
         """Get color based on summary data status."""
         if self._summary_data:
@@ -497,7 +447,7 @@ class WebhookHandler(logging.Handler):
             if data.get('cached_count', 0) > 0:
                 cached_str = f"{data['cached_count']} file{'s' if data['cached_count'] != 1 else ''}"
                 if data.get('cached_bytes', 0) > 0:
-                    cached_str += f"\n({self._format_bytes(data['cached_bytes'])})"
+                    cached_str += f"\n({format_bytes(data['cached_bytes'])})"
                 fields.append({
                     "name": "📥 Cached",
                     "value": cached_str,
@@ -508,7 +458,7 @@ class WebhookHandler(logging.Handler):
             if data.get('restored_count', 0) > 0:
                 restored_str = f"{data['restored_count']} file{'s' if data['restored_count'] != 1 else ''}"
                 if data.get('restored_bytes', 0) > 0:
-                    restored_str += f"\n({self._format_bytes(data['restored_bytes'])})"
+                    restored_str += f"\n({format_bytes(data['restored_bytes'])})"
                 fields.append({
                     "name": "📤 Restored",
                     "value": restored_str,
@@ -531,7 +481,7 @@ class WebhookHandler(logging.Handler):
             if data.get('duration_seconds', 0) > 0:
                 fields.append({
                     "name": "⏱️ Duration",
-                    "value": self._format_duration(data['duration_seconds']),
+                    "value": format_duration(data['duration_seconds']),
                     "inline": True
                 })
 
@@ -639,14 +589,14 @@ class WebhookHandler(logging.Handler):
             fields = []
 
             if data.get('cached_count', 0) > 0:
-                size_str = f" ({self._format_bytes(data['cached_bytes'])})" if data.get('cached_bytes') else ""
+                size_str = f" ({format_bytes(data['cached_bytes'])})" if data.get('cached_bytes') else ""
                 fields.append({
                     "type": "mrkdwn",
                     "text": f"*Cached:* {data['cached_count']} file{'s' if data['cached_count'] != 1 else ''}{size_str}"
                 })
 
             if data.get('restored_count', 0) > 0:
-                size_str = f" ({self._format_bytes(data['restored_bytes'])})" if data.get('restored_bytes') else ""
+                size_str = f" ({format_bytes(data['restored_bytes'])})" if data.get('restored_bytes') else ""
                 fields.append({
                     "type": "mrkdwn",
                     "text": f"*Restored:* {data['restored_count']} file{'s' if data['restored_count'] != 1 else ''}{size_str}"
@@ -661,7 +611,7 @@ class WebhookHandler(logging.Handler):
             if data.get('duration_seconds', 0) > 0:
                 fields.append({
                     "type": "mrkdwn",
-                    "text": f"*Duration:* {self._format_duration(data['duration_seconds'])}"
+                    "text": f"*Duration:* {format_duration(data['duration_seconds'])}"
                 })
 
             if fields:

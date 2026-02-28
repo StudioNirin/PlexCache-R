@@ -1,0 +1,182 @@
+{% extends "settings/index.html" %}
+
+{% block settings_content %}
+
+<!-- Add Instance Form -->
+<div class="card">
+    <div class="card-header">
+        <i data-lucide="plus-circle"></i>
+        <h2>Add Instance</h2>
+    </div>
+    <div class="card-body">
+        <form id="add-arr-form" hx-post="/settings/integrations/instances" hx-target="#arr-instances" hx-swap="beforeend" hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('add-test-result').innerHTML = ''; }">
+            <div class="grid grid-2 mb-2">
+                <div class="form-group mb-1">
+                    <label for="arr-name">Name</label>
+                    <input type="text" id="arr-name" name="name" required placeholder="e.g., Sonarr 4K">
+                </div>
+                <div class="form-group mb-1">
+                    <label for="arr-type">Type</label>
+                    <select id="arr-type" name="arr_type" required>
+                        <option value="sonarr">Sonarr</option>
+                        <option value="radarr">Radarr</option>
+                    </select>
+                </div>
+            </div>
+            <div class="grid grid-2 mb-2">
+                <div class="form-group mb-1">
+                    <label for="arr-url">URL</label>
+                    <input type="url" id="arr-url" name="url" placeholder="http://localhost:8989">
+                </div>
+                <div class="form-group mb-1">
+                    <label for="arr-api-key">API Key</label>
+                    <div class="flex gap-1">
+                        <input type="password" id="arr-api-key" name="api_key" placeholder="Your API key" style="flex: 1;">
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="togglePasswordVisibility('arr-api-key', this)" title="Show/hide">
+                            <i data-lucide="eye"></i>
+                        </button>
+                    </div>
+                    <div class="form-hint">Found under Settings &gt; General &gt; API Key in Sonarr/Radarr</div>
+                </div>
+            </div>
+            <div class="flex gap-2 items-center">
+                <label class="switch">
+                    <input type="checkbox" name="enabled" checked>
+                    <span>Enabled</span>
+                </label>
+                <div style="flex: 1;"></div>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="testAddFormConnection()" id="add-test-btn">
+                    <i data-lucide="plug"></i> Test
+                </button>
+                <span id="add-test-result" style="margin-left: 0.25rem;"></span>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i data-lucide="plus"></i> Add Instance
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Existing Instances -->
+<div id="arr-instances">
+    {% include "settings/partials/arr_instances_list.html" %}
+</div>
+
+<!-- Info Card -->
+<div class="card">
+    <div class="card-body" style="padding: 1rem 1.25rem; display: flex; align-items: center; gap: 0.75rem;">
+        <i data-lucide="info" style="width: 18px; height: 18px; color: var(--plex-text-muted); flex-shrink: 0;"></i>
+        <span class="text-muted" style="font-size: 0.9rem;">
+            When configured, the Duplicate Scanner on the Maintenance page can automatically identify which files are tracked by your download clients and which are orphans safe to delete.
+        </span>
+    </div>
+</div>
+
+<script>
+function togglePasswordVisibility(inputId, btn) {
+    var input = document.getElementById(inputId);
+    if (!input) return;
+    if (input.type === 'password') {
+        input.type = 'text';
+        btn.innerHTML = '<i data-lucide="eye-off"></i>';
+    } else {
+        input.type = 'password';
+        btn.innerHTML = '<i data-lucide="eye"></i>';
+    }
+    lucide.createIcons();
+}
+
+function testArrConnection(url, apiKey, arrType, btn, resultSpan) {
+    var originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" style="width: 14px; height: 14px;"></span> Testing...';
+    resultSpan.innerHTML = '';
+
+    var formData = new FormData();
+    formData.append('url', url);
+    formData.append('api_key', apiKey);
+    formData.append('arr_type', arrType);
+
+    fetch('/settings/integrations/test', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                resultSpan.innerHTML = '<span style="color: var(--success);"><i data-lucide="check-circle" style="width: 14px; height: 14px; vertical-align: middle;"></i> ' + data.message + '</span>';
+            } else {
+                resultSpan.innerHTML = '<span style="color: var(--danger);"><i data-lucide="alert-circle" style="width: 14px; height: 14px; vertical-align: middle;"></i> ' + data.message + '</span>';
+            }
+            lucide.createIcons();
+        })
+        .catch(function(err) {
+            resultSpan.innerHTML = '<span style="color: var(--danger);">Connection failed: ' + err.message + '</span>';
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+            lucide.createIcons();
+        });
+}
+
+function testAddFormConnection() {
+    var url = document.getElementById('arr-url').value;
+    var apiKey = document.getElementById('arr-api-key').value;
+    var arrType = document.getElementById('arr-type').value;
+    var btn = document.getElementById('add-test-btn');
+    var result = document.getElementById('add-test-result');
+    testArrConnection(url, apiKey, arrType, btn, result);
+}
+
+function testInstanceConnection(index) {
+    var card = document.getElementById('arr-instance-' + index);
+    if (!card) return;
+
+    // Detect if edit mode is active
+    var editSection = card.querySelector('.instance-edit');
+    var inEditMode = editSection && editSection.style.display !== 'none';
+    var url, apiKey, arrType, btn, result;
+
+    if (inEditMode) {
+        var editForm = editSection.querySelector('form');
+        url = editForm.querySelector('[name="url"]').value;
+        apiKey = editForm.querySelector('[name="api_key"]').value;
+        arrType = editForm.querySelector('[name="arr_type"]').value;
+        btn = document.getElementById('edit-test-btn-' + index);
+        result = document.getElementById('edit-test-result-' + index);
+    } else {
+        url = card.dataset.url || '';
+        apiKey = card.dataset.apiKey || '';
+        arrType = card.dataset.type || 'sonarr';
+        btn = document.getElementById('test-btn-' + index);
+        result = document.getElementById('test-result-' + index);
+    }
+
+    testArrConnection(url, apiKey, arrType, btn, result);
+}
+
+function toggleInstanceEdit(index) {
+    var view = document.getElementById('instance-view-' + index);
+    var edit = document.getElementById('instance-edit-' + index);
+    if (view.style.display === 'none') {
+        view.style.display = 'block';
+        edit.style.display = 'none';
+    } else {
+        view.style.display = 'none';
+        edit.style.display = 'block';
+    }
+    lucide.createIcons();
+}
+
+function toggleEditPassword(inputId, btn) {
+    var input = document.getElementById(inputId);
+    if (!input) return;
+    if (input.type === 'password') {
+        input.type = 'text';
+        btn.innerHTML = '<i data-lucide="eye-off"></i>';
+    } else {
+        input.type = 'password';
+        btn.innerHTML = '<i data-lucide="eye"></i>';
+    }
+    lucide.createIcons();
+}
+</script>
+{% endblock %}

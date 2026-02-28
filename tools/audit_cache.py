@@ -192,7 +192,7 @@ def get_orphaned_plexcached_files():
             for f in files:
                 if f.endswith('.plexcached'):
                     plexcached_path = os.path.join(root, f)
-                    original_name = f[:-11]  # Remove .plexcached suffix
+                    original_name = f[:-len('.plexcached')]  # Remove .plexcached suffix
                     original_array_path = os.path.join(root, original_name)
 
                     # Find corresponding cache path
@@ -340,7 +340,7 @@ def fix_with_backup(dry_run=True):
         # Determine if this is a .plexcached backup or a duplicate
         if backup_or_array_path.endswith('.plexcached'):
             # It's a .plexcached backup - need to rename it
-            original_array_path = backup_or_array_path[:-11]  # Remove .plexcached suffix
+            original_array_path = backup_or_array_path[:-len('.plexcached')]  # Remove .plexcached suffix
             action = "restore backup"
         else:
             # It's a duplicate - array already has the file
@@ -832,7 +832,7 @@ def find_malformed_plexcached():
                 if f.endswith('.plexcached'):
                     total_scanned += 1
                     # Get the name without .plexcached suffix
-                    base_name = f[:-11]  # Remove '.plexcached'
+                    base_name = f[:-len('.plexcached')]  # Remove '.plexcached'
 
                     # Check if it has a valid media extension
                     has_extension = False

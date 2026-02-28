@@ -26,21 +26,13 @@
             align-items: center;
             justify-content: center;
             padding: 2rem;
-            background: linear-gradient(135deg, #0d0d0d 0%, #1a1a1a 50%, #141414 100%);
+            background: var(--plex-bg-darker);
             position: relative;
         }
 
-        /* Subtle animated gradient overlay */
+        /* No background overlay — flat design */
         .setup-container::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: radial-gradient(ellipse at 30% 20%, rgba(229, 160, 13, 0.08) 0%, transparent 50%),
-                        radial-gradient(ellipse at 70% 80%, rgba(229, 160, 13, 0.05) 0%, transparent 50%);
-            pointer-events: none;
+            display: none;
         }
 
         .setup-card {
@@ -56,7 +48,7 @@
         }
 
         .setup-header {
-            background: linear-gradient(180deg, rgba(229, 160, 13, 0.15) 0%, rgba(229, 160, 13, 0.05) 100%);
+            background: rgba(229, 160, 13, 0.08);
             padding: 1.5rem 2rem;
             border-bottom: 1px solid var(--plex-border);
             text-align: center;
@@ -71,7 +63,8 @@
             transform: translateX(-50%);
             width: 60%;
             height: 1px;
-            background: linear-gradient(90deg, transparent 0%, var(--plex-orange) 50%, transparent 100%);
+            background: var(--plex-orange);
+            opacity: 0.4;
         }
 
         .setup-header h1 {
@@ -336,7 +329,7 @@
             width: 80px;
             height: 80px;
             margin: 0 auto 1.5rem;
-            background: linear-gradient(135deg, var(--plex-orange) 0%, var(--plex-orange-dark) 100%);
+            background: var(--plex-orange);
             border-radius: 50%;
             display: flex;
             align-items: center;

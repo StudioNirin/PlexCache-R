@@ -1,498 +1,369 @@
-"""
-Unit tests for eviction safety - ensuring files are never deleted without backups.
+"""Tests for eviction safety — verifying CacheService.evict_file() never loses data.
 
-These tests verify that the eviction code NEVER deletes a cache file unless
-a verified copy exists on the array. This addresses the critical data loss bug
-where files were deleted without confirming backups existed.
+CRITICAL: These tests call production code and assert real filesystem state.
+They replace the previous static-analysis-only tests with behavioral tests.
 
-Bug context (commit bb1278e):
-- _should_add_to_cache() deleted array files instead of creating .plexcached backups
-- _run_smart_eviction() deleted cache files even when no backup existed
-- evict_file() in cache_service had same issue for single-file eviction
-
-CRITICAL: These tests are designed to FIND BUGS, not rubber-stamp the code.
-They simulate failure scenarios and edge cases that could cause data loss.
+Source: CacheService.evict_file() in web/services/cache_service.py
 """
 
+import json
 import os
 import sys
-import unittest
-import tempfile
 import shutil
-from unittest.mock import MagicMock, patch, PropertyMock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Mock fcntl for Windows compatibility
-sys.modules['fcntl'] = MagicMock()
-
-
-class TestEvictionSafetyPrinciples(unittest.TestCase):
-    """
-    Test the fundamental safety principles of eviction.
-
-    PRINCIPLE 1: Never delete cache file without confirmed array copy
-    PRINCIPLE 2: Always verify copy succeeded before deleting source
-    PRINCIPLE 3: Size mismatch = abort, do not proceed
-    PRINCIPLE 4: When in doubt, preserve data (fail safe)
-    """
-
-    def test_principle_array_confirmed_required(self):
-        """Eviction must require array_confirmed/array_restored flag."""
-        # Search code for the safety check pattern
-        app_py = Path(__file__).parent.parent / "core" / "app.py"
-        cache_service = Path(__file__).parent.parent / "web" / "services" / "cache_service.py"
-
-        # Check that both files have the safety check
-        for filepath in [app_py, cache_service]:
-            if filepath.exists():
-                content = filepath.read_text()
-                # Look for the critical safety pattern
-                has_safety_check = (
-                    "array_restored" in content or
-                    "array_confirmed" in content
-                )
-                self.assertTrue(has_safety_check,
-                    f"BUG: {filepath.name} missing array confirmation safety check!")
-
-    def test_principle_no_delete_without_exists_check(self):
-        """
-        BUG HUNT: Does any code path delete cache without checking array exists?
-        """
-        app_py = Path(__file__).parent.parent / "core" / "app.py"
-
-        if app_py.exists():
-            content = app_py.read_text()
-            lines = content.split('\n')
-
-            # Look for dangerous patterns
-            for i, line in enumerate(lines):
-                # Pattern: os.remove on cache without nearby exists check
-                if 'os.remove(cache_path)' in line or 'os.remove(cache_file' in line:
-                    # Check surrounding context (10 lines before) for safety check
-                    context_start = max(0, i - 10)
-                    context = '\n'.join(lines[context_start:i+1])
-
-                    # Should have array_restored or array_confirmed check
-                    has_safety = (
-                        'array_restored' in context or
-                        'array_confirmed' in context or
-                        'if not array' in context
-                    )
-
-                    # This test documents where cache deletion occurs
-                    # Manual review recommended for any flagged locations
-
-
-class TestEvictionWithMockedFilesystem(unittest.TestCase):
-    """
-    Test eviction logic with mocked filesystem operations.
-
-    These tests verify the LOGIC is correct, independent of actual file I/O.
-    """
-
-    def setUp(self):
-        """Create temporary directory for test files."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.cache_dir = os.path.join(self.temp_dir, "cache")
-        self.array_dir = os.path.join(self.temp_dir, "array")
-        os.makedirs(self.cache_dir)
-        os.makedirs(self.array_dir)
-
-    def tearDown(self):
-        """Clean up temporary directory."""
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def _create_test_file(self, path: str, content: str = "test content"):
-        """Helper to create a test file with specific content."""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(content)
-        return path
-
-    def test_scenario_no_backup_no_array_file(self):
-        """
-        CRITICAL: Cache file exists, no backup, no array file.
-
-        This is the data loss scenario. The ONLY safe action is to
-        COPY cache to array FIRST, then delete cache.
-
-        If code deletes cache without copying first = DATA LOSS.
-        """
-        cache_file = os.path.join(self.cache_dir, "movie.mkv")
-        array_file = os.path.join(self.array_dir, "movie.mkv")
-        plexcached_file = array_file + ".plexcached"
+import pytest
 
-        # Create cache file only
-        self._create_test_file(cache_file, "precious movie data")
+# conftest.py handles fcntl/apscheduler mocking and path setup
+from conftest import create_test_file
 
-        # Verify setup
-        self.assertTrue(os.path.exists(cache_file))
-        self.assertFalse(os.path.exists(array_file))
-        self.assertFalse(os.path.exists(plexcached_file))
+# Mock web.config before importing cache_service
+sys.modules.setdefault('web.config', MagicMock(
+    PROJECT_ROOT=MagicMock(),
+    DATA_DIR=MagicMock(),
+    CONFIG_DIR=MagicMock(),
+    SETTINGS_FILE=MagicMock(),
+))
 
-        # The data exists ONLY on cache - this is the danger zone
-        # Correct behavior: copy to array, verify, then delete cache
-        # Bug behavior: delete cache immediately = data loss
+from web.services.cache_service import CacheService
 
-    def test_scenario_plexcached_exists(self):
-        """
-        Safe scenario: .plexcached backup exists on array.
 
-        Should rename .plexcached -> original, then delete cache.
-        """
-        cache_file = os.path.join(self.cache_dir, "movie.mkv")
-        array_file = os.path.join(self.array_dir, "movie.mkv")
-        plexcached_file = array_file + ".plexcached"
+# ============================================================================
+# Helpers
+# ============================================================================
 
-        # Create cache file and backup
-        self._create_test_file(cache_file, "movie data")
-        self._create_test_file(plexcached_file, "movie data")
+def _make_service(tmp_path, cache_prefix="/mnt/cache", real_prefix="/mnt/user"):
+    """Create a CacheService with tmp_path-based file paths and patched settings."""
+    svc = CacheService()
+
+    # Point tracking files at tmp_path
+    svc.exclude_file = tmp_path / "exclude.txt"
+    svc.timestamps_file = tmp_path / "timestamps.json"
+    svc.settings_file = tmp_path / "settings.json"
+
+    settings = {
+        "path_mappings": [{
+            "enabled": True,
+            "cache_path": cache_prefix,
+            "real_path": real_prefix,
+            "cacheable": True,
+        }]
+    }
+    svc.settings_file.write_text(json.dumps(settings, indent=2))
 
-        # Verify setup
-        self.assertTrue(os.path.exists(cache_file))
-        self.assertTrue(os.path.exists(plexcached_file))
+    return svc
+
+
+def _setup_tracking(svc, cache_path):
+    """Add a cache_path to the timestamps and exclude files so evict_file finds it."""
+    # Timestamps
+    ts_data = {cache_path: {"cached_at": "2026-01-15T10:00:00", "source": "ondeck"}}
+    svc.timestamps_file.write_text(json.dumps(ts_data, indent=2))
+
+    # Exclude file (host path = same as cache path for simplicity)
+    svc.exclude_file.write_text(cache_path + "\n")
 
-        # Safe to evict: restore backup, delete cache
 
-    def test_scenario_array_already_exists(self):
-        """
-        Edge case: Array file already exists (shouldn't happen normally).
+# ============================================================================
+# TestEvictionSafetyInvariants
+# ============================================================================
 
-        Safe to delete cache since array has the file.
-        """
-        cache_file = os.path.join(self.cache_dir, "movie.mkv")
-        array_file = os.path.join(self.array_dir, "movie.mkv")
+class TestEvictionSafetyInvariants:
+    """CRITICAL: Core safety invariants for eviction."""
 
-        # Create both files
-        self._create_test_file(cache_file, "movie data")
-        self._create_test_file(array_file, "movie data")
+    def test_no_path_mapping_aborts(self, tmp_path):
+        """CRITICAL: Eviction aborts when no path mapping matches the cache file."""
+        svc = _make_service(tmp_path, cache_prefix="/mnt/other_cache")
+        cache_file = tmp_path / "cache" / "movie.mkv"
+        create_test_file(str(cache_file), "precious data")
+        _setup_tracking(svc, "/mnt/cache/movie.mkv")
 
-        # Safe to evict: array already has it
+        result = svc.evict_file("/mnt/cache/movie.mkv")
 
-    def test_bug_size_mismatch_after_copy(self):
-        """
-        BUG HUNT: What if copy succeeds but sizes don't match?
+        assert not result["success"]
+        assert "aborted" in result["message"].lower() or "Cannot determine" in result["message"]
 
-        This could indicate:
-        - Disk full during copy
-        - Filesystem corruption
-        - Race condition
+    def test_copy_oserror_preserves_cache(self, tmp_path):
+        """CRITICAL: Cache file preserved when copy to array raises OSError."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+
+        # Create cache file on real filesystem
+        real_cache = tmp_path / "cache_file.mkv"
+        real_cache.write_text("movie data")
+
+        _setup_tracking(svc, cache_path)
 
-        MUST NOT delete cache if sizes don't match!
-        """
-        cache_file = os.path.join(self.cache_dir, "movie.mkv")
-        array_file = os.path.join(self.array_dir, "movie.mkv")
-
-        # Create cache file
-        original_content = "A" * 1000  # 1000 bytes
-        self._create_test_file(cache_file, original_content)
-
-        # Simulate corrupted/partial copy
-        corrupted_content = "A" * 500  # Only 500 bytes
-        self._create_test_file(array_file, corrupted_content)
-
-        cache_size = os.path.getsize(cache_file)
-        array_size = os.path.getsize(array_file)
-
-        # Sizes don't match!
-        self.assertNotEqual(cache_size, array_size)
-
-        # Correct behavior: DO NOT delete cache
-        # Bug behavior: Delete cache anyway = data loss (partial file on array)
-
-    def test_bug_copy_fails_silently(self):
-        """
-        BUG HUNT: What if shutil.copy2 fails silently or partially?
-        """
-        cache_file = os.path.join(self.cache_dir, "movie.mkv")
-        array_file = os.path.join(self.array_dir, "movie.mkv")
-
-        self._create_test_file(cache_file, "movie data")
-
-        # Simulate copy "succeeding" but file not appearing
-        # (could happen with network filesystems, permission issues, etc.)
-
-        # After failed copy, array_file should not exist
-        self.assertFalse(os.path.exists(array_file))
-
-        # Correct behavior: Check os.path.exists(array_file) AFTER copy
-        # Bug behavior: Assume copy worked = data loss
-
-    def test_bug_race_condition_file_deleted_between_copy_and_verify(self):
-        """
-        BUG HUNT: What if array file is deleted between copy and verification?
-
-        Unlikely but possible with concurrent processes.
-        """
-        cache_file = os.path.join(self.cache_dir, "movie.mkv")
-        array_file = os.path.join(self.array_dir, "movie.mkv")
-
-        self._create_test_file(cache_file, "movie data")
-
-        # Copy succeeds
-        shutil.copy2(cache_file, array_file)
-        self.assertTrue(os.path.exists(array_file))
-
-        # But then another process deletes it!
-        os.remove(array_file)
-        self.assertFalse(os.path.exists(array_file))
-
-        # Verification must happen IMMEDIATELY before cache deletion
-        # There should be minimal code between verify and delete
-
-
-class TestEvictionCodePatterns(unittest.TestCase):
-    """
-    Static analysis of eviction code patterns.
-
-    These tests examine the actual code structure to ensure safety patterns
-    are correctly implemented.
-    """
-
-    def test_eviction_has_array_confirmed_check(self):
-        """Verify _run_smart_eviction checks array_restored before deleting."""
-        app_py = Path(__file__).parent.parent / "core" / "app.py"
-
-        if not app_py.exists():
-            self.skipTest("app.py not found")
-
-        content = app_py.read_text()
-
-        # Find the _run_smart_eviction method
-        if "_run_smart_eviction" not in content:
-            self.skipTest("_run_smart_eviction not found")
-
-        # Check for the critical safety pattern:
-        # "if not array_restored:" followed by "continue" or error handling
-        safety_pattern_found = (
-            "if not array_restored:" in content and
-            ("continue" in content or "Skipping cache deletion" in content)
-        )
-
-        self.assertTrue(safety_pattern_found,
-            "BUG: _run_smart_eviction missing 'if not array_restored' safety check!")
-
-    def test_evict_file_has_array_confirmed_check(self):
-        """Verify evict_file in cache_service checks array_confirmed."""
-        cache_service = Path(__file__).parent.parent / "web" / "services" / "cache_service.py"
-
-        if not cache_service.exists():
-            self.skipTest("cache_service.py not found")
-
-        content = cache_service.read_text()
-
-        # Check for the safety pattern
-        safety_pattern_found = (
-            "array_confirmed" in content and
-            "if not array_confirmed:" in content
-        )
-
-        self.assertTrue(safety_pattern_found,
-            "BUG: evict_file missing 'if not array_confirmed' safety check!")
-
-    def test_should_add_to_cache_preserves_array_file(self):
-        """
-        Verify _should_add_to_cache renames array files to .plexcached, not deletes.
-
-        Bug history: This function was deleting array files instead of renaming.
-        """
-        file_ops = Path(__file__).parent.parent / "core" / "file_operations.py"
-
-        if not file_ops.exists():
-            self.skipTest("file_operations.py not found")
-
-        content = file_ops.read_text()
-
-        # Find _should_add_to_cache method
-        if "_should_add_to_cache" not in content:
-            self.skipTest("_should_add_to_cache not found")
-
-        # The method should use os.rename to create .plexcached, NOT os.remove
-        # This is a heuristic check - look for rename pattern near the method
-
-        # Find the method boundaries
-        method_start = content.find("def _should_add_to_cache")
-        if method_start == -1:
-            self.skipTest("Could not find method")
-
-        # Get ~100 lines after method start
-        method_content = content[method_start:method_start + 5000]
-
-        # Should have rename pattern for creating .plexcached
-        has_rename_pattern = (
-            "os.rename" in method_content and
-            ".plexcached" in method_content
-        )
-
-        # Should NOT have bare os.remove(array_file) without safety
-        # (Some removes are OK if they're for old backups after upgrade)
-
-        self.assertTrue(has_rename_pattern,
-            "WARNING: _should_add_to_cache may not be creating .plexcached backups correctly")
-
-
-class TestEvictionEdgeCases(unittest.TestCase):
-    """Test edge cases that have historically caused data loss."""
-
-    def test_edge_case_upgrade_scenario(self):
-        """
-        Edge case: Radarr/Sonarr upgraded file while it was cached.
-
-        Old .plexcached has different filename than current cache file.
-        Should use media identity matching to find old backup.
-        """
-        # This is tested via get_media_identity and find_matching_plexcached
-        # Verify these functions exist and are used in eviction
-
-        file_ops = Path(__file__).parent.parent / "core" / "file_operations.py"
-
-        if file_ops.exists():
-            content = file_ops.read_text()
-            self.assertIn("get_media_identity", content,
-                "Missing get_media_identity for upgrade detection")
-            self.assertIn("find_matching_plexcached", content,
-                "Missing find_matching_plexcached for upgrade detection")
-
-    def test_edge_case_permission_denied(self):
-        """
-        Edge case: Permission denied when trying to copy/rename.
-
-        Should fail safely without deleting cache.
-        """
-        # The code should catch PermissionError and abort eviction
-        # Verify this pattern exists
-
-        cache_service = Path(__file__).parent.parent / "web" / "services" / "cache_service.py"
-
-        if cache_service.exists():
-            content = cache_service.read_text()
-            self.assertIn("PermissionError", content,
-                "evict_file should handle PermissionError")
-
-    def test_edge_case_disk_full(self):
-        """
-        Edge case: Disk full during copy to array.
-
-        Copy will fail or produce truncated file.
-        Must verify size matches before deleting cache.
-        """
-        # The code should compare file sizes after copy
-        # Verify this pattern exists
-
-        app_py = Path(__file__).parent.parent / "core" / "app.py"
-
-        if app_py.exists():
-            content = app_py.read_text()
-            # Look for size comparison after copy
-            has_size_check = (
-                "getsize" in content and
-                "cache_size" in content and
-                "array_size" in content
-            )
-            self.assertTrue(has_size_check,
-                "Eviction should verify file sizes match after copy")
-
-
-class TestCacheServiceEvictionIntegration(unittest.TestCase):
-    """
-    Integration-style tests for cache_service.evict_file().
-
-    These tests use mocking to simulate various filesystem states.
-    """
-
-    def test_evict_file_no_backup_copies_first(self):
-        """
-        When no backup exists, evict_file must copy cache to array first.
-        """
-        from web.services.cache_service import CacheService
-
-        # This would require mocking the entire CacheService
-        # Verify the code path exists
-        cache_service = Path(__file__).parent.parent / "web" / "services" / "cache_service.py"
-
-        if cache_service.exists():
-            content = cache_service.read_text()
-            # Look for the copy-when-no-backup pattern
-            has_copy_fallback = (
-                "shutil.copy2" in content and
-                "No backup and no array copy" in content
-            )
-            self.assertTrue(has_copy_fallback,
-                "evict_file should copy cache to array when no backup exists")
-
-    def test_evict_file_returns_error_on_failure(self):
-        """
-        evict_file should return error message, not silently fail.
-        """
-        cache_service = Path(__file__).parent.parent / "web" / "services" / "cache_service.py"
-
-        if cache_service.exists():
-            content = cache_service.read_text()
-            # Should return error messages for various failure cases
-            error_messages = [
-                "eviction aborted to prevent data loss",
-                "Array copy not confirmed",
-                "Size mismatch",
-            ]
-            for msg in error_messages:
-                self.assertIn(msg, content,
-                    f"Missing error message: {msg}")
-
-
-class TestDataLossPrevention(unittest.TestCase):
-    """
-    Meta-tests verifying data loss prevention is comprehensive.
-    """
-
-    def test_all_eviction_paths_have_safety_checks(self):
-        """
-        Verify every code path that deletes cache files has safety checks.
-
-        This is a comprehensive check across all relevant files.
-        """
-        files_to_check = [
-            ("core/app.py", "_run_smart_eviction"),
-            ("core/file_operations.py", "_should_add_to_cache"),
-            ("web/services/cache_service.py", "evict_file"),
-            ("web/services/maintenance_service.py", "move_to_array"),
-        ]
-
-        base_path = Path(__file__).parent.parent
-
-        for filepath, method_name in files_to_check:
-            full_path = base_path / filepath
-            if not full_path.exists():
-                continue
-
-            content = full_path.read_text()
-
-            if method_name not in content:
-                continue
-
-            # Find os.remove calls and verify they have safety context
-            if "os.remove" in content:
-                # This is a heuristic - manual review recommended
-                # The point is to flag files that might need attention
-                pass
-
-    def test_no_unconditional_cache_deletion(self):
-        """
-        Verify there's no code that unconditionally deletes cache files.
-
-        Pattern to avoid:
-            os.remove(cache_path)  # No preceding safety check
-
-        Pattern that's OK:
-            if array_confirmed:
-                os.remove(cache_path)
-        """
-        # This would require AST analysis for full accuracy
-        # For now, this test serves as documentation of the requirement
-        pass
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+        with patch('os.path.exists') as mock_exists, \
+             patch('shutil.copy2', side_effect=OSError("disk full")), \
+             patch('web.services.cache_service.get_array_direct_path', return_value="/mnt/user0/movie.mkv"):
+
+            # exists: cache_path=True, plexcached=False, array=False, array_direct=False
+            def exists_side_effect(p):
+                if p == cache_path:
+                    return True
+                return False
+            mock_exists.side_effect = exists_side_effect
+
+            result = svc.evict_file(cache_path)
+
+        assert not result["success"]
+
+    def test_size_mismatch_aborts_eviction(self, tmp_path):
+        """CRITICAL: Eviction aborts when copy succeeds but sizes don't match."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+        array_direct = "/mnt/user0/movie.mkv"
+
+        _setup_tracking(svc, cache_path)
+
+        # Track calls to array_direct — first check (step 2) returns False,
+        # second check (after copy) returns True
+        array_direct_calls = {'count': 0}
+
+        with patch('os.path.exists') as mock_exists, \
+             patch('os.path.getsize') as mock_getsize, \
+             patch('shutil.copy2'), \
+             patch('os.makedirs'), \
+             patch('os.remove') as mock_remove, \
+             patch('web.services.cache_service.get_array_direct_path', return_value=array_direct):
+
+            def exists_side(p):
+                if p == cache_path:
+                    return True
+                if p == array_direct:
+                    array_direct_calls['count'] += 1
+                    return array_direct_calls['count'] > 1  # False first, True after copy
+                return False
+            mock_exists.side_effect = exists_side
+
+            def size_side(p):
+                if p == cache_path:
+                    return 1000
+                if p == array_direct:
+                    return 500  # Mismatch!
+                return 0
+            mock_getsize.side_effect = size_side
+
+            result = svc.evict_file(cache_path)
+
+        assert not result["success"]
+        assert "mismatch" in result["message"].lower() or "Size" in result["message"]
+
+    def test_permission_error_preserves_cache(self, tmp_path):
+        """CRITICAL: PermissionError during eviction doesn't delete cache."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+
+        _setup_tracking(svc, cache_path)
+
+        with patch('os.path.exists', return_value=True), \
+             patch('os.rename', side_effect=PermissionError("denied")):
+
+            result = svc.evict_file(cache_path)
+
+        assert not result["success"]
+        assert "Permission" in result["message"] or "denied" in result["message"]
+
+    def test_plexcached_restore_then_delete_flow(self, tmp_path):
+        """When .plexcached backup exists, restores it and deletes cache copy."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+        array_path = "/mnt/user/movie.mkv"
+        plexcached_path = array_path + ".plexcached"
+
+        _setup_tracking(svc, cache_path)
+
+        rename_calls = []
+        remove_calls = []
+
+        with patch('os.path.exists') as mock_exists, \
+             patch('os.rename') as mock_rename, \
+             patch('os.remove') as mock_remove:
+
+            def exists_side(p):
+                if p == cache_path:
+                    return True
+                if p == plexcached_path:
+                    return True
+                return False
+            mock_exists.side_effect = exists_side
+            mock_rename.side_effect = lambda s, d: rename_calls.append((s, d))
+            mock_remove.side_effect = lambda p: remove_calls.append(p)
+
+            result = svc.evict_file(cache_path)
+
+        assert result["success"]
+        # .plexcached should be renamed to original array path
+        assert any(plexcached_path == call[0] for call in rename_calls)
+        # Cache file should be removed
+        assert cache_path in remove_calls
+
+    def test_no_backup_copy_then_delete_flow(self, tmp_path):
+        """When no backup exists, copies cache to array, verifies, then deletes."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+        array_direct = "/mnt/user0/movie.mkv"
+
+        _setup_tracking(svc, cache_path)
+
+        copy_calls = []
+        remove_calls = []
+
+        # Track calls — array_direct returns False on first check (step 2),
+        # True after copy (verification check)
+        array_direct_calls = {'count': 0}
+
+        with patch('os.path.exists') as mock_exists, \
+             patch('os.path.getsize', return_value=1000), \
+             patch('shutil.copy2') as mock_copy, \
+             patch('os.makedirs'), \
+             patch('os.remove') as mock_remove, \
+             patch('web.services.cache_service.get_array_direct_path', return_value=array_direct):
+
+            def exists_side(p):
+                if p == cache_path:
+                    return True
+                if p == array_direct:
+                    array_direct_calls['count'] += 1
+                    return array_direct_calls['count'] > 1  # False first, True after copy
+                return False
+            mock_exists.side_effect = exists_side
+            mock_copy.side_effect = lambda s, d: copy_calls.append((s, d))
+            mock_remove.side_effect = lambda p: remove_calls.append(p)
+
+            result = svc.evict_file(cache_path)
+
+        assert result["success"]
+        assert len(copy_calls) == 1
+        assert copy_calls[0] == (cache_path, array_direct)
+        assert cache_path in remove_calls
+
+    def test_array_confirmed_false_prevents_deletion(self, tmp_path):
+        """CRITICAL: When array copy cannot be confirmed, cache file is NOT deleted."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+        array_direct = "/mnt/user0/movie.mkv"
+
+        _setup_tracking(svc, cache_path)
+
+        with patch('os.path.exists') as mock_exists, \
+             patch('shutil.copy2'), \
+             patch('os.makedirs'), \
+             patch('os.remove') as mock_remove, \
+             patch('web.services.cache_service.get_array_direct_path', return_value=array_direct):
+
+            def exists_side(p):
+                if p == cache_path:
+                    return True
+                if p == array_direct:
+                    return False  # Copy didn't produce a file
+                return False
+            mock_exists.side_effect = exists_side
+
+            result = svc.evict_file(cache_path)
+
+        assert not result["success"]
+        assert "aborted" in result["message"].lower() or "Failed" in result["message"]
+        # cache file should NOT have been removed
+        assert cache_path not in [c.args[0] if hasattr(c, 'args') else c for c in mock_remove.call_args_list]
+
+    def test_empty_path_rejected(self, tmp_path):
+        """Empty path is rejected immediately."""
+        svc = _make_service(tmp_path)
+        result = svc.evict_file("")
+
+        assert not result["success"]
+        assert "No file path" in result["message"]
+
+    def test_file_not_in_cache_list_rejected(self, tmp_path):
+        """File not tracked in cache list is rejected."""
+        svc = _make_service(tmp_path)
+        # Don't set up tracking
+        svc.timestamps_file.write_text("{}")
+        svc.exclude_file.write_text("")
+
+        result = svc.evict_file("/mnt/cache/unknown.mkv")
+
+        assert not result["success"]
+        assert "not found" in result["message"].lower()
+
+
+# ============================================================================
+# TestEvictionTrackingCleanup
+# ============================================================================
+
+class TestEvictionTrackingCleanup:
+    """Tests for tracking file cleanup after successful eviction."""
+
+    def test_success_removes_from_timestamps(self, tmp_path):
+        """Successful eviction removes the file from timestamps.json."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+        plexcached_path = "/mnt/user/movie.mkv.plexcached"
+
+        _setup_tracking(svc, cache_path)
+
+        with patch('os.path.exists') as mock_exists, \
+             patch('os.rename'), \
+             patch('os.remove'):
+
+            def exists_side(p):
+                if p == cache_path:
+                    return True
+                if p == plexcached_path:
+                    return True
+                return False
+            mock_exists.side_effect = exists_side
+
+            result = svc.evict_file(cache_path)
+
+        assert result["success"]
+        ts_data = json.loads(svc.timestamps_file.read_text())
+        assert cache_path not in ts_data
+
+    def test_success_removes_from_exclude_file(self, tmp_path):
+        """Successful eviction removes the file from exclude list."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+        plexcached_path = "/mnt/user/movie.mkv.plexcached"
+
+        _setup_tracking(svc, cache_path)
+        # Add another entry to verify it's preserved
+        svc.exclude_file.write_text(cache_path + "\n/mnt/cache/other.mkv\n")
+
+        with patch('os.path.exists') as mock_exists, \
+             patch('os.rename'), \
+             patch('os.remove'):
+
+            def exists_side(p):
+                if p == cache_path:
+                    return True
+                if p == plexcached_path:
+                    return True
+                return False
+            mock_exists.side_effect = exists_side
+
+            result = svc.evict_file(cache_path)
+
+        assert result["success"]
+        lines = svc.exclude_file.read_text().strip().split('\n')
+        stripped = [l.strip() for l in lines if l.strip()]
+        assert cache_path not in stripped
+
+    def test_failure_preserves_tracking_files(self, tmp_path):
+        """Failed eviction does not modify tracking files."""
+        svc = _make_service(tmp_path)
+        cache_path = "/mnt/cache/movie.mkv"
+
+        _setup_tracking(svc, cache_path)
+        original_ts = svc.timestamps_file.read_text()
+        original_exclude = svc.exclude_file.read_text()
+
+        with patch('os.path.exists', return_value=False):
+            # File not on disk — will fail to find .plexcached or cache file
+            result = svc.evict_file(cache_path)
+
+        # Tracking files unchanged (the function returned early before cleanup)
+        assert svc.timestamps_file.read_text() == original_ts

@@ -26,6 +26,7 @@ class PathMapping:
     cache_path: Optional[str] = None
     cacheable: bool = True
     enabled: bool = True
+    section_id: Optional[int] = None
 
 
 @dataclass
@@ -49,6 +50,7 @@ class CacheSettings:
     cache_drive_size: str = ""  # Manual override for drive size (for ZFS)
     cache_limit: str = "250GB"
     min_free_space: str = ""
+    plexcache_quota: str = ""
     cache_eviction_mode: str = "none"
     cache_eviction_threshold_percent: int = 95
     eviction_min_priority: int = 60
@@ -112,7 +114,7 @@ class SettingsService:
     def _sanitize_path_mapping(self, mapping: Dict[str, Any]) -> Dict[str, Any]:
         """Sanitize all path fields in a path mapping"""
         sanitized = mapping.copy()
-        path_fields = ["plex_path", "real_path", "cache_path"]
+        path_fields = ["plex_path", "real_path", "cache_path", "host_cache_path"]
         for field in path_fields:
             if field in sanitized and sanitized[field]:
                 sanitized[field] = self._sanitize_path(sanitized[field])
@@ -222,10 +224,17 @@ class SettingsService:
         return self._save_raw(raw)
 
     def update_path_mapping(self, index: int, mapping: Dict[str, Any]) -> bool:
-        """Update an existing path mapping by index (sanitizes paths to strip whitespace)"""
+        """Update an existing path mapping by index (sanitizes paths to strip whitespace).
+
+        Preserves section_id from the existing mapping if not in the update dict.
+        """
         raw = self._load_raw()
         mappings = raw.get("path_mappings", [])
         if 0 <= index < len(mappings):
+            # Preserve section_id from existing mapping if not provided
+            existing = mappings[index]
+            if "section_id" not in mapping and "section_id" in existing:
+                mapping["section_id"] = existing["section_id"]
             mappings[index] = self._sanitize_path_mapping(mapping)
             raw["path_mappings"] = mappings
             return self._save_raw(raw)
@@ -241,27 +250,130 @@ class SettingsService:
             return self._save_raw(raw)
         return False
 
+    def _rebuild_valid_sections(self, raw: Dict[str, Any]) -> None:
+        """Rebuild valid_sections from enabled path_mappings with section_id.
+
+        Scans all enabled path_mappings that have a section_id set,
+        collects unique IDs, and writes them sorted to raw["valid_sections"].
+        """
+        mappings = raw.get("path_mappings", [])
+        section_ids = set()
+        for m in mappings:
+            sid = m.get("section_id")
+            if sid is not None and m.get("enabled", True):
+                section_ids.add(int(sid))
+        raw["valid_sections"] = sorted(section_ids)
+
+    def migrate_link_path_mappings_to_libraries(self) -> bool:
+        """One-time migration: match existing path_mappings to Plex libraries by plex_path.
+
+        Sets section_id on mappings whose plex_path matches a Plex library location.
+        Skips if any mapping already has a section_id (already migrated).
+
+        Returns True if migration was performed.
+        """
+        raw = self._load_raw()
+        mappings = raw.get("path_mappings", [])
+
+        if not mappings:
+            return False
+
+        # Skip if any mapping already has section_id
+        if any(m.get("section_id") is not None for m in mappings):
+            return False
+
+        # Get Plex libraries to match against
+        libraries = self.get_plex_libraries()
+        if not libraries:
+            return False
+
+        # Build lookup: normalized plex_path → section_id
+        path_to_section = {}
+        for lib in libraries:
+            for loc in lib.get("locations", []):
+                normalized = loc.rstrip("/") + "/"
+                path_to_section[normalized] = lib["id"]
+
+        migrated = False
+        for m in mappings:
+            plex_path = m.get("plex_path", "").rstrip("/") + "/" if m.get("plex_path") else ""
+            if plex_path in path_to_section:
+                m["section_id"] = path_to_section[plex_path]
+                migrated = True
+
+        if migrated:
+            raw["path_mappings"] = mappings
+            self._rebuild_valid_sections(raw)
+            self._save_raw(raw)
+            logger.info("Migrated path mappings: linked to Plex library section IDs")
+
+        return migrated
+
+    def auto_fill_mapping(self, library: Dict, plex_location: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate a pre-filled path mapping from a Plex library location.
+
+        Args:
+            library: Plex library dict with id, title, type, locations
+            plex_location: The specific Plex path for this location
+            settings: Current raw settings (for cache_dir)
+
+        Returns:
+            Dict suitable for adding to path_mappings
+        """
+        cache_dir = settings.get("cache_dir", "/mnt/cache").rstrip("/")
+        plex_path = plex_location if plex_location.endswith("/") else plex_location + "/"
+
+        # Suggest real_path based on common Docker path patterns
+        real_path = plex_path
+        for docker_prefix, host_prefix in [("/data/", "/mnt/user/"), ("/media/", "/mnt/user/")]:
+            if plex_path.startswith(docker_prefix):
+                real_path = plex_path.replace(docker_prefix, host_prefix, 1)
+                break
+
+        # Generate cache_path from library folder name
+        lib_folder = plex_path.rstrip("/").split("/")[-1]
+        cache_path = f"{cache_dir}/{lib_folder}/"
+
+        return {
+            "name": library["title"],
+            "plex_path": plex_path,
+            "real_path": real_path,
+            "cache_path": cache_path,
+            "host_cache_path": cache_path,
+            "cacheable": True,
+            "enabled": True,
+            "section_id": library["id"]
+        }
+
     def get_cache_settings(self) -> Dict[str, Any]:
         """Get cache behavior settings"""
         raw = self._load_raw()
         return {
+            # Content discovery (moved from Plex tab)
+            "number_episodes": raw.get("number_episodes", 5),
+            "days_to_monitor": raw.get("days_to_monitor", 183),
             "watchlist_toggle": raw.get("watchlist_toggle", True),
             "watchlist_episodes": raw.get("watchlist_episodes", 3),
             "watchlist_retention_days": raw.get("watchlist_retention_days", 0),
+            "ondeck_retention_days": raw.get("ondeck_retention_days", 0),
             "watched_move": raw.get("watched_move", True),
             "create_plexcached_backups": raw.get("create_plexcached_backups", True),
             "cleanup_empty_folders": raw.get("cleanup_empty_folders", True),
+            "use_symlinks": raw.get("use_symlinks", False),
             "hardlinked_files": raw.get("hardlinked_files", "skip"),
             "cache_retention_hours": raw.get("cache_retention_hours", 12),
             "cache_drive_size": raw.get("cache_drive_size", ""),
             "cache_limit": raw.get("cache_limit", "250GB"),
             "min_free_space": raw.get("min_free_space", ""),
+            "plexcache_quota": raw.get("plexcache_quota", ""),
             "cache_eviction_mode": raw.get("cache_eviction_mode", "none"),
             "cache_eviction_threshold_percent": raw.get("cache_eviction_threshold_percent", 95),
             "eviction_min_priority": raw.get("eviction_min_priority", 60),
             "remote_watchlist_toggle": raw.get("remote_watchlist_toggle", False),
             "remote_watchlist_rss_url": raw.get("remote_watchlist_rss_url", ""),
-            "activity_retention_hours": raw.get("activity_retention_hours", 24),
+            # Upgrade tracking
+            "auto_transfer_upgrades": raw.get("auto_transfer_upgrades", True),
+            "backup_upgraded_files": raw.get("backup_upgraded_files", True),
             # Scanning
             "excluded_folders": raw.get("excluded_folders", []),
             # Advanced settings
@@ -279,27 +391,42 @@ class SettingsService:
 
         # Map form field names to settings keys
         field_mapping = {
+            # Content discovery (moved from Plex tab)
+            "number_episodes": ("number_episodes", safe_int),
+            "days_to_monitor": ("days_to_monitor", safe_int),
             "watchlist_toggle": ("watchlist_toggle", lambda x: x == "on" or x is True),
             "watchlist_episodes": ("watchlist_episodes", safe_int),
             "watchlist_retention_days": ("watchlist_retention_days", float),
+            "ondeck_retention_days": ("ondeck_retention_days", float),
             "watched_move": ("watched_move", lambda x: x == "on" or x is True),
             "create_plexcached_backups": ("create_plexcached_backups", lambda x: x == "on" or x is True),
             "cleanup_empty_folders": ("cleanup_empty_folders", lambda x: x == "on" or x is True),
+            "use_symlinks": ("use_symlinks", lambda x: x == "on" or x is True),
             "hardlinked_files": ("hardlinked_files", str),
             "cache_retention_hours": ("cache_retention_hours", safe_int),
             "cache_drive_size": ("cache_drive_size", str),
             "cache_limit": ("cache_limit", str),
             "min_free_space": ("min_free_space", str),
+            "plexcache_quota": ("plexcache_quota", str),
             "cache_eviction_mode": ("cache_eviction_mode", str),
             "cache_eviction_threshold_percent": ("cache_eviction_threshold_percent", safe_int),
             "eviction_min_priority": ("eviction_min_priority", safe_int),
             "remote_watchlist_toggle": ("remote_watchlist_toggle", lambda x: x == "on" or x is True),
             "remote_watchlist_rss_url": ("remote_watchlist_rss_url", str),
-            "activity_retention_hours": ("activity_retention_hours", safe_int),
+            # Upgrade tracking
+            "auto_transfer_upgrades": ("auto_transfer_upgrades", lambda x: x == "on" or x is True),
+            "backup_upgraded_files": ("backup_upgraded_files", lambda x: x == "on" or x is True),
             # Advanced settings
             "max_concurrent_moves_array": ("max_concurrent_moves_array", safe_int),
             "max_concurrent_moves_cache": ("max_concurrent_moves_cache", safe_int),
             "exit_if_active_session": ("exit_if_active_session", lambda x: x == "on" or x is True)
+        }
+
+        # Boolean fields that come from checkboxes (absent = unchecked = False)
+        boolean_fields = {
+            "watchlist_toggle", "watched_move", "create_plexcached_backups",
+            "cleanup_empty_folders", "use_symlinks", "auto_transfer_upgrades",
+            "backup_upgraded_files", "remote_watchlist_toggle", "exit_if_active_session"
         }
 
         for form_field, (setting_key, converter) in field_mapping.items():
@@ -308,6 +435,8 @@ class SettingsService:
                     raw[setting_key] = converter(settings[form_field])
                 except (ValueError, TypeError):
                     pass  # Keep existing value on conversion error
+            elif form_field in boolean_fields:
+                raw[setting_key] = False
 
         # Handle list fields separately (not through field_mapping)
         if "excluded_folders" in settings:
@@ -346,13 +475,95 @@ class SettingsService:
         raw["webhook_level"] = settings.get("webhook_level", raw.get("webhook_level", "summary"))
         return self._save_raw(raw)
 
+    def get_arr_instances(self) -> List[Dict[str, Any]]:
+        """Get Sonarr/Radarr integration instances.
+
+        Auto-migrates old flat keys (sonarr_url, radarr_url, etc.) on first access.
+        """
+        raw = self._load_raw()
+
+        # Auto-migrate old flat keys → arr_instances list
+        if "arr_instances" not in raw:
+            instances = []
+            sonarr_url = raw.get("sonarr_url", "").strip()
+            sonarr_key = raw.get("sonarr_api_key", "").strip()
+            if sonarr_url or sonarr_key:
+                instances.append({
+                    "name": "Sonarr",
+                    "type": "sonarr",
+                    "url": sonarr_url,
+                    "api_key": sonarr_key,
+                    "enabled": bool(raw.get("sonarr_enabled", False)),
+                })
+            radarr_url = raw.get("radarr_url", "").strip()
+            radarr_key = raw.get("radarr_api_key", "").strip()
+            if radarr_url or radarr_key:
+                instances.append({
+                    "name": "Radarr",
+                    "type": "radarr",
+                    "url": radarr_url,
+                    "api_key": radarr_key,
+                    "enabled": bool(raw.get("radarr_enabled", False)),
+                })
+            if instances:
+                raw["arr_instances"] = instances
+                # Remove old flat keys
+                for key in ("sonarr_enabled", "sonarr_url", "sonarr_api_key",
+                            "radarr_enabled", "radarr_url", "radarr_api_key"):
+                    raw.pop(key, None)
+                self._save_raw(raw)
+            return instances
+
+        return raw.get("arr_instances", [])
+
+    def add_arr_instance(self, instance: Dict[str, Any]) -> bool:
+        """Add a new Sonarr/Radarr instance"""
+        raw = self._load_raw()
+        instances = raw.get("arr_instances", [])
+        instances.append({
+            "name": instance.get("name", "").strip(),
+            "type": instance.get("type", "sonarr"),
+            "url": instance.get("url", "").strip(),
+            "api_key": instance.get("api_key", "").strip(),
+            "enabled": instance.get("enabled", True),
+        })
+        raw["arr_instances"] = instances
+        return self._save_raw(raw)
+
+    def update_arr_instance(self, index: int, instance: Dict[str, Any]) -> bool:
+        """Update an existing Sonarr/Radarr instance by index"""
+        raw = self._load_raw()
+        instances = raw.get("arr_instances", [])
+        if 0 <= index < len(instances):
+            instances[index] = {
+                "name": instance.get("name", "").strip(),
+                "type": instance.get("type", "sonarr"),
+                "url": instance.get("url", "").strip(),
+                "api_key": instance.get("api_key", "").strip(),
+                "enabled": instance.get("enabled", True),
+            }
+            raw["arr_instances"] = instances
+            return self._save_raw(raw)
+        return False
+
+    def delete_arr_instance(self, index: int) -> bool:
+        """Delete a Sonarr/Radarr instance by index"""
+        raw = self._load_raw()
+        instances = raw.get("arr_instances", [])
+        if 0 <= index < len(instances):
+            instances.pop(index)
+            raw["arr_instances"] = instances
+            return self._save_raw(raw)
+        return False
+
     def get_logging_settings(self) -> Dict[str, Any]:
         """Get logging settings"""
         raw = self._load_raw()
         return {
             "max_log_files": raw.get("max_log_files", 24),
             "keep_error_logs_days": raw.get("keep_error_logs_days", 7),
-            "time_format": raw.get("time_format", "24h")
+            "time_format": raw.get("time_format", "24h"),
+            "activity_retention_hours": raw.get("activity_retention_hours", 24)
         }
 
     def save_logging_settings(self, settings: Dict[str, Any]) -> bool:
@@ -382,6 +593,15 @@ class SettingsService:
             time_format = settings["time_format"]
             if time_format in ("12h", "24h"):
                 raw["time_format"] = time_format
+
+        # Validate and save activity_retention_hours
+        if "activity_retention_hours" in settings:
+            try:
+                activity_retention_hours = int(float(settings["activity_retention_hours"]))
+                if activity_retention_hours >= 1:
+                    raw["activity_retention_hours"] = activity_retention_hours
+            except (ValueError, TypeError):
+                pass
 
         return self._save_raw(raw)
 
@@ -931,6 +1151,10 @@ class SettingsService:
             if "webhook_url" in settings:
                 settings["webhook_url"] = ""
 
+            # Redact arr instance API keys
+            for inst in settings.get("arr_instances", []):
+                inst["api_key"] = ""
+
             # Anonymize users in both _cached_users and users arrays
             for i, user in enumerate(settings.get("_cached_users", []), 1):
                 if "username" in user:
@@ -1010,8 +1234,8 @@ class SettingsService:
             "PLEX_URL", "PLEX_TOKEN", "valid_sections", "path_mappings", "users",
             "users_toggle", "skip_ondeck", "skip_watchlist", "watchlist_toggle",
             "watchlist_episodes", "watchlist_retention_days", "watched_move",
-            "create_plexcached_backups", "hardlinked_files", "cache_retention_hours",
-            "cache_limit", "min_free_space", "cache_eviction_mode", "cache_eviction_threshold_percent",
+            "create_plexcached_backups", "hardlinked_files", "use_symlinks", "cache_retention_hours",
+            "cache_limit", "min_free_space", "plexcache_quota", "cache_eviction_mode", "cache_eviction_threshold_percent",
             "eviction_min_priority", "remote_watchlist_toggle", "remote_watchlist_rss_url",
             "notification_type", "unraid_level", "unraid_levels", "webhook_url",
             "webhook_level", "webhook_levels", "max_log_files", "keep_error_logs_days",
@@ -1019,6 +1243,11 @@ class SettingsService:
             "excluded_folders",
             # Advanced settings
             "max_concurrent_moves_array", "max_concurrent_moves_cache", "exit_if_active_session",
+            # Integrations (Sonarr/Radarr) - multi-instance list
+            "arr_instances",
+            # Legacy flat keys (auto-migrated to arr_instances)
+            "sonarr_enabled", "sonarr_url", "sonarr_api_key",
+            "radarr_enabled", "radarr_url", "radarr_api_key",
             # Legacy keys that may exist
             "plex_source", "real_source", "nas_library_folders", "plex_library_folders"
         }
@@ -1077,11 +1306,14 @@ class SettingsService:
 
 # Singleton instance
 _settings_service: Optional[SettingsService] = None
+_settings_service_lock = threading.Lock()
 
 
 def get_settings_service() -> SettingsService:
     """Get or create the settings service singleton"""
     global _settings_service
     if _settings_service is None:
-        _settings_service = SettingsService()
+        with _settings_service_lock:
+            if _settings_service is None:
+                _settings_service = SettingsService()
     return _settings_service

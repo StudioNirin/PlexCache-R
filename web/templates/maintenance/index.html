@@ -195,17 +195,40 @@ function showConfirmModal(title, message, action, formData, isDryRun = false) {
     } else if (action === 'restore-plexcached') {
         btnClass = 'btn btn-primary';
         btnText = 'Restore';
-    } else if (action === 'delete-plexcached') {
+    } else if (action === 'repair-plexcached') {
+        btnClass = 'btn btn-primary';
+        btnText = 'Repair';
+    } else if (action === 'delete-plexcached' || action === 'delete-duplicates' || action === 'delete-extensionless') {
         btnClass = 'btn btn-danger';
         btnText = 'Delete';
+    } else if (action === 'scan-duplicates') {
+        btnClass = 'btn btn-primary';
+        btnText = 'Scan';
     }
 
     actionBtn.className = btnClass;
     actionBtn.textContent = btnText;
     actionBtn.onclick = function() {
         executeAction(action, formData, isDryRun);
-        // Note: modal is closed by executeAction after fetch completes
     };
+
+    // For non-dry-run actions, check if blocked and update button to "Queue Action"
+    if (!isDryRun) {
+        fetch('/maintenance/check-blocked')
+            .then(r => r.json())
+            .then(data => {
+                if (data.blocked && data.can_queue) {
+                    actionBtn.className = 'btn btn-primary';
+                    actionBtn.textContent = 'Queue Action';
+                    actionBtn.style.background = 'var(--plex-info)';
+                    actionBtn.style.borderColor = 'var(--plex-info)';
+                } else if (data.blocked && data.queue_full) {
+                    actionBtn.disabled = true;
+                    actionBtn.textContent = 'Queue Full';
+                }
+            })
+            .catch(() => {}); // Ignore errors, keep default button
+    }
 
     modal.style.display = 'flex';
     lucide.createIcons();
@@ -273,6 +296,15 @@ function executeAction(action, formData, isDryRun) {
             if (typeof showBannerWarning === 'function') {
                 showBannerWarning(message);
             }
+        } else if (html.includes('maintenance-action-queued')) {
+            // Queued — show the alert at top of audit content
+            const alertContainer = document.createElement('div');
+            alertContainer.innerHTML = html;
+            const auditContent = document.getElementById('audit-content');
+            auditContent.insertBefore(alertContainer, auditContent.firstChild);
+            lucide.createIcons();
+            // Auto-remove after 5s
+            setTimeout(() => { if (alertContainer.parentNode) alertContainer.remove(); }, 5000);
         } else if (html.includes('maintenance-async-started')) {
             // Show the alert at top of audit content
             const alertContainer = document.createElement('div');
@@ -289,9 +321,22 @@ function executeAction(action, formData, isDryRun) {
             lucide.createIcons();
         }
 
-        // Reset selections
+        // Reset selections (Sets + DOM checkboxes + bulk action bars)
         selectedUntrackedFiles.clear();
         selectedOrphanedBackups.clear();
+        selectedDuplicateFiles.clear();
+        document.querySelectorAll('.untracked-checkbox, .orphaned-checkbox, .dup-file-checkbox, [onclick*="toggleSelectAll"]').forEach(cb => cb.checked = false);
+        updateUntrackedActions();
+        updateOrphanedActions();
+        updateDuplicateActions();
+
+        // Refresh duplicate card if a scan or delete just completed
+        if (action === 'scan-duplicates' || action === 'delete-duplicates') {
+            var dupContainer = document.getElementById('duplicate-results-container');
+            if (dupContainer) {
+                htmx.ajax('GET', '/maintenance/duplicates', {target: '#duplicate-results-container', swap: 'innerHTML'});
+            }
+        }
 
         // Scroll to top to see the result alert
         document.getElementById('audit-content').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -394,6 +439,46 @@ function deleteAllOrphaned(isDryRun = false) {
     showConfirmModal(`${action} All Backups`, message, 'delete-plexcached', formData, isDryRun);
 }
 
+function repairAllRepairable(isDryRun = false) {
+    const formData = new FormData();
+    formData.append('repair_all', 'true');
+
+    const action = isDryRun ? 'Preview' : 'Repair';
+    const message = `
+        <div class="confirm-section">
+            <h4 style="margin: 0 0 0.5rem 0; color: var(--plex-orange);">
+                <i data-lucide="wrench" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                ${action} All Repairable Backups
+            </h4>
+            <p style="margin: 0 0 1rem 0;">Sonarr/Radarr renamed these backup files and dropped the <code>.mkv</code> extension.</p>
+        </div>
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+            <strong>What will happen:</strong>
+            <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                <li>Detect the media extension from the sibling file</li>
+                <li>Rename e.g. <code>Name.plexcached</code> → <code>Name.mkv.plexcached</code></li>
+            </ol>
+        </div>
+        <p class="text-muted"><em>This is a safe rename operation — no files are deleted or moved.</em></p>
+    `;
+
+    showConfirmModal(`${action} Backups`, message, 'repair-plexcached', formData, isDryRun);
+}
+
+function deleteAllExtensionless(isDryRun = false) {
+    const formData = new FormData();
+    formData.append('delete_all', 'true');
+
+    const action = isDryRun ? 'Preview' : 'Delete';
+    const message = `
+        <p>You are about to <strong style="color: var(--danger);">permanently delete ALL</strong> extensionless duplicate files.</p>
+        <p>These files have no media extension and exist alongside their <code>.mkv</code> counterpart on the array.</p>
+        <p class="text-muted" style="margin-top: 0.5rem;"><em>The media files with proper extensions are not affected.</em></p>
+    `;
+
+    showConfirmModal(`${action} Extensionless Files`, message, 'delete-extensionless', formData, isDryRun);
+}
+
 function cleanExclude(isDryRun = false) {
     const formData = new FormData();
 
@@ -440,6 +525,165 @@ document.addEventListener('htmx:afterSwap', function(e) {
         updateOrphanedActions();
     }
 });
+
+// === Duplicate Scanner Functions ===
+
+// Track selected duplicate files
+let selectedDuplicateFiles = new Set();
+
+function toggleDuplicateSection() {
+    const content = document.getElementById('dup-section-content');
+    const chevron = document.getElementById('dup-section-chevron');
+    if (!content) return;
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        if (chevron) chevron.style.transform = 'rotate(180deg)';
+        // Trigger HTMX to process the revealed element
+        if (typeof htmx !== 'undefined') {
+            htmx.process(content);
+        }
+    } else {
+        content.style.display = 'none';
+        if (chevron) chevron.style.transform = '';
+    }
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function toggleDuplicateExpand(row) {
+    const key = row.dataset.ratingKey;
+    const detailRow = document.querySelector(`.dup-detail-row[data-parent="${key}"]`);
+    const icon = row.querySelector('.dup-expand-icon');
+    if (!detailRow) return;
+
+    if (detailRow.style.display === 'none') {
+        detailRow.style.display = '';
+        if (icon) icon.style.transform = 'rotate(90deg)';
+    } else {
+        detailRow.style.display = 'none';
+        if (icon) icon.style.transform = '';
+    }
+}
+
+function toggleSelectAllDuplicates(checkbox) {
+    const checkboxes = document.querySelectorAll('.dup-file-checkbox');
+    checkboxes.forEach(function(cb) {
+        cb.checked = checkbox.checked;
+        if (checkbox.checked) {
+            selectedDuplicateFiles.add(cb.value);
+        } else {
+            selectedDuplicateFiles.delete(cb.value);
+        }
+    });
+    updateDuplicateActions();
+}
+
+function toggleDuplicateFile(checkbox) {
+    if (checkbox.checked) {
+        selectedDuplicateFiles.add(checkbox.value);
+    } else {
+        selectedDuplicateFiles.delete(checkbox.value);
+    }
+    updateDuplicateActions();
+}
+
+function updateDuplicateActions() {
+    const count = selectedDuplicateFiles.size;
+    const bulkActions = document.getElementById('dup-bulk-actions');
+    const countSpan = document.getElementById('dup-selected-count');
+
+    if (bulkActions) {
+        if (count > 0) {
+            bulkActions.style.display = 'flex';
+            if (countSpan) countSpan.textContent = count;
+        } else {
+            bulkActions.style.display = 'none';
+        }
+    }
+}
+
+function startDuplicateScan() {
+    const message = `
+        <div class="confirm-section">
+            <h4 style="margin: 0 0 0.5rem 0; color: var(--plex-orange);">
+                <i data-lucide="scan-search" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Scan Plex Libraries
+            </h4>
+            <p style="margin: 0 0 1rem 0;">This will scan all movie and TV show libraries for items with multiple media files.</p>
+        </div>
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px;">
+            <strong>What will happen:</strong>
+            <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                <li>Connect to Plex and enumerate all libraries</li>
+                <li>Scan every movie and episode for duplicate files</li>
+                <li>If Sonarr/Radarr is configured, identify orphan files</li>
+            </ol>
+        </div>
+    `;
+
+    const formData = new FormData();
+    showConfirmModal('Scan for Duplicates', message, 'scan-duplicates', formData, false);
+}
+
+function deleteSelectedDuplicates(isDryRun) {
+    if (selectedDuplicateFiles.size === 0) return;
+
+    const count = selectedDuplicateFiles.size;
+    const formData = new FormData();
+    selectedDuplicateFiles.forEach(function(path) { formData.append('paths', path); });
+
+    const fileList = Array.from(selectedDuplicateFiles).slice(0, 5).map(function(path) {
+        return '<li style="font-size: 0.9em; color: var(--text-muted);">' + path.split('/').pop() + '</li>';
+    }).join('');
+    const moreFiles = count > 5 ? '<li style="font-size: 0.9em; color: var(--text-muted);">...and ' + (count - 5) + ' more</li>' : '';
+
+    const message = `
+        <div class="confirm-section">
+            <h4 style="margin: 0 0 0.5rem 0; color: var(--danger);">
+                <i data-lucide="trash-2" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                Delete ${count} duplicate file(s)
+            </h4>
+            <p style="margin: 0 0 1rem 0;">These files will be permanently deleted from disk.</p>
+        </div>
+        <div class="confirm-section">
+            <strong>Files:</strong>
+            <ul style="margin: 0.5rem 0 0 1rem; padding: 0; list-style: none;">
+                ${fileList}
+                ${moreFiles}
+            </ul>
+        </div>
+        <p style="color: var(--warning); margin-top: 1rem;"><strong>Tip:</strong> Run a Plex library scan afterwards to clean up removed media entries.</p>
+    `;
+
+    showConfirmModal('Delete Duplicates', message, 'delete-duplicates', formData, isDryRun);
+}
+
+function deleteAllOrphanDuplicates(isDryRun) {
+    const formData = new FormData();
+    formData.append('all_orphans', 'true');
+
+    const action = isDryRun ? 'Preview' : 'Delete';
+    const message = `
+        <div class="confirm-section">
+            <h4 style="margin: 0 0 0.5rem 0; color: var(--danger);">
+                <i data-lucide="trash-2" style="width: 18px; height: 18px; vertical-align: middle;"></i>
+                ${action} All Orphan Files
+            </h4>
+            <p style="margin: 0 0 1rem 0;">This will delete all files identified as orphans by Sonarr/Radarr from the last scan.</p>
+        </div>
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px;">
+            <strong style="color: var(--warning);">Safety:</strong>
+            <ul style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                <li>Only files NOT tracked by Sonarr/Radarr will be deleted</li>
+                <li>The keeper file (tracked version) is always preserved</li>
+                <li>Unresolved items (not in arr) are skipped</li>
+            </ul>
+        </div>
+        <p style="color: var(--warning); margin-top: 1rem;"><strong>Tip:</strong> Run a Plex library scan afterwards to clean up removed media entries.</p>
+    `;
+
+    showConfirmModal(action + ' All Orphans', message, 'delete-duplicates', formData, isDryRun);
+}
 
 // Close modal on escape key
 document.addEventListener('keydown', function(e) {
