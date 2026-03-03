@@ -27,8 +27,20 @@ PLEXCACHED_EXTENSION = ".plexcached"
 # Minimum free space (in bytes) required for metadata operations during rename
 MINIMUM_SPACE_FOR_RENAME = 100 * 1024 * 1024  # 100 MB
 
-# Subtitle file extensions (excluded from cross-type upgrade detection)
-SUBTITLE_EXTENSIONS = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx', '.sbv'}
+# --- Canonical media extension definitions (single source of truth) ---
+# All other modules should import these instead of defining their own.
+
+# Video file extensions
+VIDEO_EXTENSIONS = {
+    '.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.flv', '.ts', '.m2ts',
+    '.mpg', '.mpeg', '.webm', '.ogv', '.3gp', '.divx', '.vob',
+}
+
+# Subtitle file extensions
+SUBTITLE_EXTENSIONS = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx', '.sbv', '.sup', '.smi'}
+
+# Combined media extensions (video + subtitle)
+MEDIA_EXTENSIONS = VIDEO_EXTENSIONS | SUBTITLE_EXTENSIONS
 
 
 def save_json_atomically(filepath: str, data, label: str = "data") -> None:
@@ -825,8 +837,7 @@ class CacheTimestampTracker:
             filename = filename[:match.start()]
 
         # Try common video extensions
-        video_extensions = ['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.flv', '.mov', '.ts']
-        for vext in video_extensions:
+        for vext in VIDEO_EXTENSIONS:
             candidate = os.path.join(directory, filename + vext)
             if os.path.exists(candidate):
                 return candidate
@@ -2594,7 +2605,7 @@ class SubtitleFinder:
     
     def __init__(self, subtitle_extensions: Optional[List[str]] = None):
         if subtitle_extensions is None:
-            subtitle_extensions = [".srt", ".vtt", ".sbv", ".sub", ".idx"]
+            subtitle_extensions = sorted(SUBTITLE_EXTENSIONS)
         self.subtitle_extensions = subtitle_extensions
     
     def get_media_subtitles_grouped(self, media_files: List[str], files_to_skip: Optional[Set[str]] = None) -> Dict[str, List[str]]:
@@ -3407,8 +3418,7 @@ class FileFilter:
             name, ext = os.path.splitext(filename)
 
             # Handle subtitle files - strip language code suffixes (e.g., ".en", ".eng", ".en.hi", ".forced")
-            subtitle_extensions = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx'}
-            if ext.lower() in subtitle_extensions:
+            if ext.lower() in SUBTITLE_EXTENSIONS:
                 # Strip common language code patterns from the end (loop for multiple suffixes like ".en.hi")
                 pattern = r'\.(en|eng|es|spa|fr|fra|de|deu|ger|it|ita|pt|por|ja|jpn|ko|kor|zh|chi|forced|sdh|cc|hi)$'
                 prev_name = None
