@@ -742,8 +742,8 @@ class PlexManager:
             logging.warning(f"Skipping next episode fetch for '{show}' - missing index data (parentIndex={current_season}, index={current_episode})")
             return
 
-        library_section = video.section()
-        episodes = list(library_section.search(show)[0].episodes())
+        parent_show = video.show()
+        episodes = list(parent_show.episodes())
         next_episodes = self._get_next_episodes(episodes, current_season, current_episode, number_episodes)
 
         # Add the prefetched next episodes
