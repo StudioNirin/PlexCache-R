@@ -14,13 +14,7 @@ from typing import Callable, Dict, List, Optional, Set, Any, Tuple
 
 from web.config import PROJECT_ROOT, DATA_DIR, CONFIG_DIR, SETTINGS_FILE
 from core.system_utils import get_array_direct_path, format_bytes, translate_container_to_host_path, translate_host_to_container_path, remove_from_exclude_file, remove_from_timestamps_file
-from core.file_operations import PLEXCACHED_EXTENSION
-
-# Common media extensions for validation
-_MEDIA_EXTENSIONS = {
-    '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.ts',
-    '.mpg', '.mpeg', '.webm', '.ogv', '.3gp', '.divx', '.vob',
-}
+from core.file_operations import PLEXCACHED_EXTENSION, VIDEO_EXTENSIONS, SUBTITLE_EXTENSIONS, MEDIA_EXTENSIONS
 
 
 def _strip_plexcached(path: str) -> str:
@@ -34,7 +28,7 @@ def _strip_plexcached(path: str) -> str:
         raise ValueError(f"Not a .plexcached file: {path}")
     original = path[:-len(PLEXCACHED_EXTENSION)]
     _, ext = os.path.splitext(original)
-    if ext.lower() not in _MEDIA_EXTENSIONS:
+    if ext.lower() not in VIDEO_EXTENSIONS:
         raise ValueError(
             f"Malformed .plexcached file (no media extension): {os.path.basename(path)}"
         )
@@ -184,10 +178,6 @@ class _ByteProgressAggregator:
 class MaintenanceService:
     """Service for cache auditing and maintenance actions"""
 
-    # Video extensions
-    VIDEO_EXTENSIONS = ('.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts')
-    # Subtitle extensions
-    SUBTITLE_EXTENSIONS = ('.srt', '.sub', '.idx', '.ass', '.ssa', '.vtt', '.smi')
     # Chunk size for copy progress reporting (4 MB)
     _COPY_CHUNK_SIZE = 4 * 1024 * 1024
 
@@ -413,7 +403,7 @@ class MaintenanceService:
         """Get all media files currently on cache"""
         cache_dirs, _ = self._get_paths()
         cache_files = set()
-        extensions = self.VIDEO_EXTENSIONS + self.SUBTITLE_EXTENSIONS
+        extensions = tuple(MEDIA_EXTENSIONS)
 
         def _walk_error(err):
             logging.warning(f"Permission error scanning directory: {err}")
@@ -654,7 +644,7 @@ class MaintenanceService:
                             # lives on cache while the malformed .plexcached is on the array.
                             stem = f[:-len(PLEXCACHED_EXTENSION)]  # strip .plexcached
                             repair_ext = None
-                            for ext in _MEDIA_EXTENSIONS:
+                            for ext in VIDEO_EXTENSIONS:
                                 # Check array sibling first
                                 if (stem + ext) in file_set:
                                     repair_ext = ext
@@ -768,8 +758,8 @@ class MaintenanceService:
                         # Check for extensionless files with matching media siblings
                         # (created by malformed .plexcached restores that stripped the extension)
                         _, ext = os.path.splitext(f)
-                        if ext.lower() not in _MEDIA_EXTENSIONS:
-                            for media_ext in _MEDIA_EXTENSIONS:
+                        if ext.lower() not in VIDEO_EXTENSIONS:
+                            for media_ext in VIDEO_EXTENSIONS:
                                 sibling_name = f + media_ext
                                 if sibling_name in file_set:
                                     file_path = os.path.join(root, f)
@@ -1163,13 +1153,13 @@ class MaintenanceService:
             _, ext = os.path.splitext(filename)
 
             # Safety check 1: Must not have a media extension
-            if ext.lower() in _MEDIA_EXTENSIONS:
+            if ext.lower() in VIDEO_EXTENSIONS:
                 errors.append(f"{filename}: Has media extension, refusing to delete")
                 continue
 
             # Safety check 2: Must have a matching media sibling
             has_sibling = False
-            for media_ext in _MEDIA_EXTENSIONS:
+            for media_ext in VIDEO_EXTENSIONS:
                 if os.path.exists(file_path + media_ext):
                     has_sibling = True
                     break

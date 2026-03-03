@@ -18,6 +18,7 @@ if PROJECT_ROOT_INIT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT_INIT)
 
 from core.system_utils import get_array_direct_path
+from core.file_operations import VIDEO_EXTENSIONS, SUBTITLE_EXTENSIONS, MEDIA_EXTENSIONS
 
 # Get script directory and resolve project root
 # If we're in tools/, go up one level to project root
@@ -135,11 +136,7 @@ load_settings()
 def get_cache_files():
     """Get all media files currently on cache."""
     cache_files = set()
-    # Video extensions
-    video_ext = ('.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts')
-    # Subtitle extensions
-    subtitle_ext = ('.srt', '.sub', '.idx', '.ass', '.ssa', '.vtt', '.smi')
-    extensions = video_ext + subtitle_ext
+    extensions = tuple(MEDIA_EXTENSIONS)
 
     for cache_dir in CACHE_DIRS:
         if os.path.exists(cache_dir):
@@ -803,12 +800,7 @@ def find_malformed_plexcached():
     """
     # Settings already loaded on module import
 
-    # Valid media extensions (video + subtitle)
-    MEDIA_EXTENSIONS = {
-        '.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.m2ts',
-        '.webm', '.flv', '.mpg', '.mpeg', '.divx', '.xvid', '.3gp', '.ogv',
-        '.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx'
-    }
+    # MEDIA_EXTENSIONS imported from core.file_operations
 
     print("\n" + "=" * 80)
     print("SCANNING FOR MALFORMED .plexcached FILES")
