@@ -12,11 +12,7 @@ from dataclasses import dataclass
 
 from web.config import PROJECT_ROOT, DATA_DIR, CONFIG_DIR, SETTINGS_FILE
 from core.system_utils import get_disk_usage, detect_zfs, get_array_direct_path, parse_size_bytes, format_bytes, translate_container_to_host_path, translate_host_to_container_path, remove_from_exclude_file, remove_from_timestamps_file
-from core.file_operations import get_media_identity, find_matching_plexcached, save_json_atomically
-
-
-# Subtitle file extensions (case-insensitive)
-SUBTITLE_EXTENSIONS = {'.srt', '.ass', '.sub', '.idx', '.vtt', '.ssa', '.sup', '.smi'}
+from core.file_operations import get_media_identity, find_matching_plexcached, save_json_atomically, SUBTITLE_EXTENSIONS
 
 
 @dataclass
