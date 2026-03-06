@@ -707,7 +707,6 @@ class CacheService:
                         percent_val = int(limit_str.rstrip("%"))
                         cache_limit_bytes = int(disk_total * percent_val / 100)
                     else:
-                        import re
                         match = re.match(r'^([\d.]+)\s*(T|TB|G|GB|M|MB)?$', limit_str, re.IGNORECASE)
                         if match:
                             value = float(match.group(1))
@@ -745,8 +744,7 @@ class CacheService:
                     percent_val = int(limit_str.rstrip('%'))
                     min_free_bytes = int(disk_total * percent_val / 100)
                 else:
-                    import re as _re
-                    match = _re.match(r'^([\d.]+)\s*(T|TB|G|GB|M|MB)?$', limit_str, _re.IGNORECASE)
+                    match = re.match(r'^([\d.]+)\s*(T|TB|G|GB|M|MB)?$', limit_str, re.IGNORECASE)
                     if match:
                         value = float(match.group(1))
                         unit = (match.group(2) or "GB").upper()
@@ -1337,7 +1335,6 @@ class CacheService:
         Returns dict with files that would be evicted and space freed.
         """
         import shutil
-        import re
 
         settings = self._load_settings()
         cache_dir = self._get_cache_dir(settings)
