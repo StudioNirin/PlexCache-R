@@ -32,8 +32,7 @@ def tmp_settings(tmp_path):
 def settings_service(tmp_settings):
     """Create a SettingsService with a temporary settings file."""
     with patch("web.services.settings_service.SETTINGS_FILE", tmp_settings), \
-         patch("web.services.settings_service.DATA_DIR", tmp_settings.parent), \
-         patch("web.services.settings_service.PROJECT_ROOT", tmp_settings.parent):
+         patch("web.services.settings_service.DATA_DIR", tmp_settings.parent):
         from web.services.settings_service import SettingsService
         service = SettingsService()
         return service

@@ -261,7 +261,7 @@ class TestGetEffectivePlexcacheQuota:
         app, cache_dir, _, disk, _ = _build_app(tmp_path, quota_bytes=500*GB)
         result = app._get_effective_plexcache_quota(cache_dir)
         assert result[0] == 500 * GB
-        assert "500.0GB" in result[1]
+        assert "500.00GB" in result[1]
 
     def test_percentage_resolved(self, tmp_path):
         """Percentage is resolved against drive total."""

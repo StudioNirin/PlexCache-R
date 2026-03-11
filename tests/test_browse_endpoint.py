@@ -205,6 +205,9 @@ class TestValidatePathEndpoint:
         mock_instance = MagicMock()
         mock_instance.exists.return_value = True
         mock_instance.is_dir.return_value = True
+        mock_resolved = MagicMock()
+        mock_resolved.__str__ = lambda self: "/mnt/user/Movies"
+        mock_instance.resolve.return_value = mock_resolved
         mock_path_cls.return_value = mock_instance
 
         result = validate_path(path="/mnt/user/Movies/")
@@ -216,6 +219,9 @@ class TestValidatePathEndpoint:
         mock_instance = MagicMock()
         mock_instance.exists.return_value = False
         mock_instance.is_dir.return_value = False
+        mock_resolved = MagicMock()
+        mock_resolved.__str__ = lambda self: "/mnt/user/NotReal"
+        mock_instance.resolve.return_value = mock_resolved
         mock_path_cls.return_value = mock_instance
 
         result = validate_path(path="/mnt/user/NotReal/")
