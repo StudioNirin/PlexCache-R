@@ -1,20 +1,17 @@
 <!-- Cache files table body - HTMX partial -->
+{% from "macros/associated_files.html" import af_popup, af_popup_init %}
 {% if files %}
     {% for file in files %}
+    {% set assoc_count = file.subtitle_count + file.sidecar_count %}
     <tr>
         <td>
             <input type="checkbox" class="file-checkbox" value="{{ file.path }}" onchange="updateBulkActions()">
         </td>
-        <td title="{{ file.path }}">
-            {{ file.filename }}
-            {% if file.subtitle_count > 0 %}
-            <span class="subtitle-indicator" title="{{ file.subtitle_count }} subtitle{{ 's' if file.subtitle_count > 1 else '' }}">
-                <i data-lucide="subtitles" style="width: 14px; height: 14px; vertical-align: middle; margin-left: 0.25rem; opacity: 0.6;"></i>
-                <span style="font-size: 0.75rem; opacity: 0.6;">{{ file.subtitle_count }}</span>
-            </span>
-            {% endif %}
+        <td title="{{ file.path }}">{{ file.filename }}</td>
+        <td class="text-muted">
+            {{ file.size_display }}
+            {{ af_popup(file.associated_files or [], assoc_count) }}
         </td>
-        <td class="text-muted">{{ file.size_display }}</td>
         {% if eviction_enabled %}
         <td>
             <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
@@ -62,7 +59,7 @@
     <tr>
         <td colspan="{{ 8 if eviction_enabled else 7 }}" class="text-muted" style="text-align: center; padding: 2rem;">
             <i data-lucide="inbox" style="width: 32px; height: 32px; display: block; margin: 0 auto 0.5rem;"></i>
-            No cached files{% if source_filter != 'all' or search %} matching filters{% endif %}
+            No cached items{% if source_filter != 'all' or search %} matching filters{% endif %}
         </td>
     </tr>
 {% endif %}
@@ -75,7 +72,7 @@
             <div class="totals-summary">
                 <span class="totals-item">
                     <i data-lucide="files"></i>
-                    <strong>{{ totals.total_files }}</strong> files
+                    <strong>{{ totals.total_files }}</strong> items
                 </span>
                 <span class="totals-divider"></span>
                 <span class="totals-item">
@@ -102,3 +99,5 @@
     </tr>
     {% endif %}
 </tfoot>
+<script>lucide.createIcons();</script>
+{{ af_popup_init('cache-table-body') }}

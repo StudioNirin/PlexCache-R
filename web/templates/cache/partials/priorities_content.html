@@ -1,3 +1,4 @@
+{% from "macros/associated_files.html" import af_badge %}
 <!-- Priority Report Content - loaded via HTMX -->
 
 {% if data.files %}
@@ -6,7 +7,7 @@
     <div class="stat-card">
         <div class="stat-card-header">
             <i data-lucide="files"></i>
-            Total Files
+            Total Items
         </div>
         <div class="stat-value orange">{{ data.summary.total }}</div>
         <div class="stat-label">{{ data.summary.total_size_display }} cached</div>
@@ -17,7 +18,7 @@
             OnDeck
         </div>
         <div class="stat-value" style="color: var(--plex-info);">{{ data.summary.ondeck_count }}</div>
-        <div class="stat-label">files</div>
+        <div class="stat-label">items</div>
     </a>
     <a href="/cache?source=watchlist" class="stat-card stat-card-link">
         <div class="stat-card-header">
@@ -25,7 +26,7 @@
             Watchlist
         </div>
         <div class="stat-value text-muted">{{ data.summary.watchlist_count }}</div>
-        <div class="stat-label">files</div>
+        <div class="stat-label">items</div>
     </a>
     {% if data.summary.other_count > 0 %}
     <a href="/cache?source=other" class="stat-card stat-card-link">
@@ -34,7 +35,7 @@
             Other
         </div>
         <div class="stat-value text-warning">{{ data.summary.other_count }}</div>
-        <div class="stat-label">files</div>
+        <div class="stat-label">items</div>
     </a>
     {% endif %}
 </div>
@@ -54,7 +55,7 @@
                 </div>
                 <div class="tier-range">90 - 100</div>
                 <div class="tier-value">{{ data.tiers.high.count }}</div>
-                <div class="tier-label">files ({{ data.tiers.high.percent }}%)</div>
+                <div class="tier-label">items ({{ data.tiers.high.percent }}%)</div>
                 <div class="tier-size">{{ data.tiers.high.size_display }}</div>
                 <div class="tier-bar">
                     <div class="tier-fill" style="width: {{ data.tiers.high.percent }}%"></div>
@@ -67,7 +68,7 @@
                 </div>
                 <div class="tier-range">70 - 89</div>
                 <div class="tier-value">{{ data.tiers.medium.count }}</div>
-                <div class="tier-label">files ({{ data.tiers.medium.percent }}%)</div>
+                <div class="tier-label">items ({{ data.tiers.medium.percent }}%)</div>
                 <div class="tier-size">{{ data.tiers.medium.size_display }}</div>
                 <div class="tier-bar">
                     <div class="tier-fill" style="width: {{ data.tiers.medium.percent }}%"></div>
@@ -80,7 +81,7 @@
                 </div>
                 <div class="tier-range">0 - 69</div>
                 <div class="tier-value">{{ data.tiers.low.count }}</div>
-                <div class="tier-label">files ({{ data.tiers.low.percent }}%)</div>
+                <div class="tier-label">items ({{ data.tiers.low.percent }}%)</div>
                 <div class="tier-size">{{ data.tiers.low.size_display }}</div>
                 <div class="tier-bar">
                     <div class="tier-fill" style="width: {{ data.tiers.low.percent }}%"></div>
@@ -97,7 +98,7 @@
 <div class="card mb-2">
     <div class="card-header">
         <i data-lucide="file-text"></i>
-        <h2>File Priority Details</h2>
+        <h2>Item Priority Details</h2>
         <span class="text-muted" style="margin-left: auto; font-size: 0.85rem;">Click row to see score breakdown</span>
     </div>
     <div class="card-body" style="padding: 0;">
@@ -169,7 +170,11 @@
                         </span>
                     </td>
                     <td title="{{ file.path }}">{{ file.filename }}</td>
-                    <td class="text-muted">{{ file.size_display }}</td>
+                    <td class="text-muted">
+                        {{ file.size_display }}
+                        {% set assoc_count = (file.subtitle_count or 0) + (file.sidecar_count or 0) %}
+                        {{ af_badge(assoc_count, (file.subtitle_count or 0) ~ ' subtitle' ~ ('s' if (file.subtitle_count or 0) != 1 else '') ~ ', ' ~ (file.sidecar_count or 0) ~ ' asset' ~ ('s' if (file.sidecar_count or 0) != 1 else '')) }}
+                    </td>
                     <td class="source-badges">
                         {% if file.is_ondeck %}
                         <span class="badge badge-info">OnDeck</span>
@@ -201,32 +206,47 @@
                 <!-- Expandable breakdown row -->
                 <tr id="breakdown-{{ loop.index }}" class="priority-breakdown-row" style="display: none;">
                     <td colspan="7">
-                        <div class="breakdown-details">
-                            <div class="breakdown-title">Score Breakdown</div>
-                            <div class="breakdown-table">
-                                <div class="breakdown-line">
-                                    <span>Base Score:</span>
-                                    <span>{{ file.priority_breakdown.base }}</span>
-                                </div>
-                                {% for factor in file.priority_breakdown.factors %}
-                                <div class="breakdown-line">
-                                    <span>{{ factor.label }}:</span>
-                                    <span class="{{ 'text-success' if factor.value > 0 else 'text-error' if factor.value < 0 else '' }}">
-                                        {{ '+' if factor.value > 0 else '' }}{{ factor.value }}
-                                    </span>
-                                </div>
-                                {% endfor %}
-                                {% if not file.priority_breakdown.factors %}
-                                <div class="breakdown-line text-muted">
-                                    <span>No bonuses applied</span>
-                                    <span></span>
-                                </div>
-                                {% endif %}
-                                <div class="breakdown-line breakdown-total">
-                                    <span>Final Score:</span>
-                                    <span><strong>{{ file.priority_score }}</strong></span>
+                        <div class="breakdown-details" style="display: flex; gap: 3rem; align-items: flex-start;">
+                            <div>
+                                <div class="breakdown-title">Score Breakdown</div>
+                                <div class="breakdown-table">
+                                    <div class="breakdown-line">
+                                        <span>Base Score:</span>
+                                        <span>{{ file.priority_breakdown.base }}</span>
+                                    </div>
+                                    {% for factor in file.priority_breakdown.factors %}
+                                    <div class="breakdown-line">
+                                        <span>{{ factor.label }}:</span>
+                                        <span class="{{ 'text-success' if factor.value > 0 else 'text-error' if factor.value < 0 else '' }}">
+                                            {{ '+' if factor.value > 0 else '' }}{{ factor.value }}
+                                        </span>
+                                    </div>
+                                    {% endfor %}
+                                    {% if not file.priority_breakdown.factors %}
+                                    <div class="breakdown-line text-muted">
+                                        <span>No bonuses applied</span>
+                                        <span></span>
+                                    </div>
+                                    {% endif %}
+                                    <div class="breakdown-line breakdown-total">
+                                        <span>Final Score:</span>
+                                        <span><strong>{{ file.priority_score }}</strong></span>
+                                    </div>
                                 </div>
                             </div>
+                            {% if file.associated_files %}
+                            <div style="flex: 1; min-width: 0;">
+                                <div class="breakdown-title">Associated Files</div>
+                                <div class="breakdown-table" style="max-width: none;">
+                                    {% for af in file.associated_files %}
+                                    <div class="breakdown-line" style="gap: 1rem;">
+                                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; color: var(--plex-text-muted);"><span class="associated-sub-arrow">&#8627;</span> {{ af.filename }}</span>
+                                        <span class="associated-sub-size" style="flex-shrink: 0;">{{ af.size }}</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
                         </div>
                     </td>
                 </tr>
@@ -238,7 +258,7 @@
                         <div class="totals-summary">
                             <span class="totals-item">
                                 <i data-lucide="files"></i>
-                                <strong>{{ data.summary.total }}</strong> files
+                                <strong>{{ data.summary.total }}</strong> items
                             </span>
                             <span class="totals-divider"></span>
                             <span class="totals-item">

@@ -1,4 +1,5 @@
 <!-- Recent Activity component - HTMX partial (grouped by date) -->
+{% from "macros/associated_files.html" import af_expand_badge, af_expand_rows, af_expand_onclick %}
 {% if activity %}
 {% for group in activity|groupby('date_key')|reverse %}
 <tr class="date-group-header" data-date-group="{{ group.grouper }}">
@@ -14,7 +15,7 @@
     </td>
 </tr>
 {% for item in group.list %}
-<tr data-action="{{ item.action }}" data-date-group="{{ item.date_key }}">
+<tr data-action="{{ item.action }}" data-date-group="{{ item.date_key }}"{% if item.associated_files %} class="af-parent" {{ af_expand_onclick() }}{% endif %}>
     <td>{{ item.time_display }}</td>
     <td>
         {% if item.action in ('Cached', 'Protected', 'Fixed') %}
@@ -27,7 +28,7 @@
         <span class="badge badge-muted">{{ item.action }}</span>
         {% endif %}
     </td>
-    <td class="text-muted" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ item.filename }}">{{ item.filename }}</td>
+    <td class="text-muted activity-file-col" title="{{ item.filename }}">{{ item.filename }}</td>
     <td class="user-badges">
         {% if item.users and item.users|length > 0 %}
             {% for user in item.users[:3] %}
@@ -40,8 +41,12 @@
         <span class="text-muted">-</span>
         {% endif %}
     </td>
-    <td>{{ item.size }}</td>
+    <td>
+        {{ item.size }}
+        {{ af_expand_badge(item.associated_files) }}
+    </td>
 </tr>
+{{ af_expand_rows(item.associated_files, {"data-action": item.action, "data-date-group": item.date_key}) }}
 {% endfor %}
 {% endfor %}
 {% else %}

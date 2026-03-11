@@ -1,0 +1,125 @@
+{#
+    Associated Files Macros
+    =======================
+    Reusable components for displaying grouped asset files (subtitles, artwork, .nfo, etc.)
+    under primary media files. Two display variants:
+
+    1. Click-to-expand (Dashboard/Activity) — inline table sub-rows
+       - af_expand_badge(files)       → +N badge in the parent row
+       - af_expand_rows(files, attrs) → hidden <tr> sub-rows that toggle on click
+
+    2. Hover popup (Cache list, Maintenance, etc.) — fixed-position popup
+       - af_popup(files, count)       → badge + popup container
+
+    Data contract: `files` is List[Dict] with {"filename": str, "size": str}
+
+    CSS: All styles live in custom.css (lines 239-322), no additional CSS needed.
+    JS:  Expand uses inline onclick on the parent <tr>.
+         Popup uses af_popup_init(containerId) — call after HTMX swap.
+#}
+
+
+{# ── Click-to-Expand variant ── #}
+
+{# Badge showing +N count, placed inside the parent <tr> cell.
+   `title` = optional tooltip text for the badge.
+#}
+{% macro af_expand_badge(files, title='') %}
+{% if files %}
+<span class="badge badge-muted badge-sm associated-files-badge"{% if title %} title="{{ title }}"{% endif %}>+{{ files|length }}</span>
+{% endif %}
+{% endmacro %}
+
+{# Standalone badge (no expand, no popup) — just the +N count with optional tooltip.
+   Useful when the page has its own layout for showing associated files (e.g. priorities breakdown).
+#}
+{% macro af_badge(count, title='') %}
+{% if count > 0 %}
+<span class="badge badge-muted badge-sm associated-files-badge"{% if title %} title="{{ title }}"{% endif %}>+{{ count }}</span>
+{% endif %}
+{% endmacro %}
+
+{# Hidden sub-rows revealed by clicking the parent row.
+   `files` = list of {filename, size} dicts
+   `attrs` = dict of extra data-* attributes to copy onto each sub-row (e.g. {"data-action": "Cached", "data-date-group": "2026-03-06"})
+   `empty_cols_before` = number of empty <td>s before the filename column (default 2)
+   `empty_cols_after` = number of empty <td>s between filename and size (default 1)
+#}
+{% macro af_expand_rows(files, attrs={}, empty_cols_before=2, empty_cols_after=1) %}
+{% if files %}
+{% for af in files %}
+<tr class="associated-sub-row"{% for k, v in attrs.items() %} {{ k }}="{{ v }}"{% endfor %}>
+    {% for _ in range(empty_cols_before) %}<td></td>{% endfor %}
+    <td class="associated-sub-file" title="{{ af.filename }}"><span class="associated-sub-arrow">&#8627;</span> {{ af.filename }}</td>
+    {% for _ in range(empty_cols_after) %}<td></td>{% endfor %}
+    <td class="associated-sub-size">{{ af.size if af.size else '-' }}</td>
+</tr>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{# Inline onclick attribute for the parent <tr> — toggles expand/collapse of sub-rows #}
+{% macro af_expand_onclick() %}onclick="this.classList.toggle('af-expanded'); var s=this.nextElementSibling; while(s && s.classList.contains('associated-sub-row')){s.classList.toggle('af-visible'); s=s.nextElementSibling;}"{% endmacro %}
+
+
+{# ── Hover Popup variant ── #}
+
+{# Badge + popup container for hover display.
+   `files` = list of {filename, size} dicts
+   `count` = total associated file count (may differ from files|length if list is truncated)
+#}
+{% macro af_popup(files, count=none) %}
+{% set file_list = files if files else [] %}
+{% set display_count = count if count is not none else file_list|length %}
+{% if display_count > 0 %}
+<span class="associated-files-hover">
+    <span class="badge badge-muted badge-sm associated-files-badge">+{{ display_count }}</span>
+    {% if file_list|length > 0 %}
+    <span class="associated-files-popup">
+        {% for af in file_list %}
+        <span class="af-popup-row">
+            <span class="af-popup-name"><span class="associated-sub-arrow">&#8627;</span> {{ af.filename }}</span>
+            <span class="af-popup-size">{{ af.size }}</span>
+        </span>
+        {% endfor %}
+    </span>
+    {% endif %}
+</span>
+{% endif %}
+{% endmacro %}
+
+
+{# ── Popup positioning JS ── #}
+
+{# Call this once per page/partial that uses af_popup, passing the container element ID.
+   Uses event delegation so it works with HTMX-swapped content.
+#}
+{% macro af_popup_init(container_id) %}
+<script>
+(function() {
+    var container = document.getElementById('{{ container_id }}');
+    if (!container) return;
+    container.addEventListener('mouseenter', function(e) {
+        var hover = e.target.closest('.associated-files-hover');
+        if (!hover) return;
+        var popup = hover.querySelector('.associated-files-popup');
+        if (!popup) return;
+        var rect = hover.getBoundingClientRect();
+        var vw = window.innerWidth;
+        popup.style.top = (rect.bottom + 4) + 'px';
+        popup.style.display = 'block';
+        var pw = popup.offsetWidth;
+        var left = rect.left;
+        if (left + pw > vw - 16) left = vw - pw - 16;
+        if (left < 8) left = 8;
+        popup.style.left = left + 'px';
+    }, true);
+    container.addEventListener('mouseleave', function(e) {
+        var hover = e.target.closest('.associated-files-hover');
+        if (!hover) return;
+        var popup = hover.querySelector('.associated-files-popup');
+        if (popup) popup.style.display = 'none';
+    }, true);
+})();
+</script>
+{% endmacro %}

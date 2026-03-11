@@ -1,31 +1,5 @@
 /* PlexCache-D Web UI Custom Styles */
 
-/* Status indicators */
-.status-ok {
-    color: var(--plex-success);
-}
-
-.status-warn {
-    color: var(--plex-warning);
-}
-
-.status-error {
-    color: var(--plex-error);
-}
-
-.status-running {
-    color: var(--plex-orange);
-}
-
-/* Priority score colors */
-.priority-score {
-    display: inline-block;
-    padding: 0.1rem 0.4rem;
-    border-radius: 4px;
-    font-weight: bold;
-    font-size: 0.9em;
-}
-
 /* Log viewer - single scroll context for both axes */
 .log-viewer {
     height: 500px;
@@ -158,15 +132,6 @@ article nav ul li a[aria-current="page"] {
     margin-bottom: -1px;
 }
 
-/* Operation status cards */
-.status-success {
-    border-left: 4px solid #2ecc71;
-}
-
-.status-error {
-    border-left: 4px solid #e74c3c;
-}
-
 /* Footer styling */
 footer {
     margin-top: 2rem;
@@ -224,6 +189,101 @@ footer {
     top: 0;
     background: var(--plex-bg-card);
     z-index: 1;
+}
+
+/* Activity table column tweaks */
+.activity-file-col {
+    word-break: break-word;
+    white-space: normal;
+    min-width: 0;
+}
+.recent-activity-scroll table td:first-child {
+    white-space: nowrap;
+}
+
+/* Associated files badge + expandable sub-rows */
+.af-parent {
+    cursor: pointer;
+}
+.associated-files-badge {
+    margin-left: 0.375rem;
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.15s ease;
+}
+.af-expanded .associated-files-badge {
+    opacity: 0.5;
+}
+.associated-sub-row {
+    display: none;
+}
+.associated-sub-row.af-visible {
+    display: table-row;
+}
+.associated-sub-row td {
+    padding-top: 0.1rem !important;
+    padding-bottom: 0.1rem !important;
+    border-bottom: none !important;
+}
+.associated-sub-row:hover td {
+    background: transparent !important;
+}
+.associated-sub-file {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    color: var(--plex-text-muted, #8e8e93);
+    padding-left: 1.5rem !important;
+}
+.associated-sub-arrow {
+    color: var(--plex-text-muted, #8e8e93);
+    opacity: 0.5;
+    margin-right: 0.25rem;
+}
+.associated-sub-size {
+    font-size: 0.8rem;
+    color: var(--plex-text-muted, #8e8e93);
+}
+
+/* Associated files hover popup (compact tables) */
+.associated-files-hover {
+    position: relative;
+    display: inline-block;
+    cursor: default;
+}
+.associated-files-popup {
+    display: none;
+    position: fixed;
+    background: var(--plex-surface-elevated, #1f1f1f);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--plex-radius-sm, 8px);
+    padding: 0.5rem 0.75rem;
+    min-width: 280px;
+    width: max-content;
+    z-index: 1000;
+    box-shadow: var(--plex-shadow-elevated, 0 4px 12px rgba(0, 0, 0, 0.4));
+    white-space: nowrap;
+    pointer-events: none;
+}
+.associated-files-popup .af-popup-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.125rem 0;
+    font-size: 0.78rem;
+    color: var(--plex-text-muted, #8e8e93);
+}
+.associated-files-popup .af-popup-name {
+    flex: 1;
+    min-width: 0;
+}
+.associated-files-popup .af-popup-name .associated-sub-arrow {
+    opacity: 0.4;
+}
+.associated-files-popup .af-popup-size {
+    flex-shrink: 0;
+    text-align: right;
 }
 
 /* Date group headers in activity feed */
@@ -825,6 +885,10 @@ footer {
     background: rgba(255,149,0,0.12);
     color: #FF9500;
 }
+.di-action-tag--error {
+    background: rgba(255,59,48,0.12);
+    color: #FF3B30;
+}
 .di-file-row__name {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -836,6 +900,21 @@ footer {
     color: rgba(255,255,255,0.25);
     flex-shrink: 0;
     margin-left: auto;
+}
+.di-file-row__assoc-badge {
+    font-size: 0.6rem;
+    color: rgba(255,255,255,0.3);
+    flex-shrink: 0;
+}
+.di-file-row--sub {
+    padding-left: 1.25rem;
+    font-size: 0.65rem;
+    opacity: 0.55;
+}
+.di-sub-arrow {
+    color: rgba(255,255,255,0.25);
+    flex-shrink: 0;
+    font-size: 0.7rem;
 }
 
 /* ── Buttons ─────────────────────────────────────────── */
@@ -880,14 +959,6 @@ footer {
     line-height: 1;
 }
 .di-dismiss:hover { background: rgba(255,255,255,0.12); color: #fff; }
-
-/* Ghost button (legacy compat) */
-.btn-ghost {
-    background: transparent;
-    border: none;
-    color: #fff;
-    cursor: pointer;
-}
 
 /* ── Warning row (reused from old banner) ────────────── */
 .di-warning {

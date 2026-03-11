@@ -37,6 +37,12 @@
         <div class="stat-value" style="color: var(--success);">OK</div>
         <div class="stat-label">no issues</div>
         {% endif %}
+        {% if dup_summary is defined and dup_summary.duplicate_count > 0 %}
+        <a href="javascript:void(0)" onclick="showDuplicateSection()" class="stat-detail" style="margin-top: 0.35rem; font-size: 0.75rem; color: var(--warning); text-decoration: none; display: block; cursor: pointer;">
+            <i data-lucide="copy" style="width: 12px; height: 12px; vertical-align: middle;"></i>
+            {{ dup_summary.duplicate_count }} duplicate{{ 's' if dup_summary.duplicate_count != 1 }}{% if dup_summary.orphan_count > 0 %} &middot; {{ dup_summary.orphan_count }} orphan{{ 's' if dup_summary.orphan_count != 1 }}{% if dup_summary.orphan_bytes_display %} ({{ dup_summary.orphan_bytes_display }}){% endif %}{% endif %}
+        </a>
+        {% endif %}
     </div>
 
     <div class="stat-card {% if results.unprotected_files|length == 0 %}stat-card-success{% endif %}">
@@ -100,7 +106,7 @@
 <div class="card mb-2">
     <div class="card-header">
         <i data-lucide="eye"></i>
-        <h2>Untracked Files ({{ results.unprotected_files|length }})</h2>
+        <h2>Untracked Files ({{ results.unprotected_files|length }}{% if results.grouped_unprotected|length != results.unprotected_files|length %} in {{ results.grouped_unprotected|length }} groups{% endif %})</h2>
     </div>
     <div class="card-body" style="padding: 0.75rem;">
         <p class="text-muted" style="margin: 0 0 0.75rem 0;">
@@ -138,15 +144,23 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for file in results.unprotected_files %}
-                    <tr data-filename="{{ file.filename|lower }}" data-size="{{ file.size }}" data-age="{{ file.age_days }}" data-has-backup="{{ file.has_plexcached_backup|lower }}" data-has-dup="{{ file.has_array_duplicate|lower }}">
+                    {% for group in results.grouped_unprotected %}
+                    {% set file = group.primary %}
+                    {% set children = group.children %}
+                    {% set group_size = file.size + children|sum(attribute='size') if children else file.size %}
+                    <tr data-filename="{{ file.filename|lower }}" data-size="{{ group_size }}" data-age="{{ file.age_days }}" data-has-backup="{{ file.has_plexcached_backup|lower }}" data-has-dup="{{ file.has_array_duplicate|lower }}"{% if children %} class="untracked-group-row" onclick="toggleUntrackedGroup(this, event)" style="cursor: pointer;"{% endif %}>
                         <td>
-                            <input type="checkbox" class="untracked-checkbox" value="{{ file.cache_path }}" onchange="toggleUntrackedFile(this)" data-has-backup="{{ file.has_plexcached_backup|lower }}" data-has-dup="{{ file.has_array_duplicate|lower }}">
+                            <input type="checkbox" class="untracked-checkbox" value="{{ file.cache_path }}" onchange="toggleUntrackedFile(this){% if children %}; toggleGroupCheckbox(this){% endif %}" data-has-backup="{{ file.has_plexcached_backup|lower }}" data-has-dup="{{ file.has_array_duplicate|lower }}">
                         </td>
                         <td title="{{ file.cache_path }}" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                             {{ file.filename }}
                         </td>
-                        <td class="text-muted">{{ file.size_display }}</td>
+                        <td class="text-muted" style="white-space: nowrap;">
+                            {% if children %}{{ group.total_size_display }}{% else %}{{ file.size_display }}{% endif %}
+                            {% if children %}
+                            <span class="badge badge-muted badge-sm associated-files-badge">+{{ children|length }}</span>
+                            {% endif %}
+                        </td>
                         <td class="text-muted">
                             {% if file.has_invalid_timestamp %}
                             <span class="badge badge-warning">Bad date</span>
@@ -166,6 +180,35 @@
                             {% endif %}
                         </td>
                     </tr>
+                    {% for child in children %}
+                    <tr class="untracked-child-row" style="display: none;" data-filename="{{ child.filename|lower }}" data-size="{{ child.size }}" data-age="{{ child.age_days }}">
+                        <td>
+                            <input type="checkbox" class="untracked-checkbox untracked-child-cb" value="{{ child.cache_path }}" onchange="toggleUntrackedFile(this)" data-has-backup="{{ child.has_plexcached_backup|lower }}" data-has-dup="{{ child.has_array_duplicate|lower }}">
+                        </td>
+                        <td title="{{ child.cache_path }}" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 2rem;">
+                            <span style="color: rgba(255,255,255,0.35); margin-right: 4px;">&#8627;</span>{{ child.filename }}
+                        </td>
+                        <td class="text-muted">{{ child.size_display }}</td>
+                        <td class="text-muted">
+                            {% if child.has_invalid_timestamp %}
+                            <span class="badge badge-warning">Bad date</span>
+                            {% elif child.age_days >= 999 %}
+                            Unknown
+                            {% else %}
+                            {{ "%.1f"|format(child.age_days) }}d
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if child.has_plexcached_backup %}
+                            <span class="badge badge-success" title="A .plexcached backup exists on the array">Has backup</span>
+                            {% elif child.has_array_duplicate %}
+                            <span class="badge badge-info" title="This file also exists on the array">Has copy</span>
+                            {% else %}
+                            <span class="badge badge-warning" title="No copy exists on the array - only on cache">Cache only</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
                     {% endfor %}
                 </tbody>
             </table>
@@ -597,6 +640,20 @@ th.sortable .sort-icon i {
     width: 14px;
     height: 14px;
 }
+
+/* Untracked file grouping */
+.untracked-child-row {
+    background: rgba(255,255,255,0.02);
+}
+
+.untracked-group-row:hover {
+    background: var(--plex-bg-hover);
+}
+
+.untracked-group-expanded + .untracked-child-row,
+.untracked-child-row + .untracked-child-row {
+    border-top: 1px solid rgba(255,255,255,0.04);
+}
 </style>
 
 <script>
@@ -606,13 +663,41 @@ var sortState = sortState || {
     orphaned: { column: 'filename', direction: 'asc' }
 };
 
+function toggleUntrackedGroup(row, event) {
+    if (event && (event.target.tagName === 'INPUT' || event.target.closest('input'))) return;
+    var expanded = row.classList.toggle('untracked-group-expanded');
+    var next = row.nextElementSibling;
+    while (next && next.classList.contains('untracked-child-row')) {
+        next.style.display = expanded ? '' : 'none';
+        next = next.nextElementSibling;
+    }
+}
+
+function toggleGroupCheckbox(checkbox) {
+    var row = checkbox.closest('tr');
+    var next = row.nextElementSibling;
+    while (next && next.classList.contains('untracked-child-row')) {
+        var cb = next.querySelector('.untracked-child-cb');
+        if (cb) {
+            cb.checked = checkbox.checked;
+            if (checkbox.checked) {
+                selectedUntrackedFiles.add(cb.value);
+            } else {
+                selectedUntrackedFiles.delete(cb.value);
+            }
+        }
+        next = next.nextElementSibling;
+    }
+    updateUntrackedActions();
+}
+
 function sortTable(tableId, column) {
     const state = sortState[tableId];
     const table = document.getElementById(tableId + '-table');
     if (!table) return;
 
     const tbody = table.querySelector('tbody');
-    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const allRows = Array.from(tbody.querySelectorAll('tr'));
 
     // Toggle direction if same column
     if (state.column === column) {
@@ -622,21 +707,31 @@ function sortTable(tableId, column) {
         state.direction = column === 'filename' ? 'asc' : 'desc';
     }
 
-    // Sort rows
-    rows.sort((a, b) => {
-        let aVal, bVal;
-
-        if (column === 'filename') {
-            aVal = a.dataset.filename || '';
-            bVal = b.dataset.filename || '';
-        } else if (column === 'size') {
-            aVal = parseFloat(a.dataset.size) || 0;
-            bVal = parseFloat(b.dataset.size) || 0;
-        } else if (column === 'age') {
-            aVal = parseFloat(a.dataset.age) || 0;
-            bVal = parseFloat(b.dataset.age) || 0;
+    // Build groups: each primary row with its child rows
+    var groups = [];
+    var currentGroup = null;
+    allRows.forEach(function(row) {
+        if (row.classList.contains('untracked-child-row')) {
+            if (currentGroup) currentGroup.children.push(row);
+        } else {
+            currentGroup = { primary: row, children: [] };
+            groups.push(currentGroup);
         }
+    });
 
+    // Sort groups by primary row data
+    groups.sort(function(a, b) {
+        var aVal, bVal;
+        if (column === 'filename') {
+            aVal = a.primary.dataset.filename || '';
+            bVal = b.primary.dataset.filename || '';
+        } else if (column === 'size') {
+            aVal = parseFloat(a.primary.dataset.size) || 0;
+            bVal = parseFloat(b.primary.dataset.size) || 0;
+        } else if (column === 'age') {
+            aVal = parseFloat(a.primary.dataset.age) || 0;
+            bVal = parseFloat(b.primary.dataset.age) || 0;
+        }
         if (typeof aVal === 'string') {
             return state.direction === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
         } else {
@@ -644,8 +739,11 @@ function sortTable(tableId, column) {
         }
     });
 
-    // Re-append sorted rows
-    rows.forEach(row => tbody.appendChild(row));
+    // Re-append sorted groups (primary + children stay together)
+    groups.forEach(function(g) {
+        tbody.appendChild(g.primary);
+        g.children.forEach(function(c) { tbody.appendChild(c); });
+    });
 
     // Update header icons
     updateSortIcons(tableId, column, state.direction);
@@ -675,7 +773,7 @@ function keepOnCacheSelected() {
 
     const count = selectedUntrackedFiles.size;
     const formData = new FormData();
-    selectedUntrackedFiles.forEach(path => formData.append('paths', path));
+    appendPathsToForm(formData, selectedUntrackedFiles);
 
     // Build file list for display
     const fileList = Array.from(selectedUntrackedFiles).slice(0, 5).map(path =>
@@ -732,7 +830,7 @@ function moveToArraySelected() {
     });
 
     const formData = new FormData();
-    selectedUntrackedFiles.forEach(path => formData.append('paths', path));
+    appendPathsToForm(formData, selectedUntrackedFiles);
 
     // Build file list for display
     const fileList = Array.from(selectedUntrackedFiles).slice(0, 5).map(path =>

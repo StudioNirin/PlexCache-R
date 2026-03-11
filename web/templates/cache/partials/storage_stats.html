@@ -1,3 +1,4 @@
+{% from "macros/associated_files.html" import af_popup, af_popup_init %}
 <!-- ZFS Warning (only shown when ZFS detected without manual override) -->
 {% if data.storage.is_zfs and not data.storage.has_manual_drive_size %}
 <div class="alert alert-warning mb-2" style="display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem 1rem;">
@@ -43,7 +44,7 @@
     <div class="stat-card">
         <div class="stat-card-header">
             <i data-lucide="files"></i>
-            Cached Files
+            Cached Items
         </div>
         <div class="stat-value orange">{{ data.storage.file_count }}</div>
         <div class="stat-label">{{ data.storage.cached_size_display }} total</div>
@@ -249,7 +250,7 @@
                 </div>
                 <div class="breakdown-stats">
                     <div class="breakdown-value">{{ data.breakdown.ondeck.count }}</div>
-                    <div class="breakdown-label">files</div>
+                    <div class="breakdown-label">items</div>
                 </div>
                 <div class="breakdown-size">{{ data.breakdown.ondeck.size_display }}</div>
                 <div class="breakdown-bar">
@@ -264,7 +265,7 @@
                 </div>
                 <div class="breakdown-stats">
                     <div class="breakdown-value">{{ data.breakdown.watchlist.count }}</div>
-                    <div class="breakdown-label">files</div>
+                    <div class="breakdown-label">items</div>
                 </div>
                 <div class="breakdown-size">{{ data.breakdown.watchlist.size_display }}</div>
                 <div class="breakdown-bar">
@@ -280,7 +281,7 @@
                 </div>
                 <div class="breakdown-stats">
                     <div class="breakdown-value">{{ data.breakdown.other.count }}</div>
-                    <div class="breakdown-label">files</div>
+                    <div class="breakdown-label">items</div>
                 </div>
                 <div class="breakdown-size">{{ data.breakdown.other.size_display }}</div>
                 <div class="breakdown-bar">
@@ -299,7 +300,7 @@
     <div class="card">
         <div class="card-header">
             <i data-lucide="arrow-up-wide-narrow"></i>
-            <h2>Largest Files</h2>
+            <h2>Largest Items</h2>
         </div>
         <div class="card-body card-body-scrollable" style="padding: 0;">
             <table class="compact-table">
@@ -317,7 +318,10 @@
                         {% for file in data.largest_files %}
                         <tr>
                             <td title="{{ file.path }}">{{ file.filename|truncate(35) }}</td>
-                            <td class="text-muted">{{ file.size_display }}</td>
+                            <td class="text-muted">
+                                {{ file.size_display }}
+                                {{ af_popup(file.associated_files or [], file.subtitle_count + file.sidecar_count) }}
+                            </td>
                             {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
@@ -349,7 +353,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="5" class="text-muted text-center">No files in cache</td>
+                            <td colspan="5" class="text-muted text-center">No items in cache</td>
                         </tr>
                     {% endif %}
                 </tbody>
@@ -361,7 +365,7 @@
     <div class="card">
         <div class="card-header">
             <i data-lucide="clock"></i>
-            <h2>Oldest Cached Files</h2>
+            <h2>Oldest Cached Items</h2>
         </div>
         <div class="card-body card-body-scrollable" style="padding: 0;">
             <table class="compact-table">
@@ -380,7 +384,10 @@
                         {% for file in data.oldest_files %}
                         <tr>
                             <td title="{{ file.path }}">{{ file.filename|truncate(30) }}</td>
-                            <td class="text-muted">{{ file.size_display }}</td>
+                            <td class="text-muted">
+                                {{ file.size_display }}
+                                {{ af_popup(file.associated_files or [], file.subtitle_count + file.sidecar_count) }}
+                            </td>
                             {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
@@ -419,7 +426,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="6" class="text-muted text-center">No files in cache</td>
+                            <td colspan="6" class="text-muted text-center">No items in cache</td>
                         </tr>
                     {% endif %}
                 </tbody>
@@ -453,7 +460,10 @@
                         {% for file in data.activity.recently_cached %}
                         <tr>
                             <td title="{{ file.path }}">{{ file.filename|truncate(30) }}</td>
-                            <td class="text-muted">{{ file.size_display }}</td>
+                            <td class="text-muted">
+                                {{ file.size_display }}
+                                {{ af_popup(file.associated_files or [], file.subtitle_count + file.sidecar_count) }}
+                            </td>
                             {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if file.priority_score >= 70 else 'medium' if file.priority_score >= 40 else 'low' }}">
@@ -486,7 +496,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="6" class="text-muted text-center">No recently cached files</td>
+                            <td colspan="6" class="text-muted text-center">No recently cached items</td>
                         </tr>
                     {% endif %}
                 </tbody>
@@ -529,7 +539,10 @@
                         {% for item in data.expiring_soon %}
                         <tr>
                             <td title="{{ item.file.path }}">{{ item.file.filename|truncate(30) }}</td>
-                            <td class="text-muted">{{ item.file.size_display }}</td>
+                            <td class="text-muted">
+                                {{ item.file.size_display }}
+                                {{ af_popup(item.file.associated_files or [], item.file.subtitle_count + item.file.sidecar_count) }}
+                            </td>
                             {% if data.config.eviction_enabled %}
                             <td>
                                 <span class="priority-badge {{ 'high' if item.file.priority_score >= 70 else 'medium' if item.file.priority_score >= 40 else 'low' }}">
@@ -568,7 +581,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="6" class="text-muted text-center">No files expiring within {{ data.expiring_within_days }} days</td>
+                            <td colspan="6" class="text-muted text-center">No items expiring within {{ data.expiring_within_days }} days</td>
                         </tr>
                     {% endif %}
                 </tbody>
@@ -577,3 +590,4 @@
     </div>
 </div>
 <script>lucide.createIcons();</script>
+{{ af_popup_init('storage-content') }}
