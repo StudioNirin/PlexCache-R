@@ -103,7 +103,7 @@ class TestOnDeckTrackerRatingKey:
 
     def test_find_by_rating_key(self, tracker):
         tracker.update_entry("/media/movie.mkv", "Alice", rating_key="100")
-        assert tracker.find_by_rating_key("100") == "/media/movie.mkv"
+        assert tracker.find_by_rating_key("100") == {"/media/movie.mkv"}
 
     def test_find_by_rating_key_not_found(self, tracker):
         tracker.update_entry("/media/movie.mkv", "Alice", rating_key="100")
@@ -121,20 +121,20 @@ class TestOnDeckTrackerRatingKey:
 
         # Create new tracker from same file (simulates restart)
         tracker2 = OnDeckTracker(tracker_file)
-        assert tracker2.find_by_rating_key("100") == "/media/movie.mkv"
+        assert tracker2.find_by_rating_key("100") == {"/media/movie.mkv"}
 
     def test_index_cleaned_on_remove(self, tracker):
         tracker.update_entry("/media/movie.mkv", "Alice", rating_key="100")
-        assert tracker.find_by_rating_key("100") == "/media/movie.mkv"
+        assert tracker.find_by_rating_key("100") == {"/media/movie.mkv"}
 
         tracker.remove_entry("/media/movie.mkv")
         assert tracker.find_by_rating_key("100") is None
 
     def test_index_updated_on_new_path(self, tracker):
-        """When same rating_key appears with new path, index points to new path."""
+        """When same rating_key appears with new path, both paths are in index (multi-version)."""
         tracker.update_entry("/media/old.mkv", "Alice", rating_key="100")
         tracker.update_entry("/media/new.mkv", "Bob", rating_key="100")
-        assert tracker.find_by_rating_key("100") == "/media/new.mkv"
+        assert tracker.find_by_rating_key("100") == {"/media/old.mkv", "/media/new.mkv"}
 
     def test_index_cleaned_on_cleanup_unseen(self, tracker):
         tracker.update_entry("/media/movie1.mkv", "Alice", rating_key="100")
@@ -146,7 +146,7 @@ class TestOnDeckTrackerRatingKey:
         tracker.cleanup_unseen()
 
         assert tracker.find_by_rating_key("100") is None
-        assert tracker.find_by_rating_key("200") == "/media/movie2.mkv"
+        assert tracker.find_by_rating_key("200") == {"/media/movie2.mkv"}
 
     def test_index_cleaned_on_cleanup_stale(self, tracker):
         tracker.update_entry("/media/movie.mkv", "Alice", rating_key="100")
@@ -165,9 +165,9 @@ class TestOnDeckTrackerRatingKey:
         tracker.update_entry("/media/movie2.mkv", "Bob", rating_key="200")
         tracker.update_entry("/media/tv/ep1.mkv", "Alice", rating_key="300")
 
-        assert tracker.find_by_rating_key("100") == "/media/movie1.mkv"
-        assert tracker.find_by_rating_key("200") == "/media/movie2.mkv"
-        assert tracker.find_by_rating_key("300") == "/media/tv/ep1.mkv"
+        assert tracker.find_by_rating_key("100") == {"/media/movie1.mkv"}
+        assert tracker.find_by_rating_key("200") == {"/media/movie2.mkv"}
+        assert tracker.find_by_rating_key("300") == {"/media/tv/ep1.mkv"}
 
 
 # ============================================================================
@@ -312,7 +312,7 @@ class TestUpgradeDetection:
         from core.app import PlexCacheApp
 
         # Set up pre-run state: rating_key "100" -> old path
-        pre_run_rk_index = {"100": "/mnt/user/media/old.mkv"}
+        pre_run_rk_index = {"100": {"/mnt/user/media/old.mkv"}}
 
         # Current ondeck items: rating_key "100" -> new path
         ondeck_items = [
@@ -354,7 +354,7 @@ class TestUpgradeDetection:
         """Same rating_key with same path is not an upgrade."""
         from core.app import PlexCacheApp
 
-        pre_run_rk_index = {"100": "/mnt/user/media/movie.mkv"}
+        pre_run_rk_index = {"100": {"/mnt/user/media/movie.mkv"}}
 
         ondeck_items = [
             OnDeckItem(
@@ -382,7 +382,7 @@ class TestUpgradeDetection:
         """Items without rating_key are skipped."""
         from core.app import PlexCacheApp
 
-        pre_run_rk_index = {"100": "/mnt/user/media/old.mkv"}
+        pre_run_rk_index = {"100": {"/mnt/user/media/old.mkv"}}
 
         ondeck_items = [
             OnDeckItem(
@@ -434,7 +434,7 @@ class TestUpgradeDetection:
         """In dry-run mode, upgrades are logged but no changes made."""
         from core.app import PlexCacheApp
 
-        pre_run_rk_index = {"100": "/mnt/user/media/old.mkv"}
+        pre_run_rk_index = {"100": {"/mnt/user/media/old.mkv"}}
 
         ondeck_items = [
             OnDeckItem(
@@ -468,7 +468,7 @@ class TestUpgradeDetection:
         """Timestamp tracker entry is transferred from old to new path."""
         from core.app import PlexCacheApp
 
-        pre_run_rk_index = {"100": "/mnt/user/media/old.mkv"}
+        pre_run_rk_index = {"100": {"/mnt/user/media/old.mkv"}}
 
         ondeck_items = [
             OnDeckItem(
@@ -510,7 +510,7 @@ class TestUpgradeDetection:
         """Watchlist tracker entry is transferred when it exists for old path."""
         from core.app import PlexCacheApp
 
-        pre_run_rk_index = {"100": "/mnt/user/media/old.mkv"}
+        pre_run_rk_index = {"100": {"/mnt/user/media/old.mkv"}}
 
         ondeck_items = [
             OnDeckItem(
@@ -551,3 +551,223 @@ class TestUpgradeDetection:
         assert "Alice" in new_entry["users"]
         assert "Bob" in new_entry["users"]
         assert new_entry["rating_key"] == "100"
+
+
+# ============================================================================
+# Multi-version (4K) support tests
+# ============================================================================
+
+class TestMultiVersionSupport:
+    """Test multi-version (4K + 1080p) caching support."""
+
+    @pytest.fixture
+    def tracker(self, tmp_path):
+        return OnDeckTracker(str(tmp_path / "ondeck_tracker.json"))
+
+    def test_same_rating_key_multiple_paths(self, tracker):
+        """Multiple versions of same item share a rating_key and coexist."""
+        tracker.update_entry("/media/Movies/Movie.mkv", "Alice", rating_key="100")
+        tracker.update_entry("/media/Movies 4K/Movie.mkv", "Alice", rating_key="100")
+
+        paths = tracker.find_by_rating_key("100")
+        assert paths == {"/media/Movies/Movie.mkv", "/media/Movies 4K/Movie.mkv"}
+
+    def test_remove_one_version_keeps_other(self, tracker):
+        """Removing one version leaves the other in the index."""
+        tracker.update_entry("/media/Movies/Movie.mkv", "Alice", rating_key="100")
+        tracker.update_entry("/media/Movies 4K/Movie.mkv", "Alice", rating_key="100")
+
+        tracker.remove_entry("/media/Movies/Movie.mkv")
+        assert tracker.find_by_rating_key("100") == {"/media/Movies 4K/Movie.mkv"}
+
+    def test_remove_all_versions_cleans_index(self, tracker):
+        """Removing all versions clears the rating_key from the index."""
+        tracker.update_entry("/media/Movies/Movie.mkv", "Alice", rating_key="100")
+        tracker.update_entry("/media/Movies 4K/Movie.mkv", "Alice", rating_key="100")
+
+        tracker.remove_entry("/media/Movies/Movie.mkv")
+        tracker.remove_entry("/media/Movies 4K/Movie.mkv")
+        assert tracker.find_by_rating_key("100") is None
+
+    def test_cleanup_unseen_removes_unseen_version(self, tracker):
+        """Cleanup unseen removes versions not seen this run."""
+        tracker.update_entry("/media/Movies/Movie.mkv", "Alice", rating_key="100")
+        tracker.update_entry("/media/Movies 4K/Movie.mkv", "Alice", rating_key="100")
+
+        tracker.prepare_for_run()
+        # Only the 1080p version appears this run
+        tracker.update_entry("/media/Movies/Movie.mkv", "Alice", rating_key="100")
+        tracker.cleanup_unseen()
+
+        assert tracker.find_by_rating_key("100") == {"/media/Movies/Movie.mkv"}
+
+    def test_index_rebuilt_on_load_with_multi_version(self, tmp_path):
+        """Rating key index correctly rebuilt from disk with multi-version entries."""
+        tracker_file = str(tmp_path / "ondeck.json")
+        tracker1 = OnDeckTracker(tracker_file)
+        tracker1.update_entry("/media/Movies/Movie.mkv", "Alice", rating_key="100")
+        tracker1.update_entry("/media/Movies 4K/Movie.mkv", "Alice", rating_key="100")
+
+        tracker2 = OnDeckTracker(tracker_file)
+        assert tracker2.find_by_rating_key("100") == {
+            "/media/Movies/Movie.mkv",
+            "/media/Movies 4K/Movie.mkv"
+        }
+
+    def test_multi_version_no_false_upgrade(self):
+        """Multi-version items (new path added, none removed) are NOT upgrades."""
+        from core.app import PlexCacheApp
+
+        # Pre-run: only 1080p version existed
+        pre_run_rk_index = {"100": {"/mnt/user/Movies/Movie.mkv"}}
+
+        # Current run: both 1080p and 4K versions appear
+        ondeck_items = [
+            OnDeckItem(file_path="/plex/Movies/Movie.mkv", username="Alice", rating_key="100"),
+            OnDeckItem(file_path="/plex/Movies 4K/Movie.mkv", username="Alice", rating_key="100"),
+        ]
+        plex_to_real = {
+            "/plex/Movies/Movie.mkv": "/mnt/user/Movies/Movie.mkv",
+            "/plex/Movies 4K/Movie.mkv": "/mnt/user/Movies 4K/Movie.mkv",
+        }
+
+        with patch.object(PlexCacheApp, '__init__', lambda self, *a, **kw: None):
+            app = PlexCacheApp.__new__(PlexCacheApp)
+            app.dry_run = False
+            app.file_filter = MagicMock()
+            app.file_path_modifier = MagicMock()
+            app.config_manager = MagicMock()
+
+            app._detect_and_transfer_upgrades(ondeck_items, plex_to_real, pre_run_rk_index)
+
+        # No upgrade transfer should have been triggered (no path disappeared)
+        app.file_filter.remove_files_from_exclude_list.assert_not_called()
+
+    def test_upgrade_with_multi_version(self):
+        """Actual upgrade (path replaced) detected even with multiple versions."""
+        from core.app import PlexCacheApp
+
+        # Pre-run: 720p and 4K versions
+        pre_run_rk_index = {"100": {
+            "/mnt/user/Movies/Movie.720p.mkv",
+            "/mnt/user/Movies 4K/Movie.mkv",
+        }}
+
+        # Current run: 720p upgraded to 1080p (Radarr swap), 4K unchanged
+        ondeck_items = [
+            OnDeckItem(file_path="/plex/Movies/Movie.1080p.mkv", username="Alice", rating_key="100"),
+            OnDeckItem(file_path="/plex/Movies 4K/Movie.mkv", username="Alice", rating_key="100"),
+        ]
+        plex_to_real = {
+            "/plex/Movies/Movie.1080p.mkv": "/mnt/user/Movies/Movie.1080p.mkv",
+            "/plex/Movies 4K/Movie.mkv": "/mnt/user/Movies 4K/Movie.mkv",
+        }
+
+        with patch.object(PlexCacheApp, '__init__', lambda self, *a, **kw: None):
+            app = PlexCacheApp.__new__(PlexCacheApp)
+            app.dry_run = False
+            app.ondeck_tracker = OnDeckTracker(str(tempfile.mktemp(suffix='.json')))
+            app.watchlist_tracker = WatchlistTracker(str(tempfile.mktemp(suffix='.json')))
+            app.timestamp_tracker = CacheTimestampTracker(str(tempfile.mktemp(suffix='.json')))
+            app.file_filter = MagicMock()
+            app.file_filter.remove_files_from_exclude_list = MagicMock(return_value=True)
+            app.file_filter._add_to_exclude_file = MagicMock()
+            app.file_path_modifier = MagicMock()
+            app.file_path_modifier.convert_real_to_cache = MagicMock(
+                side_effect=lambda p: (p.replace("/mnt/user/", "/mnt/cache/"), None)
+            )
+            app.config_manager = MagicMock()
+            app.config_manager.cache.backup_upgraded_files = True
+            app.config_manager.cache.create_plexcached_backups = True
+
+            # Set up tracker entries
+            app.ondeck_tracker.update_entry("/mnt/user/Movies/Movie.720p.mkv", "Alice", rating_key="100")
+            app.ondeck_tracker.update_entry("/mnt/user/Movies/Movie.1080p.mkv", "Alice", rating_key="100")
+
+            app._detect_and_transfer_upgrades(ondeck_items, plex_to_real, pre_run_rk_index)
+
+        # One upgrade should be detected (720p → 1080p), 4K unchanged
+        app.file_filter.remove_files_from_exclude_list.assert_called_once()
+
+
+class TestWatchlistMultiVersion:
+    """Test watchlist discovery with multi-version media items."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_plexapi(self):
+        mocks = {}
+        for mod in ['plexapi', 'plexapi.server', 'plexapi.myplex',
+                     'plexapi.video', 'plexapi.library', 'plexapi.exceptions']:
+            if mod not in sys.modules:
+                mocks[mod] = MagicMock()
+                sys.modules[mod] = mocks[mod]
+        if 'requests' not in sys.modules:
+            mocks['requests'] = MagicMock()
+            sys.modules['requests'] = mocks['requests']
+        yield
+        for mod in mocks:
+            sys.modules.pop(mod, None)
+
+    def test_watchlist_movie_yields_all_versions(self):
+        """A movie with 4K + 1080p versions yields both file paths."""
+        from core.plex_api import PlexManager
+
+        # Create mock movie with two media versions
+        part_1080p = MagicMock()
+        part_1080p.file = "/data/Movies/Movie.1080p.mkv"
+        media_1080p = MagicMock()
+        media_1080p.parts = [part_1080p]
+
+        part_4k = MagicMock()
+        part_4k.file = "/data/Movies 4K/Movie.2160p.mkv"
+        media_4k = MagicMock()
+        media_4k.parts = [part_4k]
+
+        mock_movie = MagicMock()
+        mock_movie.media = [media_1080p, media_4k]
+        mock_movie.ratingKey = "12345"
+
+        api = PlexManager.__new__(PlexManager)
+        results = list(api._process_watchlist_movie(mock_movie, "user1", None))
+
+        assert len(results) == 2
+        paths = {r[0] for r in results}
+        assert paths == {"/data/Movies/Movie.1080p.mkv", "/data/Movies 4K/Movie.2160p.mkv"}
+        # Both should have the same rating_key
+        assert all(r[4] == "12345" for r in results)
+
+    def test_watchlist_show_yields_all_episode_versions(self):
+        """An episode with 4K + 1080p versions yields both file paths."""
+        from core.plex_api import PlexManager
+
+        part_1080p = MagicMock()
+        part_1080p.file = "/data/TV/Show/Season 01/S01E01.1080p.mkv"
+        media_1080p = MagicMock()
+        media_1080p.parts = [part_1080p]
+
+        part_4k = MagicMock()
+        part_4k.file = "/data/TV 4K/Show/Season 01/S01E01.2160p.mkv"
+        media_4k = MagicMock()
+        media_4k.parts = [part_4k]
+
+        mock_episode = MagicMock()
+        mock_episode.isPlayed = False
+        mock_episode.parentIndex = 1
+        mock_episode.index = 1
+        mock_episode.ratingKey = "67890"
+        mock_episode.media = [media_1080p, media_4k]
+
+        mock_show = MagicMock()
+        mock_show.title = "Test Show"
+        mock_show.episodes.return_value = [mock_episode]
+
+        api = PlexManager.__new__(PlexManager)
+        results = list(api._process_watchlist_show(mock_show, 5, "user1", None))
+
+        assert len(results) == 2
+        paths = {r[0] for r in results}
+        assert "/data/TV/Show/Season 01/S01E01.1080p.mkv" in paths
+        assert "/data/TV 4K/Show/Season 01/S01E01.2160p.mkv" in paths
+        # Both should have same rating_key and episode_info
+        assert all(r[4] == "67890" for r in results)
+        assert all(r[3]["show"] == "Test Show" for r in results)

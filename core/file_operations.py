@@ -1294,21 +1294,25 @@ class OnDeckTracker(JSONTracker):
         super().__init__(tracker_file, "OnDeck")
 
     def _post_load(self) -> None:
-        """Build the rating_key reverse index after loading data from disk."""
+        """Build the rating_key reverse index after loading data from disk.
+
+        Maps rating_key → set of file paths to support multi-version items
+        (e.g., 4K + 1080p versions of the same movie share a rating_key).
+        """
         self._rating_key_index = {}
         for file_path, entry in self._data.items():
             rk = entry.get('rating_key')
             if rk:
-                self._rating_key_index[rk] = file_path
+                self._rating_key_index.setdefault(rk, set()).add(file_path)
 
-    def find_by_rating_key(self, rating_key: str) -> Optional[str]:
-        """Find a file path by its Plex rating key.
+    def find_by_rating_key(self, rating_key: str) -> Optional[set]:
+        """Find file paths by their Plex rating key.
 
         Args:
             rating_key: The Plex rating key to look up.
 
         Returns:
-            The file path associated with the rating key, or None.
+            Set of file paths associated with the rating key, or None.
         """
         with self._lock:
             if not hasattr(self, '_rating_key_index'):
@@ -1362,7 +1366,7 @@ class OnDeckTracker(JSONTracker):
                 # Store rating_key if provided (never overwrite with None)
                 if rating_key is not None:
                     entry['rating_key'] = rating_key
-                    self._rating_key_index[rating_key] = file_path
+                    self._rating_key_index.setdefault(rating_key, set()).add(file_path)
 
                 # Update episode_info if provided and not already set, or update is_current_ondeck
                 if episode_info:
@@ -1388,7 +1392,7 @@ class OnDeckTracker(JSONTracker):
                     new_entry['ondeck_users'] = [username]
                 if rating_key is not None:
                     new_entry['rating_key'] = rating_key
-                    self._rating_key_index[rating_key] = file_path
+                    self._rating_key_index.setdefault(rating_key, set()).add(file_path)
                 if episode_info:
                     new_entry['episode_info'] = {
                         'show': episode_info.get('show'),
@@ -1485,10 +1489,14 @@ class OnDeckTracker(JSONTracker):
         with self._lock:
             if file_path in self._data:
                 entry = self._data[file_path]
-                # Clean up rating_key index
+                # Clean up rating_key index (remove this path from the set)
                 rk = entry.get('rating_key')
                 if rk and hasattr(self, '_rating_key_index'):
-                    self._rating_key_index.pop(rk, None)
+                    paths = self._rating_key_index.get(rk)
+                    if paths:
+                        paths.discard(file_path)
+                        if not paths:
+                            del self._rating_key_index[rk]
                 del self._data[file_path]
                 self._save()
                 logging.debug(f"Removed {self._tracker_name} entry for: {file_path}")
@@ -1540,10 +1548,14 @@ class OnDeckTracker(JSONTracker):
                     stale.append(path)
 
             for path in stale:
-                # Clean up rating_key index
+                # Clean up rating_key index (remove this path from the set)
                 rk = self._data[path].get('rating_key')
                 if rk and hasattr(self, '_rating_key_index'):
-                    self._rating_key_index.pop(rk, None)
+                    paths = self._rating_key_index.get(rk)
+                    if paths:
+                        paths.discard(path)
+                        if not paths:
+                            del self._rating_key_index[rk]
                 del self._data[path]
 
             if stale:
@@ -1571,10 +1583,14 @@ class OnDeckTracker(JSONTracker):
 
             unseen = [path for path in self._data if path not in seen]
             for path in unseen:
-                # Clean up rating_key index
+                # Clean up rating_key index (remove this path from the set)
                 rk = self._data[path].get('rating_key')
                 if rk and hasattr(self, '_rating_key_index'):
-                    self._rating_key_index.pop(rk, None)
+                    paths = self._rating_key_index.get(rk)
+                    if paths:
+                        paths.discard(path)
+                        if not paths:
+                            del self._rating_key_index[rk]
                 del self._data[path]
 
             # Trim user_first_seen on surviving entries to only include current users
