@@ -19,8 +19,11 @@
         </div>
     </div>
     {% if stats.configured_limit_display %}
-    <div style="margin-top: 0.25rem; font-size: 0.75rem; color: var(--plex-text-muted); text-align: center;">
-        Limit: {{ stats.configured_limit_display }}{% if stats.eviction_threshold_display %} &middot; Eviction: {{ stats.eviction_threshold_display }}{% endif %}
+    <div class="progress-label" style="margin-top: 0.25rem; font-size: 0.75rem; color: var(--plex-text-muted);">
+        <span>Limit: {{ stats.configured_limit_display }}</span>
+        {% if stats.eviction_threshold_display %}
+        <span>Eviction: {{ stats.eviction_threshold_display }}</span>
+        {% endif %}
     </div>
     {% endif %}
     {% if stats.cache_limit_exceeded %}
