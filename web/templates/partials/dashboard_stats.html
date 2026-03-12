@@ -7,14 +7,25 @@
     <div class="stat-value orange">{{ stats.cache_files }}</div>
     <div class="stat-label">files cached{% if stats.cached_files_size %} ({{ stats.cached_files_size }}){% endif %}</div>
     <div class="progress-container">
-        <div class="progress-bar">
-            <div class="progress-fill {% if stats.eviction_over_threshold %}progress-warning{% endif %}" style="width: {{ stats.usage_percent }}%"></div>
+        <div class="progress-bar" style="position: relative; overflow: visible;">
+            <div class="progress-fill {% if stats.cache_limit_exceeded or stats.min_free_space_warning %}progress-danger{% elif stats.cache_limit_approaching %}progress-warning{% endif %}" style="width: {{ stats.usage_percent }}%; border-radius: 3px;"></div>
+            {% if stats.configured_limit_percent > 0 %}
+            <div class="cache-limit-marker" style="position: absolute; left: {{ stats.configured_limit_percent }}%; top: -3px; bottom: -3px; width: 2px; background: var(--plex-text-secondary, rgba(255,255,255,0.5)); border-radius: 1px;" title="Cache Limit: {{ stats.configured_limit_display }}"></div>
+            {% endif %}
         </div>
         <div class="progress-label">
             <span title="Total drive usage / Drive capacity">{{ stats.cache_size }} / {{ stats.cache_limit }}</span>
             <span>{{ stats.usage_percent }}%</span>
         </div>
     </div>
+    {% if stats.configured_limit_display %}
+    <div class="progress-label" style="margin-top: 0.25rem; font-size: 0.75rem;">
+        <span>Cache Limit: {{ stats.configured_limit_display }}</span>
+        {% if stats.eviction_threshold_display %}
+        <span style="color: var(--plex-text-muted);">Eviction at {{ stats.eviction_threshold_display }}</span>
+        {% endif %}
+    </div>
+    {% endif %}
     {% if stats.cache_limit_exceeded %}
     <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--danger);">
         <i data-lucide="alert-circle" style="width: 12px; height: 12px; vertical-align: middle;"></i>
@@ -25,9 +36,13 @@
         <i data-lucide="alert-circle" style="width: 12px; height: 12px; vertical-align: middle;"></i>
         Below min free space floor — caching paused
     </div>
-    {% elif stats.eviction_over_threshold %}
-    <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--warning);">
+    {% elif stats.cache_limit_approaching %}
+    <div style="margin-top: 0.35rem; font-size: 0.75rem; color: var(--warning);">
         <i data-lucide="alert-triangle" style="width: 12px; height: 12px; vertical-align: middle;"></i>
+        Approaching cache limit
+    </div>
+    {% elif stats.eviction_over_threshold %}
+    <div style="margin-top: 0.35rem; font-size: 0.75rem; color: var(--plex-text-muted);">
         Over eviction threshold by {{ stats.eviction_over_by_display }}
     </div>
     {% endif %}

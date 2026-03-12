@@ -726,8 +726,13 @@ class CacheService:
                     eviction_over_by_display = format_bytes(eviction_over_by)
 
         cache_limit_exceeded = False
+        cache_limit_approaching = False
         if cache_limit_bytes > 0 and disk_used >= cache_limit_bytes:
             cache_limit_exceeded = True
+        elif cache_limit_bytes > 0 and eviction_over_threshold:
+            # Approaching = over eviction threshold and within 95% of the hard limit
+            if disk_used >= cache_limit_bytes * 0.95:
+                cache_limit_approaching = True
 
         # Check min_free_space floor
         min_free_space_warning = False
@@ -783,11 +788,23 @@ class CacheService:
             except (ValueError, TypeError):
                 pass
 
+        # Build configured cache limit display for dashboard
+        configured_limit_display = None
+        eviction_threshold_display = None
+        configured_limit_percent = 0
+        if cache_limit_bytes > 0:
+            configured_limit_display = format_bytes(cache_limit_bytes)
+            eviction_threshold_percent = settings.get("cache_eviction_threshold_percent", 95)
+            eviction_threshold_bytes_val = int(cache_limit_bytes * eviction_threshold_percent / 100)
+            eviction_threshold_display = format_bytes(eviction_threshold_bytes_val)
+            if disk_total > 0:
+                configured_limit_percent = min(round(cache_limit_bytes / disk_total * 100, 1), 100)
+
         return {
             "cache_files": len(all_files),  # Grouped count (subtitles with videos)
             "cache_size": format_bytes(disk_used),  # Actual disk used
             "cache_size_bytes": disk_used,
-            "cache_limit": format_bytes(disk_total),  # Actual disk total
+            "cache_limit": format_bytes(disk_total),  # Actual disk total (drive capacity)
             "cache_limit_bytes": disk_total,
             "usage_percent": usage_percent,
             "cached_files_size": format_bytes(cached_files_size),  # PlexCache files only
@@ -797,6 +814,10 @@ class CacheService:
             "eviction_over_threshold": eviction_over_threshold,
             "eviction_over_by_display": eviction_over_by_display,
             "cache_limit_exceeded": cache_limit_exceeded,
+            "cache_limit_approaching": cache_limit_approaching,
+            "configured_limit_display": configured_limit_display,
+            "configured_limit_percent": configured_limit_percent,
+            "eviction_threshold_display": eviction_threshold_display,
             "min_free_space_warning": min_free_space_warning,
             "plexcache_quota_exceeded": plexcache_quota_exceeded
         }
