@@ -32,7 +32,7 @@
     <p class="text-muted" style="margin: 0 0 1rem 0; font-size: 0.9rem;">
         Scanned {{ scan_results.total_items }} items across {{ scan_results.libraries_scanned|length }} libraries.
         <br>
-        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at[:16].replace('T', ' ') }}</span>
+        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at | format_datetime }}</span>
     </p>
     <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
         <i data-lucide="refresh-cw"></i> Re-scan
@@ -47,7 +47,7 @@
     <p class="text-muted" style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">
         Scanned {{ scan_results.total_items }} items across {{ scan_results.libraries_scanned|length }} libraries.
         <br>
-        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at[:16].replace('T', ' ') }}</span>
+        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at | format_datetime }}</span>
     </p>
     <p style="margin: 0 0 1rem 0; font-size: 0.85rem;">
         <i data-lucide="layers" style="width: 14px; height: 14px; color: var(--plex-text-muted); vertical-align: middle;"></i>
@@ -155,7 +155,7 @@
         <span class="badge badge-muted" title="Intentional 4K + HD pairs — not duplicates">{{ scan_results.multi_version_count }} multi-version</span>
         {% endif %}
         <span class="text-muted" style="margin-left: auto; font-size: 0.85rem;">
-            Scanned {{ scan_results.scanned_at[:16].replace('T', ' ') }}
+            Scanned {{ scan_results.scanned_at | format_datetime }}
         </span>
     </div>
 
