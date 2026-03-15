@@ -535,10 +535,40 @@ def toggle_library(request: Request, section_id: int):
     else:
         # Turn ON
         if current_mappings:
-            # Re-enable existing mappings
+            # Re-enable existing mappings and sync with current Plex locations
+            libraries = settings_service.get_plex_libraries()
+            library = next((lib for lib in libraries if lib["id"] == section_id), None)
+            plex_locations = set()
+            if library:
+                plex_locations = {
+                    (loc if loc.endswith("/") else loc + "/").rstrip("/")
+                    for loc in library.get("locations", [])
+                }
+
+            # Remove mappings for locations no longer in Plex
+            if plex_locations:
+                mappings = [
+                    m for m in mappings
+                    if m.get("section_id") != section_id
+                    or m.get("plex_path", "").rstrip("/") in plex_locations
+                ]
+
+            # Re-enable surviving mappings
             for m in mappings:
                 if m.get("section_id") == section_id:
                     m["enabled"] = True
+
+            # Add mappings for any new Plex locations
+            if library:
+                existing_plex_paths = {
+                    m.get("plex_path", "").rstrip("/")
+                    for m in mappings
+                    if m.get("section_id") == section_id
+                }
+                for loc in library.get("locations", []):
+                    if loc.rstrip("/") not in existing_plex_paths:
+                        new_mapping = settings_service.auto_fill_mapping(library, loc, raw)
+                        mappings.append(new_mapping)
         else:
             # Auto-create mappings from Plex library
             libraries = settings_service.get_plex_libraries()
