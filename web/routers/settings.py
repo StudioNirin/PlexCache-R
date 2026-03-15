@@ -533,7 +533,8 @@ def toggle_library(request: Request, section_id: int):
             if m.get("section_id") == section_id:
                 m["enabled"] = False
     else:
-        # Turn ON
+        # Turn ON — always fetch fresh Plex data to detect location changes
+        settings_service.invalidate_plex_cache()
         if current_mappings:
             # Re-enable existing mappings and sync with current Plex locations
             libraries = settings_service.get_plex_libraries()
