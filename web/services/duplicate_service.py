@@ -315,11 +315,12 @@ class DuplicateService:
             if tracked_files:
                 self._classify_orphans(duplicates, tracked_files)
 
-            # Compute stats
+            # Compute stats — multi-version items are intentional, not duplicates
             multi_version_count = sum(1 for item in duplicates if item.is_multi_version)
-            orphan_count = sum(len(item.orphan_files) for item in duplicates)
-            orphan_bytes = sum(item.orphan_bytes for item in duplicates)
-            unresolved_count = sum(1 for item in duplicates if not item.is_resolved and not item.is_multi_version)
+            true_duplicates = [item for item in duplicates if not item.is_multi_version]
+            orphan_count = sum(len(item.orphan_files) for item in true_duplicates)
+            orphan_bytes = sum(item.orphan_bytes for item in true_duplicates)
+            unresolved_count = sum(1 for item in true_duplicates if not item.is_resolved)
 
             duration = time.time() - start_time
 
@@ -327,7 +328,7 @@ class DuplicateService:
                 scanned_at=datetime.now().isoformat(),
                 scan_duration_seconds=round(duration, 1),
                 total_items=total_items_scanned,
-                duplicate_count=len(duplicates),
+                duplicate_count=len(true_duplicates),
                 orphan_count=orphan_count,
                 orphan_bytes=orphan_bytes,
                 orphan_bytes_display=format_bytes(orphan_bytes),

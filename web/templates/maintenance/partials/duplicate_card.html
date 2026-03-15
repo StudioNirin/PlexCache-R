@@ -24,7 +24,7 @@
     </button>
 </div>
 
-{% elif scan_results.duplicate_count == 0 %}
+{% elif scan_results.duplicate_count == 0 and scan_results.multi_version_count == 0 %}
 <!-- State 3: No duplicates found -->
 <div style="text-align: center; padding: 2rem 1rem;">
     <i data-lucide="check-circle" style="width: 40px; height: 40px; color: var(--success); margin-bottom: 0.75rem;"></i>
@@ -39,22 +39,120 @@
     </button>
 </div>
 
+{% elif scan_results.duplicate_count == 0 and scan_results.multi_version_count > 0 %}
+<!-- State 4: Only multi-version items (no real duplicates) -->
+<div style="text-align: center; padding: 2rem 1rem;">
+    <i data-lucide="check-circle" style="width: 40px; height: 40px; color: var(--success); margin-bottom: 0.75rem;"></i>
+    <p style="margin: 0 0 0.5rem 0; font-weight: 500; color: var(--success);">No Duplicates Found</p>
+    <p class="text-muted" style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">
+        Scanned {{ scan_results.total_items }} items across {{ scan_results.libraries_scanned|length }} libraries.
+        <br>
+        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at[:16].replace('T', ' ') }}</span>
+    </p>
+    <p style="margin: 0 0 1rem 0; font-size: 0.85rem;">
+        <i data-lucide="layers" style="width: 14px; height: 14px; color: var(--plex-text-muted); vertical-align: middle;"></i>
+        <span class="text-muted">{{ scan_results.multi_version_count }} multi-version item{{ 's' if scan_results.multi_version_count != 1 }} detected (4K + HD — these are intentional, not duplicates)</span>
+    </p>
+    <div class="flex gap-1 justify-center">
+        <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
+            <i data-lucide="refresh-cw"></i> Re-scan
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="toggleMultiVersionTable()">
+            <i data-lucide="layers"></i> Show Multi-Version
+        </button>
+    </div>
+</div>
+
+<!-- Hidden multi-version table (shown via toggle) -->
+<div id="multi-version-table-container" style="display: none;">
+    <div class="card-body" style="padding: 0;">
+        <div class="table-container" style="max-height: 600px; overflow-y: auto;">
+            <table id="duplicate-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th>Item</th>
+                        <th style="width: 80px;">Library</th>
+                        <th style="width: 60px;">Files</th>
+                        <th style="width: 100px;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in scan_results.items %}
+                    {% if item.is_multi_version %}
+                    <tr class="dup-item-row" data-rating-key="{{ item.rating_key }}" onclick="toggleDuplicateExpand(this, event)" style="cursor: pointer;">
+                        <td></td>
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <i data-lucide="chevron-right" class="dup-expand-icon" style="width: 14px; height: 14px; transition: transform 0.2s; flex-shrink: 0;"></i>
+                                <span title="{{ item.title }}">
+                                    {% if item.item_type == 'movie' %}
+                                    <i data-lucide="film" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                                    {% else %}
+                                    <i data-lucide="tv" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                                    {% endif %}
+                                    {{ item.title }}
+                                </span>
+                            </div>
+                        </td>
+                        <td class="text-muted" style="font-size: 0.85rem;">{{ item.library }}</td>
+                        <td class="text-muted">{{ item.files|length }}</td>
+                        <td><span class="badge badge-muted">Multi-Version</span></td>
+                    </tr>
+                    <tr class="dup-detail-row" data-parent="{{ item.rating_key }}" style="display: none;">
+                        <td colspan="5" style="padding: 0; background: var(--plex-bg);">
+                            <table style="margin: 0; font-size: 0.9rem;">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px;"></th>
+                                        <th>File</th>
+                                        <th style="width: 70px;">Resolution</th>
+                                        <th style="width: 70px;">Codec</th>
+                                        <th style="width: 90px;">Size</th>
+                                        <th style="width: 80px;">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for file in item.files %}
+                                    <tr>
+                                        <td></td>
+                                        <td title="{{ file.fs_path }}" style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                            {{ file.fs_path.split('/')[-1] }}
+                                        </td>
+                                        <td class="text-muted">{{ file.resolution }}{% if file.resolution not in ('?', '4k', 'sd') %}p{% endif %}</td>
+                                        <td class="text-muted">{{ file.video_codec }}</td>
+                                        <td class="text-muted">{{ file.size_display }}</td>
+                                        <td><span class="badge badge-muted">{{ file.resolution }}{% if file.resolution not in ('?', '4k', 'sd') %}p{% endif %}</span></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 {% else %}
-<!-- State 2: Results with duplicates -->
+<!-- State 2: Results with real duplicates -->
 
 <!-- Summary Stats -->
 <div class="card-body" style="padding: 0.75rem;">
     <div class="flex gap-1" style="flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem;">
-        <span class="badge badge-warning">{{ scan_results.duplicate_count }} items</span>
+        <span class="badge badge-warning">{{ scan_results.duplicate_count }} duplicate{{ 's' if scan_results.duplicate_count != 1 }}</span>
         {% if scan_results.arr_enabled and scan_results.orphan_count > 0 %}
-        <span class="badge badge-error">{{ scan_results.orphan_count }} orphans</span>
+        <span class="badge badge-error">{{ scan_results.orphan_count }} orphan{{ 's' if scan_results.orphan_count != 1 }}</span>
         <span class="badge badge-muted">{{ scan_results.orphan_bytes_display }}</span>
-        {% endif %}
-        {% if scan_results.multi_version_count > 0 %}
-        <span class="badge badge-warning">{{ scan_results.multi_version_count }} multi-version</span>
         {% endif %}
         {% if scan_results.unresolved_count > 0 %}
         <span class="badge badge-info">{{ scan_results.unresolved_count }} unresolved</span>
+        {% endif %}
+        {% if scan_results.multi_version_count > 0 %}
+        <span class="badge badge-muted" title="Intentional 4K + HD pairs — not duplicates">{{ scan_results.multi_version_count }} multi-version</span>
         {% endif %}
         <span class="text-muted" style="margin-left: auto; font-size: 0.85rem;">
             Scanned {{ scan_results.scanned_at[:16].replace('T', ' ') }}
@@ -97,7 +195,7 @@
     </div>
 </div>
 
-<!-- Duplicate Items Table -->
+<!-- Duplicate Items Table (excludes multi-version) -->
 <div class="card-body" style="padding: 0;">
     <div class="table-container" style="max-height: 600px; overflow-y: auto;">
         <table id="duplicate-table">
@@ -114,6 +212,7 @@
             </thead>
             <tbody>
                 {% for item in scan_results.items %}
+                {% if not item.is_multi_version %}
                 <tr class="dup-item-row" data-rating-key="{{ item.rating_key }}" onclick="toggleDuplicateExpand(this, event)" style="cursor: pointer;">
                     <td>
                         <!-- Only show checkbox if item has orphan files -->
@@ -134,9 +233,7 @@
                     <td class="text-muted" style="font-size: 0.85rem;">{{ item.library }}</td>
                     <td class="text-muted">{{ item.files|length }}</td>
                     <td>
-                        {% if item.is_multi_version %}
-                        <span class="badge badge-warning">Multi-Version</span>
-                        {% elif item.is_resolved %}
+                        {% if item.is_resolved %}
                         <span class="badge badge-success">Resolved</span>
                         {% else %}
                         <span class="badge badge-info">Unresolved</span>
@@ -172,9 +269,7 @@
                                     <td class="text-muted">{{ file.video_codec }}</td>
                                     <td class="text-muted">{{ file.size_display }}</td>
                                     <td>
-                                        {% if item.is_multi_version %}
-                                        <span class="badge badge-muted">{{ file.resolution }}{% if file.resolution not in ('?', '4k', 'sd') %}p{% endif %}</span>
-                                        {% elif file.is_keeper is true %}
+                                        {% if file.is_keeper is true %}
                                         <span class="badge badge-success">Keeper</span>
                                         {% elif file.is_keeper is false %}
                                         <span class="badge badge-error">Orphan</span>
@@ -188,6 +283,7 @@
                         </table>
                     </td>
                 </tr>
+                {% endif %}
                 {% endfor %}
             </tbody>
         </table>
@@ -196,5 +292,11 @@
 {% endif %}
 
 <script>
+var toggleMultiVersionTable = function() {
+    var container = document.getElementById('multi-version-table-container');
+    if (container) {
+        container.style.display = container.style.display === 'none' ? '' : 'none';
+    }
+};
 if (typeof lucide !== 'undefined') lucide.createIcons();
 </script>
