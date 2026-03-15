@@ -834,10 +834,23 @@ def scan_duplicates(request: Request):
 
 
 @router.get("/duplicates", response_class=HTMLResponse)
-def get_duplicates(request: Request):
+def get_duplicates(request: Request, show_ignored: bool = Query(default=False)):
     """Get duplicate scan results card (HTMX partial)"""
     service = get_duplicate_service()
-    results = service.load_scan_results()
+    ignores = service.load_ignores()
+
+    if show_ignored:
+        results = service.load_scan_results()  # raw — includes ignored
+    else:
+        results = service.load_scan_results_filtered()  # excludes ignored
+
+    # Build ignored items list from raw results for the ignored section
+    ignored_items = []
+    if ignores and show_ignored:
+        raw = service.load_scan_results() if not show_ignored else results
+        if raw:
+            ignored_items = [item for item in raw.items
+                            if item.rating_key in ignores and not item.is_multi_version]
 
     # Check if arr is configured
     from web.services.settings_service import get_settings_service
@@ -853,8 +866,46 @@ def get_duplicates(request: Request):
             "request": request,
             "scan_results": results,
             "arr_configured": arr_configured,
+            "ignored_count": len(ignores),
+            "ignored_items": ignored_items,
+            "show_ignored": show_ignored,
         }
     )
+
+
+@router.post("/ignore-duplicate", response_class=HTMLResponse)
+def ignore_duplicate(
+    request: Request,
+    rating_key: str = Form(...),
+    title: str = Form(...),
+    library: str = Form(...),
+    item_type: str = Form(default="episode"),
+):
+    """Ignore a duplicate item so it's excluded from counts and display"""
+    service = get_duplicate_service()
+    service.ignore_item(rating_key, title, library, item_type)
+
+    # Invalidate dashboard cache so counts update
+    from web.services.web_cache import get_web_cache
+    get_web_cache().invalidate("dashboard_stats")
+
+    return get_duplicates(request)
+
+
+@router.post("/unignore-duplicate", response_class=HTMLResponse)
+def unignore_duplicate(
+    request: Request,
+    rating_key: str = Form(...),
+):
+    """Restore a previously ignored duplicate item"""
+    service = get_duplicate_service()
+    service.unignore_item(rating_key)
+
+    # Invalidate dashboard cache so counts update
+    from web.services.web_cache import get_web_cache
+    get_web_cache().invalidate("dashboard_stats")
+
+    return get_duplicates(request, show_ignored=True)
 
 
 @router.post("/delete-duplicates", response_class=HTMLResponse)

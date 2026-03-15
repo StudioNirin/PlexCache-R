@@ -34,9 +34,20 @@
         <br>
         <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at | format_datetime }}</span>
     </p>
-    <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
-        <i data-lucide="refresh-cw"></i> Re-scan
-    </button>
+    <div class="flex gap-1 justify-center">
+        <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
+            <i data-lucide="refresh-cw"></i> Re-scan
+        </button>
+        {% if ignored_count is defined and ignored_count > 0 %}
+        <button class="btn btn-sm btn-secondary"
+            hx-get="/maintenance/duplicates?show_ignored={{ 'false' if show_ignored else 'true' }}"
+            hx-target="#duplicate-results-container"
+            hx-swap="innerHTML">
+            <i data-lucide="{% if show_ignored %}eye{% else %}eye-off{% endif %}"></i>
+            {% if show_ignored %}Hide{% else %}Show{% endif %} Ignored ({{ ignored_count }})
+        </button>
+        {% endif %}
+    </div>
 </div>
 
 {% elif scan_results.duplicate_count == 0 and scan_results.multi_version_count > 0 %}
@@ -60,6 +71,15 @@
         <button class="btn btn-sm btn-secondary" onclick="toggleMultiVersionTable()">
             <i data-lucide="layers"></i> Show Multi-Version
         </button>
+        {% if ignored_count is defined and ignored_count > 0 %}
+        <button class="btn btn-sm btn-secondary"
+            hx-get="/maintenance/duplicates?show_ignored={{ 'false' if show_ignored else 'true' }}"
+            hx-target="#duplicate-results-container"
+            hx-swap="innerHTML">
+            <i data-lucide="{% if show_ignored %}eye{% else %}eye-off{% endif %}"></i>
+            {% if show_ignored %}Hide{% else %}Show{% endif %} Ignored ({{ ignored_count }})
+        </button>
+        {% endif %}
     </div>
 </div>
 
@@ -186,6 +206,15 @@
                 <i data-lucide="trash-2"></i> Delete All Orphans ({{ scan_results.orphan_count }})
             </button>
             {% endif %}
+            {% if ignored_count is defined and ignored_count > 0 %}
+            <button class="btn btn-sm btn-secondary"
+                hx-get="/maintenance/duplicates?show_ignored={{ 'false' if show_ignored else 'true' }}"
+                hx-target="#duplicate-results-container"
+                hx-swap="innerHTML">
+                <i data-lucide="{% if show_ignored %}eye{% else %}eye-off{% endif %}"></i>
+                {% if show_ignored %}Hide{% else %}Show{% endif %} Ignored ({{ ignored_count }})
+            </button>
+            {% endif %}
             <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
                 <i data-lucide="refresh-cw"></i> Re-scan
             </button>
@@ -206,6 +235,7 @@
                     <th style="width: 80px;">Library</th>
                     <th style="width: 60px;">Files</th>
                     <th style="width: 100px;">Status</th>
+                    <th style="width: 40px;"></th>
                 </tr>
             </thead>
             <tbody>
@@ -237,10 +267,20 @@
                         <span class="badge badge-info">Unresolved</span>
                         {% endif %}
                     </td>
+                    <td>
+                        <button class="btn btn-sm btn-secondary" title="Ignore this item" style="padding: 0.25rem; opacity: 0.5;"
+                            hx-post="/maintenance/ignore-duplicate"
+                            hx-vals='{{ {"rating_key": item.rating_key, "title": item.title, "library": item.library, "item_type": item.item_type}|tojson }}'
+                            hx-target="#duplicate-results-container"
+                            hx-swap="innerHTML"
+                            onclick="event.stopPropagation()">
+                            <i data-lucide="eye-off" style="width: 14px; height: 14px;"></i>
+                        </button>
+                    </td>
                 </tr>
                 <!-- Expanded file details (hidden by default) -->
                 <tr class="dup-detail-row" data-parent="{{ item.rating_key }}" style="display: none;">
-                    <td colspan="5" style="padding: 0 0 0 2rem; background: rgba(255,255,255,0.02);">
+                    <td colspan="6" style="padding: 0 0 0 2rem; background: rgba(255,255,255,0.02);">
                         <table style="margin: 0; font-size: 0.9rem;">
                             <thead>
                                 <tr>
@@ -282,6 +322,55 @@
                     </td>
                 </tr>
                 {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Ignored Items Section (shown when toggled) -->
+{% if show_ignored is defined and show_ignored and ignored_items is defined and ignored_items|length > 0 %}
+<div style="border-top: 1px solid rgba(255,255,255,0.08); padding: 0.75rem;">
+    <h3 style="font-size: 0.95rem; color: var(--plex-text-muted); margin: 0 0 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+        <i data-lucide="eye-off" style="width: 16px; height: 16px;"></i>
+        Ignored Items ({{ ignored_items|length }})
+    </h3>
+    <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th style="width: 80px;">Library</th>
+                    <th style="width: 60px;">Files</th>
+                    <th style="width: 100px;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in ignored_items %}
+                <tr style="opacity: 0.6;">
+                    <td>
+                        <span title="{{ item.title }}">
+                            {% if item.item_type == 'movie' %}
+                            <i data-lucide="film" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                            {% else %}
+                            <i data-lucide="tv" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                            {% endif %}
+                            {{ item.title }}
+                        </span>
+                    </td>
+                    <td class="text-muted" style="font-size: 0.85rem;">{{ item.library }}</td>
+                    <td class="text-muted">{{ item.files|length }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-secondary"
+                            hx-post="/maintenance/unignore-duplicate"
+                            hx-vals='{{ {"rating_key": item.rating_key}|tojson }}'
+                            hx-target="#duplicate-results-container"
+                            hx-swap="innerHTML">
+                            <i data-lucide="eye" style="width: 14px; height: 14px;"></i> Restore
+                        </button>
+                    </td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>

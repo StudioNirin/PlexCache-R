@@ -189,6 +189,7 @@ def _dict_to_results(d: dict) -> DuplicateScanResults:
 # ---------------------------------------------------------------------------
 
 SCAN_RESULTS_FILE = os.path.join("data", "duplicate_scan.json")
+IGNORE_FILE = os.path.join("data", "duplicate_ignores.json")
 
 
 class DuplicateService:
@@ -341,6 +342,7 @@ class DuplicateService:
 
             # Phase 4: Save results
             self.save_scan_results(results)
+            self._clean_stale_ignores(results)
 
             msg = f"Found {len(duplicates)} items with duplicate files"
             if arr_enabled:
@@ -479,6 +481,94 @@ class DuplicateService:
         """Save scan results to disk."""
         os.makedirs("data", exist_ok=True)
         save_json_atomically(SCAN_RESULTS_FILE, _results_to_dict(results), label="duplicate_scan")
+
+    # ------------------------------------------------------------------
+    # Ignore management
+    # ------------------------------------------------------------------
+
+    def load_ignores(self) -> Dict[str, dict]:
+        """Load ignored rating_keys from disk."""
+        try:
+            if not os.path.exists(IGNORE_FILE):
+                return {}
+            with open(IGNORE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load duplicate ignores: {e}")
+            return {}
+
+    def _save_ignores(self, ignores: Dict[str, dict]) -> None:
+        """Save ignores to disk."""
+        os.makedirs("data", exist_ok=True)
+        save_json_atomically(IGNORE_FILE, ignores, label="duplicate_ignores")
+
+    def ignore_item(self, rating_key: str, title: str, library: str, item_type: str) -> None:
+        """Mark a duplicate item as ignored."""
+        with self._lock:
+            ignores = self.load_ignores()
+            ignores[rating_key] = {
+                "title": title,
+                "library": library,
+                "item_type": item_type,
+                "ignored_at": datetime.now().isoformat(),
+            }
+            self._save_ignores(ignores)
+        logger.info(f"Ignored duplicate: {title} (key={rating_key})")
+
+    def unignore_item(self, rating_key: str) -> None:
+        """Remove an item from the ignored list."""
+        with self._lock:
+            ignores = self.load_ignores()
+            title = ignores.pop(rating_key, {}).get("title", rating_key)
+            self._save_ignores(ignores)
+        logger.info(f"Un-ignored duplicate: {title} (key={rating_key})")
+
+    def load_scan_results_filtered(self) -> Optional[DuplicateScanResults]:
+        """Load scan results with ignored items excluded and counts recomputed."""
+        results = self.load_scan_results()
+        if results is None:
+            return None
+
+        ignores = self.load_ignores()
+        if not ignores:
+            return results
+
+        # Filter out ignored items (keep multi-version — they aren't in duplicate_count anyway)
+        filtered_items = [item for item in results.items
+                          if item.rating_key not in ignores or item.is_multi_version]
+
+        true_duplicates = [item for item in filtered_items if not item.is_multi_version]
+        orphan_count = sum(len(item.orphan_files) for item in true_duplicates)
+        orphan_bytes = sum(item.orphan_bytes for item in true_duplicates)
+
+        return DuplicateScanResults(
+            scanned_at=results.scanned_at,
+            scan_duration_seconds=results.scan_duration_seconds,
+            total_items=results.total_items,
+            duplicate_count=len(true_duplicates),
+            orphan_count=orphan_count,
+            orphan_bytes=orphan_bytes,
+            orphan_bytes_display=format_bytes(orphan_bytes),
+            unresolved_count=sum(1 for item in true_duplicates if not item.is_resolved),
+            arr_enabled=results.arr_enabled,
+            libraries_scanned=results.libraries_scanned,
+            multi_version_count=results.multi_version_count,
+            items=filtered_items,
+        )
+
+    def _clean_stale_ignores(self, results: DuplicateScanResults) -> None:
+        """Remove ignores for rating_keys no longer in scan results."""
+        with self._lock:
+            ignores = self.load_ignores()
+            if not ignores:
+                return
+            current_keys = {item.rating_key for item in results.items}
+            stale = [k for k in ignores if k not in current_keys]
+            if stale:
+                for k in stale:
+                    del ignores[k]
+                self._save_ignores(ignores)
+                logger.info(f"Cleaned {len(stale)} stale duplicate ignore(s)")
 
     # ------------------------------------------------------------------
     # Private: Plex scanning
