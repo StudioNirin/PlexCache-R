@@ -884,8 +884,8 @@ def ignore_duplicate(
     service.ignore_item(rating_key, title, library, item_type)
 
     # Invalidate dashboard cache so counts update
-    from web.services.web_cache import get_web_cache
-    get_web_cache().invalidate("dashboard_stats")
+    web_cache = get_web_cache_service()
+    web_cache.invalidate("dashboard_stats")
 
     return get_duplicates(request)
 
@@ -900,8 +900,8 @@ def unignore_duplicate(
     service.unignore_item(rating_key)
 
     # Invalidate dashboard cache so counts update
-    from web.services.web_cache import get_web_cache
-    get_web_cache().invalidate("dashboard_stats")
+    web_cache = get_web_cache_service()
+    web_cache.invalidate("dashboard_stats")
 
     return get_duplicates(request, show_ignored=True)
 
