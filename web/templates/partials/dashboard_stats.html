@@ -39,7 +39,10 @@
         OnDeck
     </div>
     <div class="stat-value">{{ stats.ondeck_count }}</div>
-    <div class="stat-label">items ready</div>
+    <div class="stat-label">items cached</div>
+    {% if stats.ondeck_tracked_count and stats.ondeck_tracked_count > stats.ondeck_count %}
+    <div class="stat-detail">of {{ stats.ondeck_tracked_count }} on deck</div>
+    {% endif %}
 </a>
 
 <a href="/cache?source=watchlist" class="stat-card stat-card-link">

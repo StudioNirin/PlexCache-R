@@ -291,6 +291,7 @@ def init_web_cache():
             "cache_limit": cache_stats["cache_limit"],
             "usage_percent": cache_stats["usage_percent"],
             "ondeck_count": cache_stats["ondeck_count"],
+            "ondeck_tracked_count": cache_stats.get("ondeck_tracked_count", 0),
             "watchlist_count": cache_stats["watchlist_count"],
             "watchlist_tracked_count": cache_stats.get("watchlist_tracked_count", 0),
             "last_run": last_run,
