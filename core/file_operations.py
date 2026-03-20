@@ -3101,21 +3101,26 @@ class FileFilter:
         return cache_path, cache_file_name
 
     def _build_needed_media_sets(self, current_ondeck_items: Set[str],
-                                  current_watchlist_items: Set[str]) -> Tuple[Dict[str, Dict[int, int]], Set[str]]:
+                                  current_watchlist_items: Set[str]) -> Tuple[Dict[str, Dict[int, Set[int]]], Set[str]]:
         """Build tracking sets of media that should be kept in cache.
 
         Uses Plex API metadata when available (from OnDeckTracker, media_info_map, or
         CacheTimestampTracker), falling back to regex path parsing for legacy entries.
+
+        Tracks the exact set of needed episodes per show/season rather than a minimum
+        episode number. This correctly handles multiple users at different watch positions
+        (e.g., User 1 at E20, User 2 at E01) by keeping only the episodes each user
+        actually needs, not the entire range between them.
 
         Args:
             current_ondeck_items: Set of OnDeck file paths.
             current_watchlist_items: Set of watchlist file paths.
 
         Returns:
-            Tuple of (tv_show_min_episodes dict, needed_movies set).
-            tv_show_min_episodes maps show_name -> {season: min_episode_to_keep}
+            Tuple of (tv_show_needed_episodes dict, needed_movies set).
+            tv_show_needed_episodes maps show_name -> {season: set of episode numbers}
         """
-        tv_show_min_episodes: Dict[str, Dict[int, int]] = {}
+        tv_show_needed_episodes: Dict[str, Dict[int, Set[int]]] = {}
         needed_movies: Set[str] = set()
 
         for item in current_ondeck_items | current_watchlist_items:
@@ -3128,14 +3133,11 @@ class FileFilter:
                     season_num = ep_info.get("season")
                     episode_num = ep_info.get("episode")
                     if show_name and season_num is not None and episode_num is not None:
-                        if show_name not in tv_show_min_episodes:
-                            tv_show_min_episodes[show_name] = {}
-                        if season_num not in tv_show_min_episodes[show_name]:
-                            tv_show_min_episodes[show_name][season_num] = episode_num
-                        else:
-                            tv_show_min_episodes[show_name][season_num] = min(
-                                tv_show_min_episodes[show_name][season_num], episode_num
-                            )
+                        if show_name not in tv_show_needed_episodes:
+                            tv_show_needed_episodes[show_name] = {}
+                        if season_num not in tv_show_needed_episodes[show_name]:
+                            tv_show_needed_episodes[show_name][season_num] = set()
+                        tv_show_needed_episodes[show_name][season_num].add(episode_num)
                         continue
                 if media_type == "movie":
                     media_name = self._extract_media_name(item)
@@ -3147,58 +3149,51 @@ class FileFilter:
             tv_info = self._extract_tv_info(item)
             if tv_info:
                 show_name, season_num, episode_num = tv_info
-                if show_name not in tv_show_min_episodes:
-                    tv_show_min_episodes[show_name] = {}
-                if season_num not in tv_show_min_episodes[show_name]:
-                    tv_show_min_episodes[show_name][season_num] = episode_num
-                else:
-                    tv_show_min_episodes[show_name][season_num] = min(
-                        tv_show_min_episodes[show_name][season_num], episode_num
-                    )
+                if show_name not in tv_show_needed_episodes:
+                    tv_show_needed_episodes[show_name] = {}
+                if season_num not in tv_show_needed_episodes[show_name]:
+                    tv_show_needed_episodes[show_name][season_num] = set()
+                tv_show_needed_episodes[show_name][season_num].add(episode_num)
             else:
                 media_name = self._extract_media_name(item)
                 if media_name:
                     needed_movies.add(media_name)
 
-        logging.debug(f"TV shows on deck/watchlist: {list(tv_show_min_episodes.keys())}")
+        logging.debug(f"TV shows on deck/watchlist: {list(tv_show_needed_episodes.keys())}")
         logging.debug(f"Movies on deck/watchlist: {len(needed_movies)}")
-        return tv_show_min_episodes, needed_movies
+        return tv_show_needed_episodes, needed_movies
 
     def _is_tv_episode_still_needed(self, show_name: str, season_num: int, episode_num: int,
-                                     tv_show_min_episodes: Dict[str, Dict[int, int]]) -> bool:
-        """Check if a TV episode should be kept in cache based on OnDeck position.
+                                     tv_show_needed_episodes: Dict[str, Dict[int, Set[int]]]) -> bool:
+        """Check if a TV episode should be kept in cache based on OnDeck/watchlist sets.
+
+        An episode is kept only if it appears in the exact set of needed episodes
+        (built from all users' OnDeck + prefetch windows). This correctly handles
+        multiple users at different watch positions without retaining the gap between them.
 
         Args:
             show_name: Name of the TV show.
             season_num: Season number of the episode.
             episode_num: Episode number.
-            tv_show_min_episodes: Dict of show -> {season: min_episode}.
+            tv_show_needed_episodes: Dict of show -> {season: set of episode numbers}.
 
         Returns:
             True if episode should be kept, False if it can be moved back.
         """
-        if show_name not in tv_show_min_episodes:
+        if show_name not in tv_show_needed_episodes:
             return False  # Show not on deck/watchlist
 
-        min_ondeck_season = min(tv_show_min_episodes[show_name].keys())
-
-        if season_num < min_ondeck_season:
-            # Previous season - user has moved past this
-            logging.debug(f"TV episode in previous season (S{season_num:02d} < S{min_ondeck_season:02d}): {show_name}")
+        if season_num not in tv_show_needed_episodes[show_name]:
+            logging.debug(f"TV episode in unneeded season (S{season_num:02d}): {show_name}")
             return False
-        elif season_num > min_ondeck_season:
-            # Future season - keep (user may have pre-cached ahead)
-            logging.debug(f"TV episode in future season, keeping: {show_name} S{season_num:02d}E{episode_num:02d}")
+
+        needed_episodes = tv_show_needed_episodes[show_name][season_num]
+        if episode_num in needed_episodes:
+            logging.debug(f"TV episode still needed (S{season_num:02d}E{episode_num:02d}): {show_name}")
             return True
         else:
-            # Same season - check episode number
-            min_episode = tv_show_min_episodes[show_name][season_num]
-            if episode_num >= min_episode:
-                logging.debug(f"TV episode still needed (E{episode_num:02d} >= E{min_episode:02d}): {show_name}")
-                return True
-            else:
-                logging.debug(f"TV episode watched (E{episode_num:02d} < E{min_episode:02d}): {show_name}")
-                return False
+            logging.debug(f"TV episode not needed (S{season_num:02d}E{episode_num:02d}): {show_name}")
+            return False
 
     def get_files_to_move_back_to_array(self, current_ondeck_items: Set[str],
                                        current_watchlist_items: Set[str],
@@ -3241,7 +3236,7 @@ class FileFilter:
             logging.debug(f"Found {len(cache_files)} files in exclude list")
 
             # Build tracking sets for needed media
-            tv_show_min_episodes, needed_movies = self._build_needed_media_sets(
+            tv_show_needed_episodes, needed_movies = self._build_needed_media_sets(
                 current_ondeck_items, current_watchlist_items
             )
 
@@ -3273,7 +3268,7 @@ class FileFilter:
                 # Determine if file should be kept
                 if tv_info:
                     show_name, season_num, episode_num = tv_info
-                    if self._is_tv_episode_still_needed(show_name, season_num, episode_num, tv_show_min_episodes):
+                    if self._is_tv_episode_still_needed(show_name, season_num, episode_num, tv_show_needed_episodes):
                         continue
                     media_name = show_name
                 else:

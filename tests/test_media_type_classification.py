@@ -330,6 +330,74 @@ class TestBuildNeededMediaSetsWithMetadata:
         tv_eps, movies = file_filter._build_needed_media_sets(set(), watchlist)
         assert len(movies) > 0
 
+    def test_multi_user_disjoint_ranges(self, file_filter):
+        """Issue #107: Two users at different watch positions should not retain gap episodes.
+
+        User 1 at E20 (prefetch E21-E25), User 2 at E01 (prefetch E02-E06).
+        Only E01-E06 and E20-E25 should be needed, NOT E07-E19.
+        """
+        base = "/mnt/user/TV/TestShow/Season 01"
+        ondeck = set()
+
+        # User 2's window: E01-E06
+        for ep in range(1, 7):
+            path = f"{base}/S01E{ep:02d}.mkv"
+            file_filter.ondeck_tracker.update_entry(
+                path, "user2",
+                episode_info={"show": "TestShow", "season": 1, "episode": ep},
+                is_current_ondeck=(ep == 1)
+            )
+            ondeck.add(path)
+
+        # User 1's window: E20-E25
+        for ep in range(20, 26):
+            path = f"{base}/S01E{ep:02d}.mkv"
+            file_filter.ondeck_tracker.update_entry(
+                path, "user1",
+                episode_info={"show": "TestShow", "season": 1, "episode": ep},
+                is_current_ondeck=(ep == 20)
+            )
+            ondeck.add(path)
+
+        tv_eps, _ = file_filter._build_needed_media_sets(ondeck, set())
+
+        assert "TestShow" in tv_eps
+        needed = tv_eps["TestShow"][1]
+
+        # Should contain exactly E01-E06 and E20-E25
+        expected = set(range(1, 7)) | set(range(20, 26))
+        assert needed == expected
+
+        # Gap episodes (E07-E19) should NOT be needed
+        for ep in range(7, 20):
+            assert ep not in needed, f"E{ep:02d} should not be retained (gap episode)"
+
+    def test_multi_user_is_tv_episode_still_needed(self, file_filter):
+        """Issue #107: _is_tv_episode_still_needed correctly rejects gap episodes."""
+        # Simulate needed episodes: E01-E06 and E20-E25
+        tv_show_needed = {
+            "TestShow": {
+                1: set(range(1, 7)) | set(range(20, 26))
+            }
+        }
+
+        # Needed episodes should be kept
+        assert file_filter._is_tv_episode_still_needed("TestShow", 1, 1, tv_show_needed)
+        assert file_filter._is_tv_episode_still_needed("TestShow", 1, 6, tv_show_needed)
+        assert file_filter._is_tv_episode_still_needed("TestShow", 1, 20, tv_show_needed)
+        assert file_filter._is_tv_episode_still_needed("TestShow", 1, 25, tv_show_needed)
+
+        # Gap episodes should NOT be kept
+        assert not file_filter._is_tv_episode_still_needed("TestShow", 1, 7, tv_show_needed)
+        assert not file_filter._is_tv_episode_still_needed("TestShow", 1, 10, tv_show_needed)
+        assert not file_filter._is_tv_episode_still_needed("TestShow", 1, 19, tv_show_needed)
+
+        # Unknown show should not be kept
+        assert not file_filter._is_tv_episode_still_needed("Unknown", 1, 1, tv_show_needed)
+
+        # Unknown season should not be kept
+        assert not file_filter._is_tv_episode_still_needed("TestShow", 2, 1, tv_show_needed)
+
 
 # ============================================================================
 # FileFilter.get_files_to_move_back_to_array with metadata
