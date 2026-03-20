@@ -5,7 +5,10 @@
         Cache Drive
     </div>
     <div class="stat-value orange">{{ stats.cache_files }}</div>
-    <div class="stat-label">files cached{% if stats.cached_files_size %} ({{ stats.cached_files_size }}){% endif %}</div>
+    <div class="stat-label">items cached{% if stats.cached_files_size %} ({{ stats.cached_files_size }}){% endif %}</div>
+    {% if stats.associated_files_count %}
+    <div class="stat-detail">+{{ stats.associated_files_count }} associated</div>
+    {% endif %}
     <div class="progress-container">
         <div class="progress-bar" style="position: relative; overflow: visible;">
             <div class="progress-fill {% if stats.cache_limit_exceeded or stats.min_free_space_warning %}progress-danger{% elif stats.cache_limit_approaching %}progress-warning{% endif %}" style="width: {{ stats.usage_percent }}%; border-radius: 3px;"></div>
@@ -72,7 +75,7 @@
     {% endif %}
 </a>
 
-<a href="/maintenance" class="stat-card stat-card-link {% if stats.health_issues > 0 %}stat-card-danger{% elif stats.health_warnings > 0 %}stat-card-warning{% else %}stat-card-success{% endif %}"
+<a href="/maintenance{% if stats.get('health_duplicate_count', 0) > 0 %}#duplicates{% endif %}" class="stat-card stat-card-link {% if stats.health_issues > 0 %}stat-card-danger{% elif stats.health_warnings > 0 %}stat-card-warning{% else %}stat-card-success{% endif %}"
    title="{% if stats.health_issues > 0 %}{{ stats.health_orphaned_count }} orphaned backup{{ 's' if stats.health_orphaned_count != 1 }}{% endif %}{% if stats.health_warnings > 0 %}{% if stats.health_issues > 0 %}, {% endif %}{% set parts = [] %}{% if stats.health_stale_exclude_count > 0 %}{% set _ = parts.append(stats.health_stale_exclude_count ~ ' stale exclude') %}{% endif %}{% if stats.health_stale_timestamp_count > 0 %}{% set _ = parts.append(stats.health_stale_timestamp_count ~ ' stale timestamp') %}{% endif %}{{ parts|join(', ') }}{% endif %}{% if stats.health_issues == 0 and stats.health_warnings == 0 %}All tracking data is consistent{% endif %}">
     <div class="stat-card-header">
         {% if stats.health_issues > 0 %}
@@ -97,6 +100,11 @@
         {% if stats.health_stale_timestamp_count > 0 %}{% set _ = parts.append(stats.health_stale_timestamp_count ~ ' stale timestamp') %}{% endif %}
         {{ parts|join(', ') }}
     </div>
+    {% if stats.get('health_duplicate_count', 0) > 0 %}
+    <div class="stat-detail" style="margin-top: 0.25rem;">
+        {{ stats.health_duplicate_count }} duplicate{{ 's' if stats.health_duplicate_count != 1 }}{% if stats.get('health_duplicate_orphan_count', 0) > 0 %} ({{ stats.health_duplicate_orphan_count }} orphan{{ 's' if stats.health_duplicate_orphan_count != 1 }}{% if stats.health_duplicate_orphan_bytes %}, {{ stats.health_duplicate_orphan_bytes }} reclaimable{% endif %}){% endif %}
+    </div>
+    {% endif %}
     {% else %}
     <div class="stat-value" style="color: var(--success);">OK</div>
     <div class="stat-label">no issues</div>

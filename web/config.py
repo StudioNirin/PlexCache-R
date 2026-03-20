@@ -74,3 +74,45 @@ def format_time(value, include_seconds=True):
 
 
 templates.env.filters["format_time"] = format_time
+
+
+def format_datetime(value, include_seconds=False):
+    """Jinja2 filter: format an ISO string or datetime with user's time_format preference."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return value
+    if not isinstance(value, datetime):
+        return value
+    fmt = get_time_format()
+    if fmt == "12h":
+        time_part = value.strftime("%-I:%M:%S %p") if include_seconds else value.strftime("%-I:%M %p")
+    else:
+        time_part = value.strftime("%H:%M:%S") if include_seconds else value.strftime("%H:%M")
+    return f"{value.strftime('%Y-%m-%d')} {time_part}"
+
+
+templates.env.filters["format_datetime"] = format_datetime
+
+
+def truncate_filename(value, length=55, end='...'):
+    """Truncate a filename while preserving the file extension.
+
+    Example: 'Serenity (2005) - [REMUX-2160P][DTS-X 7.1][HEVC]-FGT.mkv'
+           → 'Serenity (2005) - [REMUX-2160P][DTS-X 7...mkv'
+    """
+    if not isinstance(value, str) or len(value) <= length:
+        return value
+    dot_pos = value.rfind('.')
+    if dot_pos == -1 or dot_pos == 0:
+        # No extension — fall back to plain truncation
+        return value[:length - len(end)] + end
+    ext = value[dot_pos + 1:]  # e.g. "mkv"
+    suffix = end + ext          # e.g. "...mkv"
+    if length <= len(suffix):
+        return value[:length]
+    return value[:length - len(suffix)] + suffix
+
+
+templates.env.filters["truncate_filename"] = truncate_filename

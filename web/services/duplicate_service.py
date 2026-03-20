@@ -22,6 +22,20 @@ from web.services.maintenance_service import ActionResult
 
 logger = logging.getLogger(__name__)
 
+# Resolution groups for multi-version detection
+_4K_RESOLUTIONS = {"2160", "4k"}
+_HD_SD_RESOLUTIONS = {"1080", "720", "480", "360", "sd"}
+
+
+def _resolution_group(resolution: str) -> str:
+    """Return 'uhd', 'hd_sd', or 'unknown' for a Plex videoResolution value."""
+    r = resolution.lower().strip()
+    if r in _4K_RESOLUTIONS:
+        return "uhd"
+    if r in _HD_SD_RESOLUTIONS:
+        return "hd_sd"
+    return "unknown"
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -53,6 +67,7 @@ class PlexDuplicateItem:
     orphan_files: List[str] = field(default_factory=list)  # fs_paths of orphans
     orphan_bytes: int = 0
     is_resolved: bool = False
+    is_multi_version: bool = False
 
 
 @dataclass
@@ -68,6 +83,7 @@ class DuplicateScanResults:
     unresolved_count: int   # Items where keeper couldn't be determined
     arr_enabled: bool
     libraries_scanned: List[str]
+    multi_version_count: int = 0
     items: List[PlexDuplicateItem] = field(default_factory=list)
 
 
@@ -100,6 +116,7 @@ def _item_to_dict(item: PlexDuplicateItem) -> dict:
         "orphan_files": item.orphan_files,
         "orphan_bytes": item.orphan_bytes,
         "is_resolved": item.is_resolved,
+        "is_multi_version": item.is_multi_version,
     }
 
 
@@ -115,6 +132,7 @@ def _results_to_dict(results: DuplicateScanResults) -> dict:
         "unresolved_count": results.unresolved_count,
         "arr_enabled": results.arr_enabled,
         "libraries_scanned": results.libraries_scanned,
+        "multi_version_count": results.multi_version_count,
         "items": [_item_to_dict(i) for i in results.items],
     }
 
@@ -144,6 +162,7 @@ def _dict_to_item(d: dict) -> PlexDuplicateItem:
         orphan_files=d.get("orphan_files", []),
         orphan_bytes=d.get("orphan_bytes", 0),
         is_resolved=d.get("is_resolved", False),
+        is_multi_version=d.get("is_multi_version", False),
     )
 
 
@@ -160,6 +179,7 @@ def _dict_to_results(d: dict) -> DuplicateScanResults:
         unresolved_count=d["unresolved_count"],
         arr_enabled=d["arr_enabled"],
         libraries_scanned=d.get("libraries_scanned", []),
+        multi_version_count=d.get("multi_version_count", 0),
         items=[_dict_to_item(i) for i in d.get("items", [])],
     )
 
@@ -169,6 +189,7 @@ def _dict_to_results(d: dict) -> DuplicateScanResults:
 # ---------------------------------------------------------------------------
 
 SCAN_RESULTS_FILE = os.path.join("data", "duplicate_scan.json")
+IGNORE_FILE = os.path.join("data", "duplicate_ignores.json")
 
 
 class DuplicateService:
@@ -289,13 +310,18 @@ class DuplicateService:
 
             arr_enabled = bool(tracked_files)
 
+            # Detect multi-version items before orphan classification
+            self._detect_multi_version(duplicates)
+
             if tracked_files:
                 self._classify_orphans(duplicates, tracked_files)
 
-            # Compute stats
-            orphan_count = sum(len(item.orphan_files) for item in duplicates)
-            orphan_bytes = sum(item.orphan_bytes for item in duplicates)
-            unresolved_count = sum(1 for item in duplicates if not item.is_resolved)
+            # Compute stats — multi-version items are intentional, not duplicates
+            multi_version_count = sum(1 for item in duplicates if item.is_multi_version)
+            true_duplicates = [item for item in duplicates if not item.is_multi_version]
+            orphan_count = sum(len(item.orphan_files) for item in true_duplicates)
+            orphan_bytes = sum(item.orphan_bytes for item in true_duplicates)
+            unresolved_count = sum(1 for item in true_duplicates if not item.is_resolved)
 
             duration = time.time() - start_time
 
@@ -303,18 +329,20 @@ class DuplicateService:
                 scanned_at=datetime.now().isoformat(),
                 scan_duration_seconds=round(duration, 1),
                 total_items=total_items_scanned,
-                duplicate_count=len(duplicates),
+                duplicate_count=len(true_duplicates),
                 orphan_count=orphan_count,
                 orphan_bytes=orphan_bytes,
                 orphan_bytes_display=format_bytes(orphan_bytes),
                 unresolved_count=unresolved_count,
                 arr_enabled=arr_enabled,
                 libraries_scanned=libraries_scanned,
+                multi_version_count=multi_version_count,
                 items=duplicates,
             )
 
             # Phase 4: Save results
             self.save_scan_results(results)
+            self._clean_stale_ignores(results)
 
             msg = f"Found {len(duplicates)} items with duplicate files"
             if arr_enabled:
@@ -453,6 +481,94 @@ class DuplicateService:
         """Save scan results to disk."""
         os.makedirs("data", exist_ok=True)
         save_json_atomically(SCAN_RESULTS_FILE, _results_to_dict(results), label="duplicate_scan")
+
+    # ------------------------------------------------------------------
+    # Ignore management
+    # ------------------------------------------------------------------
+
+    def load_ignores(self) -> Dict[str, dict]:
+        """Load ignored rating_keys from disk."""
+        try:
+            if not os.path.exists(IGNORE_FILE):
+                return {}
+            with open(IGNORE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load duplicate ignores: {e}")
+            return {}
+
+    def _save_ignores(self, ignores: Dict[str, dict]) -> None:
+        """Save ignores to disk."""
+        os.makedirs("data", exist_ok=True)
+        save_json_atomically(IGNORE_FILE, ignores, label="duplicate_ignores")
+
+    def ignore_item(self, rating_key: str, title: str, library: str, item_type: str) -> None:
+        """Mark a duplicate item as ignored."""
+        with self._lock:
+            ignores = self.load_ignores()
+            ignores[rating_key] = {
+                "title": title,
+                "library": library,
+                "item_type": item_type,
+                "ignored_at": datetime.now().isoformat(),
+            }
+            self._save_ignores(ignores)
+        logger.info(f"Ignored duplicate: {title} (key={rating_key})")
+
+    def unignore_item(self, rating_key: str) -> None:
+        """Remove an item from the ignored list."""
+        with self._lock:
+            ignores = self.load_ignores()
+            title = ignores.pop(rating_key, {}).get("title", rating_key)
+            self._save_ignores(ignores)
+        logger.info(f"Un-ignored duplicate: {title} (key={rating_key})")
+
+    def load_scan_results_filtered(self) -> Optional[DuplicateScanResults]:
+        """Load scan results with ignored items excluded and counts recomputed."""
+        results = self.load_scan_results()
+        if results is None:
+            return None
+
+        ignores = self.load_ignores()
+        if not ignores:
+            return results
+
+        # Filter out ignored items (keep multi-version — they aren't in duplicate_count anyway)
+        filtered_items = [item for item in results.items
+                          if item.rating_key not in ignores or item.is_multi_version]
+
+        true_duplicates = [item for item in filtered_items if not item.is_multi_version]
+        orphan_count = sum(len(item.orphan_files) for item in true_duplicates)
+        orphan_bytes = sum(item.orphan_bytes for item in true_duplicates)
+
+        return DuplicateScanResults(
+            scanned_at=results.scanned_at,
+            scan_duration_seconds=results.scan_duration_seconds,
+            total_items=results.total_items,
+            duplicate_count=len(true_duplicates),
+            orphan_count=orphan_count,
+            orphan_bytes=orphan_bytes,
+            orphan_bytes_display=format_bytes(orphan_bytes),
+            unresolved_count=sum(1 for item in true_duplicates if not item.is_resolved),
+            arr_enabled=results.arr_enabled,
+            libraries_scanned=results.libraries_scanned,
+            multi_version_count=results.multi_version_count,
+            items=filtered_items,
+        )
+
+    def _clean_stale_ignores(self, results: DuplicateScanResults) -> None:
+        """Remove ignores for rating_keys no longer in scan results."""
+        with self._lock:
+            ignores = self.load_ignores()
+            if not ignores:
+                return
+            current_keys = {item.rating_key for item in results.items}
+            stale = [k for k in ignores if k not in current_keys]
+            if stale:
+                for k in stale:
+                    del ignores[k]
+                self._save_ignores(ignores)
+                logger.info(f"Cleaned {len(stale)} stale duplicate ignore(s)")
 
     # ------------------------------------------------------------------
     # Private: Plex scanning
@@ -653,6 +769,26 @@ class DuplicateService:
         return tracked
 
     # ------------------------------------------------------------------
+    # Private: Multi-version detection
+    # ------------------------------------------------------------------
+
+    def _detect_multi_version(self, items: List[PlexDuplicateItem]) -> None:
+        """Mark items as multi-version when files span different resolution groups.
+
+        4K group: 2160p, 4k.  HD/SD group: 1080p, 720p, 480p, 360p, sd.
+        Files within the same group are true duplicates; files across groups
+        are intentional multi-version setups (e.g., 4K + 1080p copies).
+        """
+        for item in items:
+            groups = set()
+            for f in item.files:
+                g = _resolution_group(f.resolution)
+                if g != "unknown":
+                    groups.add(g)
+            if len(groups) > 1:
+                item.is_multi_version = True
+
+    # ------------------------------------------------------------------
     # Private: Orphan classification
     # ------------------------------------------------------------------
 
@@ -673,6 +809,9 @@ class DuplicateService:
         tracked_lower = {k.lower(): k for k in tracked_files}
 
         for item in items:
+            if item.is_multi_version:
+                continue
+
             tracked_in_set = []
             untracked_in_set = []
 
@@ -743,7 +882,8 @@ class DuplicateService:
         results.orphan_count = sum(len(i.orphan_files) for i in updated_items)
         results.orphan_bytes = sum(i.orphan_bytes for i in updated_items)
         results.orphan_bytes_display = format_bytes(results.orphan_bytes)
-        results.unresolved_count = sum(1 for i in updated_items if not i.is_resolved)
+        results.unresolved_count = sum(1 for i in updated_items if not i.is_resolved and not i.is_multi_version)
+        results.multi_version_count = sum(1 for i in updated_items if i.is_multi_version)
 
         self.save_scan_results(results)
 

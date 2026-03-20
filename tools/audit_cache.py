@@ -134,16 +134,15 @@ def _should_skip_directory(dirname):
 load_settings()
 
 def get_cache_files():
-    """Get all media files currently on cache."""
+    """Get all files currently on cache (videos, subtitles, artwork, metadata, etc.)."""
     cache_files = set()
-    extensions = tuple(MEDIA_EXTENSIONS)
 
     for cache_dir in CACHE_DIRS:
         if os.path.exists(cache_dir):
             for root, dirs, files in os.walk(cache_dir):
                 dirs[:] = [d for d in dirs if not _should_skip_directory(d)]
                 for f in files:
-                    if f.lower().endswith(extensions):
+                    if not f.startswith('.'):
                         cache_files.add(os.path.join(root, f))
 
     return cache_files
@@ -826,12 +825,9 @@ def find_malformed_plexcached():
                     # Get the name without .plexcached suffix
                     base_name = f[:-len('.plexcached')]  # Remove '.plexcached'
 
-                    # Check if it has a valid media extension
-                    has_extension = False
-                    for ext in MEDIA_EXTENSIONS:
-                        if base_name.lower().endswith(ext):
-                            has_extension = True
-                            break
+                    # Check if it has any file extension
+                    _, ext = os.path.splitext(base_name)
+                    has_extension = bool(ext)
 
                     if not has_extension:
                         full_path = os.path.join(root, f)
@@ -860,7 +856,7 @@ def find_malformed_plexcached():
                                         for cache_file in os.listdir(cache_dir_to_check):
                                             # Check if cache file matches base_name + extension
                                             cache_base, cache_ext = os.path.splitext(cache_file)
-                                            if cache_base == base_name and cache_ext.lower() in MEDIA_EXTENSIONS:
+                                            if cache_base == base_name and cache_ext:
                                                 detected_ext = cache_ext
                                                 cache_file_path = os.path.join(cache_dir_to_check, cache_file)
                                                 break

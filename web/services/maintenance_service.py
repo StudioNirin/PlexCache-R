@@ -841,6 +841,21 @@ class MaintenanceService:
     def get_health_summary(self) -> Dict[str, Any]:
         """Get a quick health summary for dashboard widget"""
         results = self.run_full_audit()
+
+        # Load cached duplicate scan results (zero API overhead)
+        duplicate_count = 0
+        duplicate_orphan_count = 0
+        duplicate_orphan_bytes_display = None
+        try:
+            from web.services.duplicate_service import get_duplicate_service
+            dup_results = get_duplicate_service().load_scan_results_filtered()
+            if dup_results is not None:
+                duplicate_count = dup_results.duplicate_count
+                duplicate_orphan_count = dup_results.orphan_count
+                duplicate_orphan_bytes_display = dup_results.orphan_bytes_display
+        except Exception:
+            pass  # Duplicate data is advisory — never block health summary
+
         return {
             "status": results.health_status,
             "total_issues": results.total_issues,
@@ -849,7 +864,10 @@ class MaintenanceService:
             "stale_exclude_count": len(results.stale_exclude_entries),
             "stale_timestamp_count": len(results.stale_timestamp_entries),
             "cache_files": results.cache_file_count,
-            "protected_files": results.exclude_entry_count
+            "protected_files": results.exclude_entry_count,
+            "duplicate_count": duplicate_count,
+            "duplicate_orphan_count": duplicate_orphan_count,
+            "duplicate_orphan_bytes_display": duplicate_orphan_bytes_display,
         }
 
     # === Fix Actions ===

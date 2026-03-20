@@ -24,7 +24,7 @@
     </button>
 </div>
 
-{% elif scan_results.duplicate_count == 0 %}
+{% elif scan_results.duplicate_count == 0 and scan_results.multi_version_count == 0 %}
 <!-- State 3: No duplicates found -->
 <div style="text-align: center; padding: 2rem 1rem;">
     <i data-lucide="check-circle" style="width: 40px; height: 40px; color: var(--success); margin-bottom: 0.75rem;"></i>
@@ -32,29 +32,148 @@
     <p class="text-muted" style="margin: 0 0 1rem 0; font-size: 0.9rem;">
         Scanned {{ scan_results.total_items }} items across {{ scan_results.libraries_scanned|length }} libraries.
         <br>
-        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at[:16].replace('T', ' ') }}</span>
+        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at | format_datetime }}</span>
     </p>
-    <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
-        <i data-lucide="refresh-cw"></i> Re-scan
-    </button>
+    <div class="flex gap-1 justify-center">
+        <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
+            <i data-lucide="refresh-cw"></i> Re-scan
+        </button>
+        {% if ignored_count is defined and ignored_count > 0 %}
+        <button class="btn btn-sm btn-secondary"
+            hx-get="/maintenance/duplicates?show_ignored={{ 'false' if show_ignored else 'true' }}"
+            hx-target="#duplicate-results-container"
+            hx-swap="innerHTML">
+            <i data-lucide="{% if show_ignored %}eye{% else %}eye-off{% endif %}"></i>
+            {% if show_ignored %}Hide{% else %}Show{% endif %} Ignored ({{ ignored_count }})
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+{% elif scan_results.duplicate_count == 0 and scan_results.multi_version_count > 0 %}
+<!-- State 4: Only multi-version items (no real duplicates) -->
+<div style="text-align: center; padding: 2rem 1rem;">
+    <i data-lucide="check-circle" style="width: 40px; height: 40px; color: var(--success); margin-bottom: 0.75rem;"></i>
+    <p style="margin: 0 0 0.5rem 0; font-weight: 500; color: var(--success);">No Duplicates Found</p>
+    <p class="text-muted" style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">
+        Scanned {{ scan_results.total_items }} items across {{ scan_results.libraries_scanned|length }} libraries.
+        <br>
+        <span style="font-size: 0.85rem;">Last scan: {{ scan_results.scanned_at | format_datetime }}</span>
+    </p>
+    <p style="margin: 0 0 1rem 0; font-size: 0.85rem;">
+        <i data-lucide="layers" style="width: 14px; height: 14px; color: var(--plex-text-muted); vertical-align: middle;"></i>
+        <span class="text-muted">{{ scan_results.multi_version_count }} multi-version item{{ 's' if scan_results.multi_version_count != 1 }} detected (4K + HD — these are intentional, not duplicates)</span>
+    </p>
+    <div class="flex gap-1 justify-center">
+        <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
+            <i data-lucide="refresh-cw"></i> Re-scan
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="toggleMultiVersionTable()">
+            <i data-lucide="layers"></i> Show Multi-Version
+        </button>
+        {% if ignored_count is defined and ignored_count > 0 %}
+        <button class="btn btn-sm btn-secondary"
+            hx-get="/maintenance/duplicates?show_ignored={{ 'false' if show_ignored else 'true' }}"
+            hx-target="#duplicate-results-container"
+            hx-swap="innerHTML">
+            <i data-lucide="{% if show_ignored %}eye{% else %}eye-off{% endif %}"></i>
+            {% if show_ignored %}Hide{% else %}Show{% endif %} Ignored ({{ ignored_count }})
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Hidden multi-version table (shown via toggle) -->
+<div id="multi-version-table-container" style="display: none;">
+    <div class="card-body" style="padding: 0;">
+        <div class="table-container" style="max-height: 600px; overflow-y: auto;">
+            <table id="duplicate-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th>Item</th>
+                        <th style="width: 80px;">Library</th>
+                        <th style="width: 60px;">Files</th>
+                        <th style="width: 100px;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in scan_results.items %}
+                    {% if item.is_multi_version %}
+                    <tr class="dup-item-row" data-rating-key="{{ item.rating_key }}" onclick="toggleDuplicateExpand(this, event)" style="cursor: pointer;">
+                        <td></td>
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <i data-lucide="chevron-right" class="dup-expand-icon" style="width: 14px; height: 14px; transition: transform 0.2s; flex-shrink: 0;"></i>
+                                <span title="{{ item.title }}">
+                                    {% if item.item_type == 'movie' %}
+                                    <i data-lucide="film" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                                    {% else %}
+                                    <i data-lucide="tv" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                                    {% endif %}
+                                    {{ item.title }}
+                                </span>
+                            </div>
+                        </td>
+                        <td class="text-muted" style="font-size: 0.85rem;">{{ item.library }}</td>
+                        <td class="text-muted">{{ item.files|length }}</td>
+                        <td><span class="badge badge-muted">Multi-Version</span></td>
+                    </tr>
+                    <tr class="dup-detail-row" data-parent="{{ item.rating_key }}" style="display: none;">
+                        <td colspan="5" style="padding: 0 0 0 2rem; background: rgba(255,255,255,0.02);">
+                            <table style="margin: 0; font-size: 0.9rem;">
+                                <thead>
+                                    <tr>
+                                        <th>File</th>
+                                        <th style="width: 70px;">Resolution</th>
+                                        <th style="width: 70px;">Codec</th>
+                                        <th style="width: 90px;">Size</th>
+                                        <th style="width: 80px;">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for file in item.files %}
+                                    <tr>
+                                        <td title="{{ file.fs_path }}" style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                            <span class="text-muted" style="margin-right: 0.25rem;">↳</span>{{ file.fs_path.split('/')[-1] }}
+                                        </td>
+                                        <td class="text-muted">{{ file.resolution }}{% if file.resolution not in ('?', '4k', 'sd') %}p{% endif %}</td>
+                                        <td class="text-muted">{{ file.video_codec }}</td>
+                                        <td class="text-muted">{{ file.size_display }}</td>
+                                        <td><span class="badge badge-muted">{{ file.resolution }}{% if file.resolution not in ('?', '4k', 'sd') %}p{% endif %}</span></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
 {% else %}
-<!-- State 2: Results with duplicates -->
+<!-- State 2: Results with real duplicates -->
 
 <!-- Summary Stats -->
 <div class="card-body" style="padding: 0.75rem;">
     <div class="flex gap-1" style="flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem;">
-        <span class="badge badge-warning">{{ scan_results.duplicate_count }} items</span>
+        <span class="badge badge-warning">{{ scan_results.duplicate_count }} duplicate{{ 's' if scan_results.duplicate_count != 1 }}</span>
         {% if scan_results.arr_enabled and scan_results.orphan_count > 0 %}
-        <span class="badge badge-error">{{ scan_results.orphan_count }} orphans</span>
+        <span class="badge badge-error">{{ scan_results.orphan_count }} orphan{{ 's' if scan_results.orphan_count != 1 }}</span>
         <span class="badge badge-muted">{{ scan_results.orphan_bytes_display }}</span>
         {% endif %}
         {% if scan_results.unresolved_count > 0 %}
         <span class="badge badge-info">{{ scan_results.unresolved_count }} unresolved</span>
         {% endif %}
+        {% if scan_results.multi_version_count > 0 %}
+        <span class="badge badge-muted" title="Intentional 4K + HD pairs — not duplicates">{{ scan_results.multi_version_count }} multi-version</span>
+        {% endif %}
         <span class="text-muted" style="margin-left: auto; font-size: 0.85rem;">
-            Scanned {{ scan_results.scanned_at[:16].replace('T', ' ') }}
+            Scanned {{ scan_results.scanned_at | format_datetime }}
         </span>
     </div>
 
@@ -87,6 +206,15 @@
                 <i data-lucide="trash-2"></i> Delete All Orphans ({{ scan_results.orphan_count }})
             </button>
             {% endif %}
+            {% if ignored_count is defined and ignored_count > 0 %}
+            <button class="btn btn-sm btn-secondary"
+                hx-get="/maintenance/duplicates?show_ignored={{ 'false' if show_ignored else 'true' }}"
+                hx-target="#duplicate-results-container"
+                hx-swap="innerHTML">
+                <i data-lucide="{% if show_ignored %}eye{% else %}eye-off{% endif %}"></i>
+                {% if show_ignored %}Hide{% else %}Show{% endif %} Ignored ({{ ignored_count }})
+            </button>
+            {% endif %}
             <button class="btn btn-sm btn-secondary" onclick="startDuplicateScan()">
                 <i data-lucide="refresh-cw"></i> Re-scan
             </button>
@@ -94,7 +222,7 @@
     </div>
 </div>
 
-<!-- Duplicate Items Table -->
+<!-- Duplicate Items Table (excludes multi-version) -->
 <div class="card-body" style="padding: 0;">
     <div class="table-container" style="max-height: 600px; overflow-y: auto;">
         <table id="duplicate-table">
@@ -107,12 +235,14 @@
                     <th style="width: 80px;">Library</th>
                     <th style="width: 60px;">Files</th>
                     <th style="width: 100px;">Status</th>
+                    <th style="width: 40px;"></th>
                 </tr>
             </thead>
             <tbody>
                 {% for item in scan_results.items %}
-                <tr class="dup-item-row" data-rating-key="{{ item.rating_key }}" onclick="toggleDuplicateExpand(this)" style="cursor: pointer;">
-                    <td onclick="event.stopPropagation();">
+                {% if not item.is_multi_version %}
+                <tr class="dup-item-row" data-rating-key="{{ item.rating_key }}" onclick="toggleDuplicateExpand(this, event)" style="cursor: pointer;">
+                    <td>
                         <!-- Only show checkbox if item has orphan files -->
                     </td>
                     <td>
@@ -137,10 +267,20 @@
                         <span class="badge badge-info">Unresolved</span>
                         {% endif %}
                     </td>
+                    <td>
+                        <button class="btn btn-sm btn-secondary" title="Ignore this item" style="padding: 0.25rem; opacity: 0.5;"
+                            hx-post="/maintenance/ignore-duplicate"
+                            hx-vals='{{ {"rating_key": item.rating_key, "title": item.title, "library": item.library, "item_type": item.item_type}|tojson }}'
+                            hx-target="#duplicate-results-container"
+                            hx-swap="innerHTML"
+                            onclick="event.stopPropagation()">
+                            <i data-lucide="eye-off" style="width: 14px; height: 14px;"></i>
+                        </button>
+                    </td>
                 </tr>
                 <!-- Expanded file details (hidden by default) -->
                 <tr class="dup-detail-row" data-parent="{{ item.rating_key }}" style="display: none;">
-                    <td colspan="5" style="padding: 0; background: var(--plex-bg);">
+                    <td colspan="6" style="padding: 0 0 0 2rem; background: rgba(255,255,255,0.02);">
                         <table style="margin: 0; font-size: 0.9rem;">
                             <thead>
                                 <tr>
@@ -156,14 +296,14 @@
                                 {% for file in item.files %}
                                 <tr>
                                     <td>
-                                        {% if file.is_keeper is false %}
+                                        {% if file.is_keeper is not true %}
                                         <input type="checkbox" class="dup-file-checkbox" value="{{ file.fs_path }}" onchange="toggleDuplicateFile(this)">
                                         {% endif %}
                                     </td>
                                     <td title="{{ file.fs_path }}" style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                        {{ file.fs_path.split('/')[-1] }}
+                                        <span class="text-muted" style="margin-right: 0.25rem;">↳</span>{{ file.fs_path.split('/')[-1] }}
                                     </td>
-                                    <td class="text-muted">{{ file.resolution }}{% if file.resolution != '?' %}p{% endif %}</td>
+                                    <td class="text-muted">{{ file.resolution }}{% if file.resolution not in ('?', '4k', 'sd') %}p{% endif %}</td>
                                     <td class="text-muted">{{ file.video_codec }}</td>
                                     <td class="text-muted">{{ file.size_display }}</td>
                                     <td>
@@ -181,6 +321,56 @@
                         </table>
                     </td>
                 </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Ignored Items Section (shown when toggled) -->
+{% if show_ignored is defined and show_ignored and ignored_items is defined and ignored_items|length > 0 %}
+<div style="border-top: 1px solid rgba(255,255,255,0.08); padding: 0.75rem;">
+    <h3 style="font-size: 0.95rem; color: var(--plex-text-muted); margin: 0 0 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+        <i data-lucide="eye-off" style="width: 16px; height: 16px;"></i>
+        Ignored Items ({{ ignored_items|length }})
+    </h3>
+    <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th style="width: 80px;">Library</th>
+                    <th style="width: 60px;">Files</th>
+                    <th style="width: 100px;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in ignored_items %}
+                <tr style="opacity: 0.6;">
+                    <td>
+                        <span title="{{ item.title }}">
+                            {% if item.item_type == 'movie' %}
+                            <i data-lucide="film" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                            {% else %}
+                            <i data-lucide="tv" style="width: 14px; height: 14px; vertical-align: middle; color: var(--plex-text-muted);"></i>
+                            {% endif %}
+                            {{ item.title }}
+                        </span>
+                    </td>
+                    <td class="text-muted" style="font-size: 0.85rem;">{{ item.library }}</td>
+                    <td class="text-muted">{{ item.files|length }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-secondary"
+                            hx-post="/maintenance/unignore-duplicate"
+                            hx-vals='{{ {"rating_key": item.rating_key}|tojson }}'
+                            hx-target="#duplicate-results-container"
+                            hx-swap="innerHTML">
+                            <i data-lucide="eye" style="width: 14px; height: 14px;"></i> Restore
+                        </button>
+                    </td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -189,5 +379,11 @@
 {% endif %}
 
 <script>
+var toggleMultiVersionTable = function() {
+    var container = document.getElementById('multi-version-table-container');
+    if (container) {
+        container.style.display = container.style.display === 'none' ? '' : 'none';
+    }
+};
 if (typeof lucide !== 'undefined') lucide.createIcons();
 </script>
