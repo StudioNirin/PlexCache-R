@@ -82,6 +82,43 @@
 
 {% block scripts %}
 <script>
+// Shift+Click range selection for checkbox groups
+// Delegated listener — works with HTMX-swapped content, no template changes needed.
+// Each group: { selector, toggleFn, lastChecked }
+var _shiftClickGroups = [];
+function enableShiftClick(selector, toggleFn) {
+    _shiftClickGroups.push({ selector: selector, toggleFn: toggleFn, lastChecked: null });
+}
+document.addEventListener('click', function(e) {
+    var cb = e.target;
+    if (cb.tagName !== 'INPUT' || cb.type !== 'checkbox') return;
+    for (var i = 0; i < _shiftClickGroups.length; i++) {
+        var g = _shiftClickGroups[i];
+        if (!cb.matches(g.selector)) continue;
+        if (e.shiftKey && g.lastChecked && g.lastChecked !== cb) {
+            var all = Array.from(document.querySelectorAll(g.selector));
+            var start = all.indexOf(g.lastChecked);
+            var end = all.indexOf(cb);
+            if (start > -1 && end > -1) {
+                var lo = Math.min(start, end);
+                var hi = Math.max(start, end);
+                for (var j = lo; j <= hi; j++) {
+                    all[j].checked = cb.checked;
+                    g.toggleFn(all[j]);
+                }
+            }
+        }
+        g.lastChecked = cb;
+        break;
+    }
+});
+
+// Encode paths as a single JSON field to avoid Starlette's max_fields limit.
+// The backend reads paths_json first, falls back to individual paths fields.
+function appendPathsToForm(formData, paths) {
+    formData.append('paths_json', JSON.stringify(Array.from(paths)));
+}
+
 // Selected items tracking
 let selectedUntrackedFiles = new Set();
 let selectedOrphanedBackups = new Set();
@@ -177,7 +214,20 @@ function showConfirmModal(title, message, action, formData, isDryRun = false) {
     const actionBtn = document.getElementById('confirm-modal-action');
 
     modalTitle.textContent = title;
-    modalBody.innerHTML = message;
+
+    // Warn on very large selections
+    var pathsJson = formData.get('paths_json');
+    var pathCount = 0;
+    if (pathsJson) {
+        try { pathCount = JSON.parse(pathsJson).length; } catch(e) {}
+    }
+    var largeWarning = '';
+    if (pathCount > 5000) {
+        largeWarning = '<div class="alert alert-warning" style="margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.85rem;">' +
+            '<i data-lucide="alert-triangle" style="flex-shrink: 0; margin-top: 2px;"></i>' +
+            '<span>Large selection (' + pathCount.toLocaleString() + ' files). This operation may take a while.</span></div>';
+    }
+    modalBody.innerHTML = largeWarning + message;
 
     // Determine button style and text based on action type
     let btnClass = 'btn btn-primary';
@@ -372,7 +422,7 @@ function restoreOrphanedSelected(isDryRun = false) {
 
     const count = orphanedPaths.length;
     const formData = new FormData();
-    orphanedPaths.forEach(path => formData.append('paths', path));
+    appendPathsToForm(formData, orphanedPaths);
 
     const action = isDryRun ? 'Preview' : 'Restore';
     const message = `
@@ -409,7 +459,7 @@ function deleteOrphanedSelected(isDryRun = false) {
 
     const count = selectedOrphanedBackups.size;
     const formData = new FormData();
-    selectedOrphanedBackups.forEach(path => formData.append('paths', path));
+    appendPathsToForm(formData, selectedOrphanedBackups);
 
     const action = isDryRun ? 'Preview' : 'Delete';
     const message = `
@@ -523,6 +573,12 @@ document.addEventListener('htmx:afterSwap', function(e) {
         selectedOrphanedBackups.clear();
         updateUntrackedActions();
         updateOrphanedActions();
+
+        // Auto-expand duplicate section if navigated with #duplicates hash
+        if (window.location.hash === '#duplicates') {
+            showDuplicateSection();
+            history.replaceState(null, '', window.location.pathname);
+        }
     }
 });
 
@@ -550,7 +606,30 @@ function toggleDuplicateSection() {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
-function toggleDuplicateExpand(row) {
+function showDuplicateSection() {
+    const content = document.getElementById('dup-section-content');
+    const chevron = document.getElementById('dup-section-chevron');
+    const header = content && content.closest('.card');
+    if (!content) return;
+
+    // Expand if collapsed
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        if (chevron) chevron.style.transform = 'rotate(180deg)';
+        if (typeof htmx !== 'undefined') {
+            htmx.process(content);
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    // Scroll the card into view
+    if (header) {
+        header.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function toggleDuplicateExpand(row, event) {
+    if (event && (event.target.tagName === 'INPUT' || event.target.closest('input'))) return;
     const key = row.dataset.ratingKey;
     const detailRow = document.querySelector(`.dup-detail-row[data-parent="${key}"]`);
     const icon = row.querySelector('.dup-expand-icon');
@@ -630,7 +709,7 @@ function deleteSelectedDuplicates(isDryRun) {
 
     const count = selectedDuplicateFiles.size;
     const formData = new FormData();
-    selectedDuplicateFiles.forEach(function(path) { formData.append('paths', path); });
+    appendPathsToForm(formData, selectedDuplicateFiles);
 
     const fileList = Array.from(selectedDuplicateFiles).slice(0, 5).map(function(path) {
         return '<li style="font-size: 0.9em; color: var(--text-muted);">' + path.split('/').pop() + '</li>';
@@ -691,5 +770,10 @@ document.addEventListener('keydown', function(e) {
         closeConfirmModal();
     }
 });
+
+// Register shift+click range selection for all checkbox groups
+enableShiftClick('.untracked-checkbox', toggleUntrackedFile);
+enableShiftClick('.orphaned-checkbox', toggleOrphanedFile);
+enableShiftClick('.dup-file-checkbox', toggleDuplicateFile);
 </script>
 {% endblock %}

@@ -1,10 +1,12 @@
 """Maintenance routes - cache audit and fix actions"""
 
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Request, Form, Query
+from fastapi import APIRouter, Depends, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.datastructures import ImmutableMultiDict
 
 from web.config import templates, get_time_format
 from web.services.maintenance_service import get_maintenance_service
@@ -14,12 +16,30 @@ from web.services.maintenance_runner import (
 )
 from web.services.duplicate_service import get_duplicate_service
 from core.system_utils import format_duration, format_cache_age
+from web.dependencies import parse_form
 from web.services.operation_runner import get_operation_runner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_MAINTENANCE_AUDIT, CACHE_KEY_MAINTENANCE_HEALTH, CACHE_KEY_DASHBOARD_STATS
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _get_paths(paths: List[str], paths_json: Optional[str] = None) -> List[str]:
+    """Extract paths from either JSON-encoded single field or individual form fields.
+
+    Frontend sends paths_json (single field with JSON array) to avoid
+    Starlette's 1000 multipart field limit on large selections.
+    Falls back to individual paths fields for backward compatibility.
+    """
+    if paths_json:
+        try:
+            decoded = json.loads(paths_json)
+            if isinstance(decoded, list) and decoded:
+                return decoded
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return paths
 
 
 # In-memory cache for full audit results (not JSON-serializable)
@@ -214,12 +234,24 @@ def run_audit(request: Request, refresh: bool = Query(default=False, description
     # Calculate cache age display
     cache_age = format_cache_age(updated_at)
 
+    # Load cached duplicate scan data for health card (zero API overhead)
+    dup_summary = {"duplicate_count": 0, "orphan_count": 0, "orphan_bytes_display": None}
+    try:
+        dup_results = get_duplicate_service().load_scan_results()
+        if dup_results is not None:
+            dup_summary["duplicate_count"] = dup_results.duplicate_count
+            dup_summary["orphan_count"] = dup_results.orphan_count
+            dup_summary["orphan_bytes_display"] = dup_results.orphan_bytes_display
+    except Exception:
+        pass
+
     response = templates.TemplateResponse(
         "maintenance/partials/audit_results.html",
         {
             "request": request,
             "results": results,
             "cache_age": cache_age or "just now",
+            "dup_summary": dup_summary,
         }
     )
     # Prevent browser caching so refresh button always fetches fresh data
@@ -343,11 +375,13 @@ def action_history(
 def restore_plexcached(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     restore_all: bool = Form(default=False),
     orphaned_only: bool = Form(default=False),
     dry_run: bool = Form(default=True)
 ):
     """Restore orphaned .plexcached backups"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
 
     if dry_run:
@@ -390,10 +424,12 @@ def restore_plexcached(
 def delete_plexcached(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     delete_all: bool = Form(default=False),
     dry_run: bool = Form(default=True)
 ):
     """Delete orphaned .plexcached backups (when no longer needed)"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
 
     if dry_run:
@@ -433,10 +469,12 @@ def delete_plexcached(
 def repair_plexcached(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     repair_all: bool = Form(default=False),
     dry_run: bool = Form(default=True)
 ):
     """Repair malformed .plexcached backups by adding missing media extension"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
 
     if dry_run:
@@ -476,10 +514,12 @@ def repair_plexcached(
 def delete_extensionless(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     delete_all: bool = Form(default=False),
     dry_run: bool = Form(default=True)
 ):
     """Delete extensionless duplicate files (from malformed .plexcached restores)"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
 
     if dry_run:
@@ -519,9 +559,11 @@ def delete_extensionless(
 def fix_with_backup(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     dry_run: bool = Form(default=True)
 ):
     """Fix files that have .plexcached backup"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
 
     if dry_run:
@@ -548,9 +590,11 @@ def fix_with_backup(
 def sync_to_array(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     dry_run: bool = Form(default=True)
 ):
     """Move files to array - restores backups if they exist, copies if not"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
 
     if dry_run:
@@ -574,10 +618,10 @@ def sync_to_array(
 
 
 @router.post("/evict-files", response_class=HTMLResponse)
-async def evict_files(request: Request):
+def evict_files(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Evict file(s) from cache — runs in background via maintenance runner."""
-    form = await request.form()
-    paths = form.getlist("paths")
+    paths_json = form_data.get("paths_json")
+    paths = _get_paths(form_data.getlist("paths"), paths_json)
 
     if not paths:
         return HTMLResponse(
@@ -602,9 +646,11 @@ async def evict_files(request: Request):
 def protect_with_backup(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     dry_run: bool = Form(default=True)
 ):
     """Protect files by creating .plexcached backup on array and adding to exclude list"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
 
     if dry_run:
@@ -633,9 +679,11 @@ def protect_with_backup(
 def add_to_exclude(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     dry_run: bool = Form(default=True)
 ):
     """Add files to exclude list"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
     started_at = datetime.now()
     result = service.add_to_exclude(paths, dry_run=dry_run)
@@ -715,9 +763,11 @@ def clean_timestamps(
 def fix_timestamps(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     dry_run: bool = Form(default=True)
 ):
     """Fix invalid file timestamps"""
+    paths = _get_paths(paths, paths_json)
     service = get_maintenance_service()
     started_at = datetime.now()
     result = service.fix_file_timestamps(paths, dry_run=dry_run)
@@ -861,10 +911,12 @@ def get_duplicates(request: Request):
 def delete_duplicates(
     request: Request,
     paths: List[str] = Form(default=[]),
+    paths_json: Optional[str] = Form(default=None),
     all_orphans: bool = Form(default=False),
     dry_run: bool = Form(default=True),
 ):
     """Delete selected duplicate files or all orphans"""
+    paths = _get_paths(paths, paths_json)
     service = get_duplicate_service()
 
     if dry_run:

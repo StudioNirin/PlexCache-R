@@ -100,7 +100,7 @@
                     </div>
                     {% endif %}
                     {% if not entry.affected_files and not entry.errors %}
-                    <span class="text-muted" style="font-size: 0.85rem;">No additional details.</span>
+                    <span class="text-muted" style="font-size: 0.85rem;">{{ entry.message if entry.message else 'No additional details.' }}</span>
                     {% endif %}
                 </td>
             </tr>
