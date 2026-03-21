@@ -411,7 +411,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             {%- for f in maint_status.active_files %}
             <div class="di-file-row">
                 <span style="color: rgba(255,255,255,0.2);">&#8627;</span>
-                <span class="di-file-row__name">{{ f|truncate(65, True, '...') }}</span>
+                <span class="di-file-row__name" title="{{ f }}">{{ f|truncate_filename(65) }}</span>
             </div>
             {%- endfor %}
             {%- endif %}
@@ -494,7 +494,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // Build file list for detail panel
     var affectedFiles = [
         {% for f in maint_status.affected_files|default([]) %}
-        '{{ f|truncate(60, True, "...")|e }}',
+        { name: '{{ f|truncate_filename(60)|e }}', full: '{{ f|e }}' },
         {% endfor %}
     ];
     var detailHtml = '';
@@ -503,7 +503,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         hintHtml = '<div class="di-expand-hint"><span>Click for details</span><i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i></div>';
         detailHtml = '<div class="di-pill__detail"><div class="di-divider"></div>';
         affectedFiles.forEach(function(f) {
-            detailHtml += '<div class="di-file-row"><span style="color: rgba(255,255,255,0.2);">&#8627;</span><span class="di-file-row__name">' + f + '</span></div>';
+            detailHtml += '<div class="di-file-row"><span style="color: rgba(255,255,255,0.2);">&#8627;</span><span class="di-file-row__name" title="' + f.full + '">' + f.name + '</span></div>';
         });
         if (affectedCount > affectedFiles.length) {
             detailHtml += '<div class="di-more-files">+ ' + (affectedCount - affectedFiles.length) + ' more files</div>';
@@ -744,7 +744,7 @@ function dismissMaintCompletionBanner() {
             {%- for name, size in status.active_files %}
             <div class="di-file-row di-file-row--active">
                 <span class="di-action-tag di-action-tag--active">COPYING</span>
-                <span class="di-file-row__name">{{ name|truncate(55, True, '...') }}</span>
+                <span class="di-file-row__name" title="{{ name }}">{{ name|truncate_filename(55) }}</span>
             </div>
             {%- endfor %}
             {%- endif %}
@@ -753,7 +753,7 @@ function dismissMaintCompletionBanner() {
             {%- for f in status.recent_files %}
             <div class="di-file-row">
                 <span class="di-action-tag {{ 'di-action-tag--cached' if f.action == 'Cached' else 'di-action-tag--restored' }}">{{ f.action|upper }}</span>
-                <span class="di-file-row__name">{{ f.filename|truncate(55, True, '...') }}</span>
+                <span class="di-file-row__name" title="{{ f.filename }}">{{ f.filename|truncate_filename(55) }}</span>
                 {% if f.size and f.size != '-' %}<span class="di-file-row__size">{{ f.size }}</span>{% endif %}
                 {% if f.associated_files is defined and f.associated_files %}<span class="di-file-row__assoc-badge">+{{ f.associated_files|length }}</span>{% endif %}
             </div>
@@ -761,7 +761,7 @@ function dismissMaintCompletionBanner() {
             {%- for af in f.associated_files %}
             <div class="di-file-row di-file-row--sub">
                 <span class="di-sub-arrow">&#8627;</span>
-                <span class="di-file-row__name">{{ af.filename|truncate(55, True, '...') }}</span>
+                <span class="di-file-row__name" title="{{ af.filename }}">{{ af.filename|truncate_filename(55) }}</span>
                 {% if af.size %}<span class="di-file-row__size">{{ af.size }}</span>{% endif %}
             </div>
             {%- endfor %}
@@ -889,8 +889,8 @@ function dismissMaintCompletionBanner() {
     // File detail rows
     var recentFiles = [
         {% for f in status.recent_files|default([]) %}
-        { action: '{{ f.action }}', filename: '{{ f.filename|truncate(45, True, "...")|e }}', size: '{{ f.size }}', associatedFiles: [
-            {%- if f.associated_files is defined and f.associated_files %}{% for af in f.associated_files %}{ filename: '{{ af.filename|truncate(45, True, "...")|e }}', size: '{{ af.size }}' },{% endfor %}{% endif -%}
+        { action: '{{ f.action }}', filename: '{{ f.filename|truncate_filename(45)|e }}', fullFilename: '{{ f.filename|e }}', size: '{{ f.size }}', associatedFiles: [
+            {%- if f.associated_files is defined and f.associated_files %}{% for af in f.associated_files %}{ filename: '{{ af.filename|truncate_filename(45)|e }}', fullFilename: '{{ af.filename|e }}', size: '{{ af.size }}' },{% endfor %}{% endif -%}
         ] },
         {% endfor %}
     ];
@@ -910,14 +910,14 @@ function dismissMaintCompletionBanner() {
             var assocBadge = f.associatedFiles.length > 0 ? '<span class="di-file-row__assoc-badge">+' + f.associatedFiles.length + '</span>' : '';
             detailHtml += '<div class="di-file-row">' +
                 '<span class="di-action-tag ' + tagClass + '">' + f.action.toUpperCase() + '</span>' +
-                '<span class="di-file-row__name">' + f.filename + '</span>' +
+                '<span class="di-file-row__name" title="' + f.fullFilename + '">' + f.filename + '</span>' +
                 (f.size !== '-' ? '<span class="di-file-row__size">' + f.size + '</span>' : '') +
                 assocBadge +
                 '</div>';
             f.associatedFiles.forEach(function(af) {
                 detailHtml += '<div class="di-file-row di-file-row--sub">' +
                     '<span class="di-sub-arrow">&#8627;</span>' +
-                    '<span class="di-file-row__name">' + af.filename + '</span>' +
+                    '<span class="di-file-row__name" title="' + af.fullFilename + '">' + af.filename + '</span>' +
                     (af.size ? '<span class="di-file-row__size">' + af.size + '</span>' : '') +
                     '</div>';
             });

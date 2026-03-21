@@ -1294,21 +1294,25 @@ class OnDeckTracker(JSONTracker):
         super().__init__(tracker_file, "OnDeck")
 
     def _post_load(self) -> None:
-        """Build the rating_key reverse index after loading data from disk."""
+        """Build the rating_key reverse index after loading data from disk.
+
+        Maps rating_key → set of file paths to support multi-version items
+        (e.g., 4K + 1080p versions of the same movie share a rating_key).
+        """
         self._rating_key_index = {}
         for file_path, entry in self._data.items():
             rk = entry.get('rating_key')
             if rk:
-                self._rating_key_index[rk] = file_path
+                self._rating_key_index.setdefault(rk, set()).add(file_path)
 
-    def find_by_rating_key(self, rating_key: str) -> Optional[str]:
-        """Find a file path by its Plex rating key.
+    def find_by_rating_key(self, rating_key: str) -> Optional[set]:
+        """Find file paths by their Plex rating key.
 
         Args:
             rating_key: The Plex rating key to look up.
 
         Returns:
-            The file path associated with the rating key, or None.
+            Set of file paths associated with the rating key, or None.
         """
         with self._lock:
             if not hasattr(self, '_rating_key_index'):
@@ -1362,7 +1366,7 @@ class OnDeckTracker(JSONTracker):
                 # Store rating_key if provided (never overwrite with None)
                 if rating_key is not None:
                     entry['rating_key'] = rating_key
-                    self._rating_key_index[rating_key] = file_path
+                    self._rating_key_index.setdefault(rating_key, set()).add(file_path)
 
                 # Update episode_info if provided and not already set, or update is_current_ondeck
                 if episode_info:
@@ -1388,7 +1392,7 @@ class OnDeckTracker(JSONTracker):
                     new_entry['ondeck_users'] = [username]
                 if rating_key is not None:
                     new_entry['rating_key'] = rating_key
-                    self._rating_key_index[rating_key] = file_path
+                    self._rating_key_index.setdefault(rating_key, set()).add(file_path)
                 if episode_info:
                     new_entry['episode_info'] = {
                         'show': episode_info.get('show'),
@@ -1485,10 +1489,14 @@ class OnDeckTracker(JSONTracker):
         with self._lock:
             if file_path in self._data:
                 entry = self._data[file_path]
-                # Clean up rating_key index
+                # Clean up rating_key index (remove this path from the set)
                 rk = entry.get('rating_key')
                 if rk and hasattr(self, '_rating_key_index'):
-                    self._rating_key_index.pop(rk, None)
+                    paths = self._rating_key_index.get(rk)
+                    if paths:
+                        paths.discard(file_path)
+                        if not paths:
+                            del self._rating_key_index[rk]
                 del self._data[file_path]
                 self._save()
                 logging.debug(f"Removed {self._tracker_name} entry for: {file_path}")
@@ -1540,10 +1548,14 @@ class OnDeckTracker(JSONTracker):
                     stale.append(path)
 
             for path in stale:
-                # Clean up rating_key index
+                # Clean up rating_key index (remove this path from the set)
                 rk = self._data[path].get('rating_key')
                 if rk and hasattr(self, '_rating_key_index'):
-                    self._rating_key_index.pop(rk, None)
+                    paths = self._rating_key_index.get(rk)
+                    if paths:
+                        paths.discard(path)
+                        if not paths:
+                            del self._rating_key_index[rk]
                 del self._data[path]
 
             if stale:
@@ -1571,10 +1583,14 @@ class OnDeckTracker(JSONTracker):
 
             unseen = [path for path in self._data if path not in seen]
             for path in unseen:
-                # Clean up rating_key index
+                # Clean up rating_key index (remove this path from the set)
                 rk = self._data[path].get('rating_key')
                 if rk and hasattr(self, '_rating_key_index'):
-                    self._rating_key_index.pop(rk, None)
+                    paths = self._rating_key_index.get(rk)
+                    if paths:
+                        paths.discard(path)
+                        if not paths:
+                            del self._rating_key_index[rk]
                 del self._data[path]
 
             # Trim user_first_seen on surviving entries to only include current users
@@ -2793,6 +2809,12 @@ class SiblingFileFinder:
         Discovers all non-video, non-hidden files in the same directory as each video.
         This includes subtitles, artwork, NFOs, and any other sidecar files.
 
+        When multiple videos share a directory (e.g., 4K + 1080p versions), siblings
+        are assigned by name-prefix matching: a file named "Movie - [1080P]-FGT-fanart.jpg"
+        is assigned to "Movie - [1080P]-FGT.mkv", not to "Movie - [2160P]-REMUX.mkv".
+        Siblings that don't match any video's stem are assigned to the first video
+        in the directory.
+
         Args:
             media_files: List of media file paths.
             files_to_skip: Set of file paths to skip.
@@ -2808,31 +2830,67 @@ class SiblingFileFinder:
         scanned_parent_dirs: Set[str] = set()
         result: Dict[str, List[str]] = {}
 
+        # Group videos by directory so we can disambiguate multi-video folders
+        dir_to_videos: Dict[str, List[str]] = {}
         for file in media_files:
             if file in files_to_skip or file in processed_files:
                 continue
             processed_files.add(file)
-
-            sibling_files = []
+            result[file] = []
             directory_path = os.path.dirname(file)
-            if os.path.exists(directory_path):
-                sibling_files = self._find_sibling_files(directory_path, file)
-                for sibling_file in sibling_files:
-                    logging.debug(f"Sibling found: {sibling_file}")
+            dir_to_videos.setdefault(directory_path, []).append(file)
 
-                # TV show root scan: if this video is in a Season-like folder,
-                # also discover show-root assets (poster.jpg, fanart.jpg, etc.)
-                folder_name = os.path.basename(directory_path)
-                parent_dir = os.path.dirname(directory_path)
-                if is_season_like_folder(folder_name) and parent_dir not in scanned_parent_dirs:
-                    scanned_parent_dirs.add(parent_dir)
-                    if os.path.exists(parent_dir):
-                        parent_siblings = self._find_sibling_files(parent_dir, file)
-                        for parent_file in parent_siblings:
-                            logging.debug(f"Show root sibling found: {parent_file}")
-                        sibling_files.extend(parent_siblings)
+        for directory_path, videos in dir_to_videos.items():
+            if not os.path.exists(directory_path):
+                continue
 
-            result[file] = sibling_files
+            # Get all non-video siblings in this directory once
+            all_siblings = self._find_sibling_files(directory_path, videos[0])
+            # _find_sibling_files excludes the passed video, so re-add filtering for all videos
+            video_basenames = {os.path.basename(v) for v in videos}
+            all_siblings = [s for s in all_siblings if os.path.basename(s) not in video_basenames]
+
+            if len(videos) == 1:
+                # Single video in directory — all siblings belong to it (fast path)
+                result[videos[0]] = all_siblings
+                for sib in all_siblings:
+                    logging.debug(f"Sibling found: {sib}")
+            else:
+                # Multiple videos — assign siblings by name-prefix matching
+                video_stems = {v: os.path.splitext(os.path.basename(v))[0] for v in videos}
+                unmatched = []
+
+                for sib_path in all_siblings:
+                    sib_name = os.path.basename(sib_path)
+                    matched_video = None
+                    for video, stem in video_stems.items():
+                        if sib_name.startswith(stem):
+                            matched_video = video
+                            break
+                    if matched_video:
+                        result[matched_video].append(sib_path)
+                        logging.debug(f"Sibling found: {sib_path} → {os.path.basename(matched_video)}")
+                    else:
+                        unmatched.append(sib_path)
+
+                # Assign unmatched siblings (e.g., generic "poster.jpg") to first video
+                if unmatched:
+                    result[videos[0]].extend(unmatched)
+                    for sib in unmatched:
+                        logging.debug(f"Sibling found (unmatched, assigned to {os.path.basename(videos[0])}): {sib}")
+
+            # TV show root scan: if any video is in a Season-like folder,
+            # also discover show-root assets (poster.jpg, fanart.jpg, etc.)
+            folder_name = os.path.basename(directory_path)
+            parent_dir = os.path.dirname(directory_path)
+            if is_season_like_folder(folder_name) and parent_dir not in scanned_parent_dirs:
+                scanned_parent_dirs.add(parent_dir)
+                if os.path.exists(parent_dir):
+                    parent_siblings = self._find_sibling_files(parent_dir, videos[0])
+                    for parent_file in parent_siblings:
+                        logging.debug(f"Show root sibling found: {parent_file}")
+                    # Show-root assets are shared — assign to first video
+                    result[videos[0]].extend(parent_siblings)
 
         return result
 
@@ -3573,7 +3631,13 @@ class FileFilter:
             # Second pass: collect associated files for videos being evicted
             # and apply reference counting for directory-level files
             if self.timestamp_tracker:
-                eviction_set = set(move_back_exclude_paths)
+                # Track eviction by BOTH host paths (from exclude file) and cache paths
+                # (from timestamp tracker) to correctly detect duplicates in Docker
+                # where host=/mnt/cache_downloads but container=/mnt/cache
+                eviction_set_host = set(move_back_exclude_paths)
+                eviction_set_cache = set()
+                for hp in move_back_exclude_paths:
+                    eviction_set_cache.add(self._translate_from_host_path(hp))
                 additional_move_back = []
                 additional_exclude_paths = []
 
@@ -3581,7 +3645,7 @@ class FileFilter:
                     check_path = self._translate_from_host_path(cache_file)
                     associated = self.timestamp_tracker.get_associated_files(check_path)
                     for assoc_file in associated:
-                        if assoc_file in eviction_set:
+                        if assoc_file in eviction_set_cache:
                             continue  # Already being evicted
 
                         if is_directory_level_file(assoc_file, check_path):
@@ -3594,7 +3658,7 @@ class FileFilter:
                             else:
                                 others = self.timestamp_tracker.get_other_videos_in_directory(directory, excluding=check_path)
                             # Filter out others that are also being evicted
-                            remaining = [v for v in others if self._translate_to_host_path(v) not in eviction_set]
+                            remaining = [v for v in others if v not in eviction_set_cache]
                             if remaining:
                                 # Re-associate to a remaining video instead of evicting
                                 self.timestamp_tracker.reassociate_file(assoc_file, from_parent=check_path, to_parent=remaining[0])
@@ -3612,7 +3676,8 @@ class FileFilter:
                         host_assoc = self._translate_to_host_path(assoc_file)
                         additional_move_back.append(array_assoc)
                         additional_exclude_paths.append(host_assoc)
-                        eviction_set.add(host_assoc)
+                        eviction_set_host.add(host_assoc)
+                        eviction_set_cache.add(assoc_file)
 
                 files_to_move_back.extend(additional_move_back)
                 move_back_exclude_paths.extend(additional_exclude_paths)

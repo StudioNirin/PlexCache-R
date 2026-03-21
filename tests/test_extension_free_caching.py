@@ -195,6 +195,52 @@ class TestSiblingFileFinder:
         result = finder.get_media_siblings_grouped([video])
         assert result[video] == []
 
+    def test_multi_version_name_prefix_disambiguation(self, temp_dir):
+        """When two videos share a directory, siblings are assigned by name prefix."""
+        # Simulate 4K + 1080p versions with name-prefixed artwork
+        video_1080 = create_test_file(os.path.join(temp_dir, "Movie - [1080P]-FGT.mkv"), "v1")
+        video_4k = create_test_file(os.path.join(temp_dir, "Movie - [2160P]-REMUX.mkv"), "v2")
+        fanart = create_test_file(os.path.join(temp_dir, "Movie - [1080P]-FGT-fanart.jpg"), "img")
+        poster = create_test_file(os.path.join(temp_dir, "Movie - [1080P]-FGT-poster.jpg"), "img")
+        nfo = create_test_file(os.path.join(temp_dir, "Movie - [1080P]-FGT.nfo"), "nfo")
+
+        finder = SiblingFileFinder()
+        result = finder.get_media_siblings_grouped([video_1080, video_4k])
+
+        # Artwork belongs to 1080p (name prefix match), not 4K
+        assert fanart in result[video_1080]
+        assert poster in result[video_1080]
+        assert nfo in result[video_1080]
+        assert result[video_4k] == []
+
+    def test_multi_version_generic_siblings_assigned_to_first(self, temp_dir):
+        """Generic siblings (no name prefix match) go to the first video."""
+        video_1080 = create_test_file(os.path.join(temp_dir, "Movie.1080p.mkv"), "v1")
+        video_4k = create_test_file(os.path.join(temp_dir, "Movie.2160p.mkv"), "v2")
+        # Generic poster doesn't match either video's stem
+        poster = create_test_file(os.path.join(temp_dir, "poster.jpg"), "img")
+
+        finder = SiblingFileFinder()
+        result = finder.get_media_siblings_grouped([video_1080, video_4k])
+
+        assert poster in result[video_1080]
+        assert poster not in result[video_4k]
+
+    def test_multi_version_each_has_own_siblings(self, temp_dir):
+        """Each version can have its own name-prefixed siblings."""
+        video_1080 = create_test_file(os.path.join(temp_dir, "Movie.1080p.mkv"), "v1")
+        video_4k = create_test_file(os.path.join(temp_dir, "Movie.2160p.mkv"), "v2")
+        sub_1080 = create_test_file(os.path.join(temp_dir, "Movie.1080p.en.srt"), "sub1")
+        sub_4k = create_test_file(os.path.join(temp_dir, "Movie.2160p.en.srt"), "sub2")
+
+        finder = SiblingFileFinder()
+        result = finder.get_media_siblings_grouped([video_1080, video_4k])
+
+        assert sub_1080 in result[video_1080]
+        assert sub_4k in result[video_4k]
+        assert sub_4k not in result[video_1080]
+        assert sub_1080 not in result[video_4k]
+
 
 # ============================================================
 # CacheTimestampTracker migration tests

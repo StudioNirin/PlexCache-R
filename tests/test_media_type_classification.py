@@ -552,7 +552,7 @@ class TestGetEpisodesAheadWithFallback:
 # ============================================================================
 
 class TestWatchlist4Tuple:
-    """Test that watchlist functions yield 4-tuples with episode_info."""
+    """Test that watchlist functions yield 5-tuples with episode_info and rating_key."""
 
     @pytest.fixture(autouse=True)
     def _mock_plexapi(self):
@@ -598,13 +598,14 @@ class TestWatchlist4Tuple:
         results = list(api._process_watchlist_show(mock_show, 5, "user1", None))
 
         assert len(results) == 1
-        file_path, username, watchlisted_at, episode_info = results[0]
+        file_path, username, watchlisted_at, episode_info, rating_key = results[0]
         assert file_path == "/data/TV/Show/Season 02/S02E07.mkv"
         assert username == "user1"
         assert episode_info is not None
         assert episode_info["show"] == "Foundation"
         assert episode_info["season"] == 2
         assert episode_info["episode"] == 7
+        assert rating_key is not None
 
     def test_process_watchlist_movie_yields_none_episode_info(self):
         """_process_watchlist_movie yields 4-tuple with None episode_info."""
@@ -621,9 +622,10 @@ class TestWatchlist4Tuple:
         results = list(api._process_watchlist_movie(mock_movie, "user1", None))
 
         assert len(results) == 1
-        file_path, username, watchlisted_at, episode_info = results[0]
+        file_path, username, watchlisted_at, episode_info, rating_key = results[0]
         assert file_path == "/data/Movies/Inception.mkv"
         assert episode_info is None
+        assert rating_key is not None
 
     def test_process_watchlist_show_missing_indices(self):
         """Episodes with missing parentIndex/index yield None episode_info."""
@@ -647,5 +649,5 @@ class TestWatchlist4Tuple:
         results = list(api._process_watchlist_show(mock_show, 5, "user1", None))
 
         assert len(results) == 1
-        _, _, _, episode_info = results[0]
+        _, _, _, episode_info, _ = results[0]
         assert episode_info is None

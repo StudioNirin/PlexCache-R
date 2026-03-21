@@ -954,7 +954,7 @@ class PlexCacheApp:
 
         # Prepare OnDeck tracker for new run (preserves first_seen for retention tracking)
         # Snapshot the rating_key index before update loop for upgrade detection
-        pre_run_rk_index = dict(getattr(self.ondeck_tracker, '_rating_key_index', {}))
+        pre_run_rk_index = {rk: set(paths) for rk, paths in getattr(self.ondeck_tracker, '_rating_key_index', {}).items()}
         self.ondeck_tracker.prepare_for_run()
 
         # Fetch OnDeck Media - returns List[OnDeckItem] with file path, username, and episode metadata
@@ -1173,10 +1173,10 @@ class PlexCacheApp:
             ))
 
             for item in fetched_watchlist:
-                file_path, username, watchlisted_at, episode_info = item
+                file_path, username, watchlisted_at, episode_info, rating_key = item
 
-                # Update watchlist tracker with timestamp
-                self.watchlist_tracker.update_entry(file_path, username, watchlisted_at)
+                # Update watchlist tracker with timestamp and rating_key
+                self.watchlist_tracker.update_entry(file_path, username, watchlisted_at, rating_key=rating_key)
 
                 # Check watchlist retention (skip expired items)
                 if retention_days > 0:
@@ -1205,9 +1205,9 @@ class PlexCacheApp:
                     logging.debug(f"Found {len(remote_items)} remote watchlist items from RSS")
                     rss_expired_count = 0
                     for item in remote_items:
-                        file_path, username, watchlisted_at, episode_info = item
+                        file_path, username, watchlisted_at, episode_info, rating_key = item
                         # Update tracker (RSS items use pubDate from feed)
-                        self.watchlist_tracker.update_entry(file_path, username, watchlisted_at)
+                        self.watchlist_tracker.update_entry(file_path, username, watchlisted_at, rating_key=rating_key)
 
                         # Check watchlist retention (skip expired items)
                         if retention_days > 0:
@@ -1286,30 +1286,55 @@ class PlexCacheApp:
                                        pre_run_rk_index: dict) -> None:
         """Detect media file upgrades (Sonarr/Radarr swaps) and transfer tracking data.
 
-        Compares the pre-run rating_key→file_path index against current OnDeck items.
-        When the same rating_key maps to a different file path, a file upgrade is detected.
+        Compares the pre-run rating_key→paths index against current OnDeck items.
+        When the same rating_key has a new file path that wasn't in the pre-run set,
+        AND an old path has disappeared, a file upgrade is detected.
+
+        Multi-version items (e.g., 4K + 1080p) share a rating_key and are NOT
+        treated as upgrades — only paths that replace other paths trigger transfers.
 
         Args:
             ondeck_items_list: Current OnDeck items from Plex API.
             plex_to_real: Mapping from Plex paths to real filesystem paths.
-            pre_run_rk_index: Snapshot of rating_key→file_path index before this run.
+            pre_run_rk_index: Snapshot of rating_key→set(file_paths) index before this run.
         """
         if not pre_run_rk_index:
             return
 
-        upgrades_detected = 0
+        # Build current rating_key → set of real paths
+        current_rk_paths = {}
         for item in ondeck_items_list:
             if not item.rating_key:
                 continue
-
             real_path = plex_to_real.get(item.file_path, item.file_path)
-            old_path = pre_run_rk_index.get(item.rating_key)
+            current_rk_paths.setdefault(item.rating_key, set()).add(real_path)
 
-            if old_path and old_path != real_path:
-                upgrades_detected += 1
-                logging.info(f"[UPGRADE] Detected file upgrade for rating_key={item.rating_key}: "
-                             f"{os.path.basename(old_path)} → {os.path.basename(real_path)}")
-                self._transfer_upgrade_tracking(old_path, real_path, item)
+        upgrades_detected = 0
+        for rk, old_paths in pre_run_rk_index.items():
+            new_paths = current_rk_paths.get(rk)
+            if not new_paths:
+                continue
+
+            # Paths that appeared (not in old set) and paths that disappeared
+            appeared = new_paths - old_paths
+            disappeared = old_paths - new_paths
+
+            # An upgrade is when a path disappears and a new one appears for the same key.
+            # Multi-version additions (new path, nothing disappeared) are NOT upgrades.
+            if appeared and disappeared:
+                # Match disappeared→appeared 1:1 for transfer (handles single upgrade case)
+                for old_path, new_path in zip(sorted(disappeared), sorted(appeared)):
+                    upgrades_detected += 1
+                    logging.info(f"[UPGRADE] Detected file upgrade for rating_key={rk}: "
+                                 f"{os.path.basename(old_path)} → {os.path.basename(new_path)}")
+                    # Find an OnDeckItem for the new path to pass metadata
+                    item_for_transfer = next(
+                        (i for i in ondeck_items_list if i.rating_key == rk
+                         and plex_to_real.get(i.file_path, i.file_path) == new_path),
+                        None
+                    )
+                    if item_for_transfer:
+                        self._transfer_upgrade_tracking(old_path, new_path, item_for_transfer)
 
         if upgrades_detected:
             logging.info(f"[UPGRADE] Processed {upgrades_detected} media file upgrade(s)")
@@ -1582,6 +1607,8 @@ class PlexCacheApp:
         being restored to their sidecar files, so the web UI can group them.
         """
         array_set = set(self.media_to_array)
+        restore_groups = 0
+        restore_siblings = 0
         for array_path in list(self.media_to_array):
             # Convert to cache path for timestamp tracker lookup
             cache_path = None
@@ -1615,6 +1642,13 @@ class PlexCacheApp:
 
             if real_siblings:
                 self.sibling_map[array_path] = real_siblings
+                restore_groups += 1
+                restore_siblings += len(real_siblings)
+
+        if restore_groups > 0:
+            logging.debug(f"Restore sibling map: {restore_groups} parents with {restore_siblings} associated files")
+        elif self.media_to_array:
+            logging.debug(f"Restore sibling map: no associated files found for {len(self.media_to_array)} files being restored")
 
     def _move_files(self) -> None:
         """Move files to their destinations."""
