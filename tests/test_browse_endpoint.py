@@ -195,9 +195,10 @@ class TestValidatePathEndpoint:
         assert result.body == b""
 
     def test_validate_non_mnt_path(self):
-        """Non /mnt/ path returns empty response."""
+        """Non /mnt/ path returns warning icon."""
         result = validate_path(path="/etc/passwd")
-        assert result.body == b""
+        assert b"alert-triangle" in result.body
+        assert b"may need correction" in result.body
 
     @patch("web.routers.api.Path")
     def test_validate_existing_directory(self, mock_path_cls):

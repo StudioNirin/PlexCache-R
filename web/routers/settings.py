@@ -533,12 +533,43 @@ def toggle_library(request: Request, section_id: int):
             if m.get("section_id") == section_id:
                 m["enabled"] = False
     else:
-        # Turn ON
+        # Turn ON — always fetch fresh Plex data to detect location changes
+        settings_service.invalidate_plex_cache()
         if current_mappings:
-            # Re-enable existing mappings
+            # Re-enable existing mappings and sync with current Plex locations
+            libraries = settings_service.get_plex_libraries()
+            library = next((lib for lib in libraries if lib["id"] == section_id), None)
+            plex_locations = set()
+            if library:
+                plex_locations = {
+                    (loc if loc.endswith("/") else loc + "/").rstrip("/")
+                    for loc in library.get("locations", [])
+                }
+
+            # Remove mappings for locations no longer in Plex
+            if plex_locations:
+                mappings = [
+                    m for m in mappings
+                    if m.get("section_id") != section_id
+                    or m.get("plex_path", "").rstrip("/") in plex_locations
+                ]
+
+            # Re-enable surviving mappings
             for m in mappings:
                 if m.get("section_id") == section_id:
                     m["enabled"] = True
+
+            # Add mappings for any new Plex locations
+            if library:
+                existing_plex_paths = {
+                    m.get("plex_path", "").rstrip("/")
+                    for m in mappings
+                    if m.get("section_id") == section_id
+                }
+                for loc in library.get("locations", []):
+                    if loc.rstrip("/") not in existing_plex_paths:
+                        new_mapping = settings_service.auto_fill_mapping(library, loc, raw)
+                        mappings.append(new_mapping)
         else:
             # Auto-create mappings from Plex library
             libraries = settings_service.get_plex_libraries()
@@ -572,6 +603,75 @@ def toggle_library(request: Request, section_id: int):
     card = {
         "library": library,
         "enabled": enabled,
+        "mappings": lib_maps,
+        "has_mappings": bool(lib_maps),
+    }
+
+    return templates.TemplateResponse(
+        "settings/partials/library_card.html",
+        {"request": request, "card": card}
+    )
+
+
+@router.put("/libraries/{section_id}/paths", response_class=HTMLResponse)
+async def update_library_paths(request: Request, section_id: int):
+    """Update all path mappings for a library at once and return refreshed card"""
+    settings_service = get_settings_service()
+    form = await request.form()
+
+    raw = settings_service._load_raw()
+    all_mappings = raw.get("path_mappings", [])
+
+    # Collect mapping indices for this library
+    lib_indices = [
+        i for i, m in enumerate(all_mappings)
+        if m.get("section_id") == section_id
+    ]
+
+    # Parse form fields — each mapping's fields are suffixed with its position
+    for pos, idx in enumerate(lib_indices):
+        name = form.get(f"name_{pos}", "")
+        plex_path = form.get(f"plex_path_{pos}", "")
+        real_path = form.get(f"real_path_{pos}", "")
+        cache_path = form.get(f"cache_path_{pos}", "")
+        host_cache_path = form.get(f"host_cache_path_{pos}", "")
+        cacheable = form.get(f"cacheable_{pos}")
+
+        effective_host_cache_path = host_cache_path if host_cache_path else cache_path
+        existing = all_mappings[idx]
+
+        all_mappings[idx] = settings_service._sanitize_path_mapping({
+            "name": name,
+            "plex_path": plex_path,
+            "real_path": real_path,
+            "cache_path": cache_path if cache_path else None,
+            "host_cache_path": effective_host_cache_path if effective_host_cache_path else None,
+            "cacheable": cacheable == "on",
+            "enabled": True,
+            "section_id": existing.get("section_id"),
+            # Clear auto_fill flag — user has reviewed paths
+        })
+
+    raw["path_mappings"] = all_mappings
+    settings_service._rebuild_valid_sections(raw)
+    settings_service._save_raw(raw)
+
+    # Re-render the full library card
+    libraries = settings_service.get_plex_libraries()
+    library = next((lib for lib in libraries if lib["id"] == section_id), None)
+    if not library:
+        return HTMLResponse("<div class='alert alert-success'>Saved</div>")
+
+    lib_maps = []
+    for i, m in enumerate(all_mappings):
+        if m.get("section_id") == section_id:
+            m_copy = dict(m)
+            m_copy["_index"] = i
+            lib_maps.append(m_copy)
+
+    card = {
+        "library": library,
+        "enabled": any(m.get("enabled", True) for m in lib_maps),
         "mappings": lib_maps,
         "has_mappings": bool(lib_maps),
     }

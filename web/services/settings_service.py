@@ -328,11 +328,21 @@ class SettingsService:
         cache_dir = settings.get("cache_dir", "/mnt/cache").rstrip("/")
         plex_path = plex_location if plex_location.endswith("/") else plex_location + "/"
 
+        # Derive display name — use folder name suffix when library has multiple locations
+        name = library["title"]
+        locations = library.get("locations", [])
+        if len(locations) > 1:
+            folder_name = plex_path.rstrip("/").rsplit("/", 1)[-1]
+            if folder_name and folder_name.lower() != name.lower():
+                name = f"{name} ({folder_name})"
+
         # Suggest real_path based on common Docker path patterns
         real_path = plex_path
+        path_recognized = False
         for docker_prefix, host_prefix in [("/data/", "/mnt/user/"), ("/media/", "/mnt/user/")]:
             if plex_path.startswith(docker_prefix):
                 real_path = plex_path.replace(docker_prefix, host_prefix, 1)
+                path_recognized = True
                 break
 
         # Derive cache_path using prefix swap to preserve full structure
@@ -344,14 +354,15 @@ class SettingsService:
                 break
 
         return {
-            "name": library["title"],
+            "name": name,
             "plex_path": plex_path,
             "real_path": real_path,
             "cache_path": cache_path,
             "host_cache_path": cache_path,
             "cacheable": True,
             "enabled": True,
-            "section_id": library["id"]
+            "section_id": library["id"],
+            "auto_fill_recognized": path_recognized,
         }
 
     def get_cache_settings(self) -> Dict[str, Any]:

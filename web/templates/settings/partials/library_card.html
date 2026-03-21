@@ -27,8 +27,19 @@
             <!-- Path summary (view mode) -->
             {% if card.mappings %}
                 {% for mapping in card.mappings %}
+                {% set unrecognized = mapping.auto_fill_recognized is defined and not mapping.auto_fill_recognized %}
                 <div class="library-mapping-view" id="lib-mapping-view-{{ card.library.id }}-{{ loop.index0 }}"
-                     style="font-size: 0.85rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: var(--plex-bg-darker); border-radius: var(--plex-radius-sm);">
+                     style="font-size: 0.85rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: var(--plex-bg-darker); border-radius: var(--plex-radius-sm);
+                     {% if unrecognized %}border: 1px solid var(--plex-warning, #e67e22);{% endif %}">
+                    {% if unrecognized %}
+                    <div style="margin-bottom: 0.5rem; padding: 0.35rem 0.5rem; background: rgba(230, 126, 34, 0.1); border-radius: var(--plex-radius-sm); font-size: 0.8rem; color: var(--plex-warning, #e67e22);">
+                        <i data-lucide="alert-triangle" style="width: 13px; height: 13px; vertical-align: middle;"></i>
+                        Plex path prefix <code>{{ mapping.plex_path.split('/')[1] }}/</code> is not a recognized Docker mapping &mdash; Real Path and Cache Path likely need manual correction via Edit Paths.
+                    </div>
+                    {% endif %}
+                    {% if mapping.name != card.library.title %}
+                    <div style="margin-bottom: 0.25rem; font-weight: 500;">{{ mapping.name }}</div>
+                    {% endif %}
                     <div class="grid grid-2" style="margin-bottom: 0.25rem;">
                         <div>
                             <span class="text-muted">Plex Path:</span><br>
@@ -70,19 +81,26 @@
 
                 <!-- Edit panel (hidden by default) -->
                 <div id="library-edit-{{ card.library.id }}" style="display: none; margin-top: 0.75rem;">
+                    <form hx-put="/settings/libraries/{{ card.library.id }}/paths"
+                          hx-target="#library-card-{{ card.library.id }}"
+                          hx-swap="outerHTML">
                     {% for mapping in card.mappings %}
-                    <div style="padding: 0.75rem; background: var(--plex-bg-darker); border: 1px solid var(--plex-orange); border-radius: var(--plex-radius-sm); margin-bottom: 0.5rem;">
-                        <form hx-put="/settings/libraries/paths/{{ mapping._index }}"
-                              hx-target="#library-card-{{ card.library.id }}"
-                              hx-swap="outerHTML">
+                    {% set unrecognized = mapping.auto_fill_recognized is defined and not mapping.auto_fill_recognized %}
+                    <div style="padding: 0.75rem; background: var(--plex-bg-darker); border: 1px solid {% if unrecognized %}var(--plex-warning, #e67e22){% else %}var(--plex-orange){% endif %}; border-radius: var(--plex-radius-sm); margin-bottom: 0.5rem;">
+                            {% if unrecognized %}
+                            <div style="margin-bottom: 0.5rem; padding: 0.35rem 0.5rem; background: rgba(230, 126, 34, 0.1); border-radius: var(--plex-radius-sm); font-size: 0.8rem; color: var(--plex-warning, #e67e22);">
+                                <i data-lucide="alert-triangle" style="width: 13px; height: 13px; vertical-align: middle;"></i>
+                                Plex path <code>{{ mapping.plex_path }}</code> uses an unrecognized prefix &mdash; verify the paths below match your container and host filesystem.
+                            </div>
+                            {% endif %}
                             <div class="grid grid-2 mb-1">
                                 <div class="form-group mb-1">
                                     <label>Name</label>
-                                    <input type="text" name="name" value="{{ mapping.name }}" required>
+                                    <input type="text" name="name_{{ loop.index0 }}" value="{{ mapping.name }}" required>
                                 </div>
                                 <div class="form-group mb-1">
                                     <label>Plex Path</label>
-                                    <input type="text" name="plex_path" value="{{ mapping.plex_path }}"
+                                    <input type="text" name="plex_path_{{ loop.index0 }}" value="{{ mapping.plex_path }}"
                                            readonly style="opacity: 0.7;">
                                     <div class="form-hint">Set by Plex library configuration</div>
                                 </div>
@@ -91,19 +109,18 @@
                             <div class="grid grid-2 mb-1">
                                 <div class="form-group mb-1">
                                     <label>Real Path</label>
-                                    <input type="text" name="real_path" value="{{ mapping.real_path }}"
+                                    <input type="text" name="real_path_{{ loop.index0 }}" value="{{ mapping.real_path }}"
                                            class="path-browse-input" required>
                                     <div class="form-hint">
-                                        {% if is_unraid %}Where files live on your Unraid share (e.g., <code>/mnt/user/Movies/</code>).
-                                        {% else %}Actual filesystem path where your media files are stored.{% endif %}
+                                        The path inside this container that corresponds to Plex's <code>{{ mapping.plex_path }}</code>.
                                     </div>
                                 </div>
                                 <div class="form-group mb-1">
                                     <label>Cache Path</label>
-                                    <input type="text" name="cache_path" value="{{ mapping.cache_path or '' }}"
+                                    <input type="text" name="cache_path_{{ loop.index0 }}" value="{{ mapping.cache_path or '' }}"
                                            class="path-browse-input">
                                     <div class="form-hint">
-                                        {% if is_unraid %}Fast drive path (e.g., <code>/mnt/cache/Movies/</code>).
+                                        {% if is_unraid %}Fast drive path where cached copies are stored (e.g., <code>/mnt/cache/{{ mapping.plex_path.rstrip('/').rsplit('/', 1)[-1] }}/</code>).
                                         {% else %}Fast drive path where cached copies are stored.{% endif %}
                                     </div>
                                 </div>
@@ -112,10 +129,10 @@
                             {% if is_docker %}
                             <div class="form-group mb-1">
                                 <label style="color: var(--plex-orange);">Host Cache Path (Docker)</label>
-                                <input type="text" name="host_cache_path"
+                                <input type="text" name="host_cache_path_{{ loop.index0 }}"
                                        value="{{ mapping.host_cache_path or mapping.cache_path or '' }}"
                                        class="path-browse-input"
-                                       placeholder="e.g., /mnt/cache_downloads/Movies/">
+                                       placeholder="e.g., /mnt/cache_downloads/{{ mapping.plex_path.rstrip('/').rsplit('/', 1)[-1] }}/">
                                 <div class="form-hint">
                                     The actual host path. Only needed if Docker remaps your cache path.
                                 </div>
@@ -124,22 +141,23 @@
 
                             <div class="flex gap-2 items-center">
                                 <label class="switch">
-                                    <input type="checkbox" name="cacheable"
+                                    <input type="checkbox" name="cacheable_{{ loop.index0 }}"
                                            {% if mapping.cacheable %}checked{% endif %}>
                                     <span>Cacheable</span>
                                 </label>
-                                <div style="flex: 1;"></div>
-                                <button type="button" class="btn btn-secondary btn-sm"
-                                        onclick="toggleLibraryEdit({{ card.library.id }})">
-                                    Cancel
-                                </button>
-                                <button type="submit" class="btn btn-primary btn-sm">
-                                    <i data-lucide="save"></i> Save
-                                </button>
                             </div>
-                        </form>
                     </div>
                     {% endfor %}
+                    <div class="flex gap-2 justify-end" style="margin-top: 0.5rem;">
+                        <button type="button" class="btn btn-secondary btn-sm"
+                                onclick="toggleLibraryEdit({{ card.library.id }})">
+                            Cancel
+                        </button>
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <i data-lucide="save"></i> Save
+                        </button>
+                    </div>
+                    </form>
                 </div>
             {% else %}
                 <div class="text-muted" style="font-size: 0.85rem; font-style: italic;">

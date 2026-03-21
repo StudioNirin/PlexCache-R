@@ -679,8 +679,14 @@ def validate_path(path: str = Query("")):
     Returns green check if path exists and is a directory,
     warning icon if not found, or empty if path is invalid.
     """
-    if not path or not path.startswith("/mnt/"):
+    if not path:
         return HTMLResponse("")
+    if not path.startswith("/mnt/"):
+        return HTMLResponse(
+            '<i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--plex-warning, #e67e22); vertical-align: middle;" '
+            'title="Path does not start with /mnt/ — may need correction"></i>'
+            '<script>lucide.createIcons();</script>'
+        )
 
     try:
         p = Path(path)
