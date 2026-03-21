@@ -1,21 +1,41 @@
 """API routes for HTMX partial updates"""
 
 import html
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from fastapi import APIRouter, Request, Form, Query
+from fastapi import APIRouter, Depends, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.datastructures import ImmutableMultiDict
 from typing import List
 from urllib.parse import unquote
 
 from web.config import templates, PLEXCACHE_PRODUCT_VERSION
+from web.dependencies import parse_form
 from core.system_utils import format_bytes, format_duration, format_cache_age
 from web.services import get_cache_service, get_settings_service, get_operation_runner, get_scheduler_service, ScheduleConfig, get_maintenance_service
 from web.services.operation_runner import load_last_run_summary, OperationRunner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _render_alert(request: Request, type: str, message: str) -> str:
+    """Render alert partial to string for HTML concatenation."""
+    return templates.TemplateResponse(
+        "partials/alert.html", {"request": request, "type": type, "message": message}
+    ).body.decode()
+
+
+def _safe_int(value, default: int) -> int:
+    """Parse integer from form/query value with fallback to default."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]:
@@ -37,7 +57,11 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
 
             # Update dynamic fields that shouldn't be cached
             cached_stats["is_running"] = operation_runner.is_running
-            return cached_stats, cache_age
+            # Stale cache from before duplicate support — recompute fresh
+            if "health_duplicate_count" not in cached_stats:
+                web_cache.invalidate(CACHE_KEY_DASHBOARD_STATS)
+            else:
+                return cached_stats, cache_age
 
     # Compute fresh stats
     cache_stats = cache_service.get_cache_stats()
@@ -73,10 +97,13 @@ def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]
         "next_run_relative": schedule_status.get("next_run_relative"),
         "health_status": health["status"],
         "health_issues": health["orphaned_count"],
-        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"],
+        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"] + health["duplicate_orphan_count"],
         "health_orphaned_count": health["orphaned_count"],
         "health_stale_exclude_count": health["stale_exclude_count"],
         "health_stale_timestamp_count": health["stale_timestamp_count"],
+        "health_duplicate_count": health["duplicate_count"],
+        "health_duplicate_orphan_count": health["duplicate_orphan_count"],
+        "health_duplicate_orphan_bytes": health["duplicate_orphan_bytes_display"],
         "last_run_summary": None,
     }
 
@@ -154,7 +181,9 @@ def cache_files_table(
             "users": f.users,
             "is_ondeck": f.is_ondeck,
             "is_watchlist": f.is_watchlist,
-            "subtitle_count": f.subtitle_count
+            "subtitle_count": f.subtitle_count,
+            "sidecar_count": f.sidecar_count,
+            "associated_files": f.associated_files
         }
         for f in files
     ]
@@ -205,37 +234,32 @@ def evict_file(request: Request, file_path: str):
     if not decoded_path or not decoded_path.startswith("/"):
         return templates.TemplateResponse("partials/alert.html", {
             "request": request, "type": "error", "message": "Invalid file path"
-        }).body.decode()
+        })
 
     result = cache_service.evict_file(decoded_path)
 
     if result.get("success"):
         message = result.get("message", "File evicted")
-        resp = templates.TemplateResponse("partials/alert.html", {
-            "request": request, "type": "success", "message": message
-        }).body.decode()
-        resp += "<script>htmx.trigger('#cache-table-body', 'refresh');</script>"
-        return resp
+        alert = _render_alert(request, "success", message)
+        return HTMLResponse(alert + "<script>htmx.trigger('#cache-table-body', 'refresh');</script>")
     else:
         message = result.get("message", "Eviction failed")
         return templates.TemplateResponse("partials/alert.html", {
             "request": request, "type": "error", "message": message
-        }).body.decode()
+        })
 
 
 @router.post("/cache/evict-bulk", response_class=HTMLResponse)
-async def evict_bulk(request: Request):
+def evict_bulk(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Evict multiple files from cache"""
     cache_service = get_cache_service()
 
-    # Get form data
-    form = await request.form()
-    paths = form.getlist("paths")
+    paths = form_data.getlist("paths")
 
     if not paths:
         return templates.TemplateResponse("partials/alert.html", {
             "request": request, "type": "warning", "message": "No files selected"
-        }).body.decode()
+        })
 
     # URL decode paths
     decoded_paths = [unquote(p) for p in paths]
@@ -247,40 +271,34 @@ async def evict_bulk(request: Request):
         if result["errors"]:
             msg += f" ({len(result['errors'])} errors)"
 
-        resp = templates.TemplateResponse("partials/alert.html", {
-            "request": request, "type": "success", "message": msg
-        }).body.decode()
-        resp += """<script>
+        alert = _render_alert(request, "success", msg)
+        return HTMLResponse(alert + """<script>
             htmx.trigger('#cache-table-body', 'refresh');
             document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = false);
             document.getElementById('select-all')?.checked && (document.getElementById('select-all').checked = false);
             updateBulkActions();
-        </script>"""
-        return resp
+        </script>""")
     else:
         errors_str = "; ".join(result["errors"][:3])
         return templates.TemplateResponse("partials/alert.html", {
             "request": request, "type": "error",
             "message": f"Failed to evict files: {errors_str}"
-        }).body.decode()
+        })
 
 
 @router.post("/settings/schedule", response_class=HTMLResponse)
-async def save_schedule_settings(request: Request):
+def save_schedule_settings(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Save schedule settings"""
     scheduler_service = get_scheduler_service()
 
-    # Parse form data
-    form = await request.form()
-
     config = ScheduleConfig(
-        enabled=form.get("enabled") == "on",
-        schedule_type=form.get("schedule_type", "interval"),
-        interval_hours=int(form.get("interval_hours", 4)),
-        interval_start_time=form.get("interval_start_time", "00:00"),
-        cron_expression=form.get("cron_expression", "0 */4 * * *"),
-        dry_run=form.get("dry_run") == "on",
-        verbose=form.get("verbose") == "on",
+        enabled=form_data.get("enabled") == "on",
+        schedule_type=form_data.get("schedule_type", "interval"),
+        interval_hours=_safe_int(form_data.get("interval_hours"), 4),
+        interval_start_time=form_data.get("interval_start_time", "00:00"),
+        cron_expression=form_data.get("cron_expression", "0 */4 * * *"),
+        dry_run=form_data.get("dry_run") == "on",
+        verbose=form_data.get("verbose") == "on",
     )
 
     result = scheduler_service.update_config(config)
@@ -418,26 +436,10 @@ def health_check():
     """
     Health check endpoint for Docker container monitoring.
 
-    Returns basic health status for container orchestration (Docker, Kubernetes, etc.).
-    Used by Docker HEALTHCHECK and external monitoring tools.
+    Returns minimal status for container orchestration (Docker, Kubernetes, etc.).
+    Used by Docker HEALTHCHECK — kept intentionally lean to avoid information disclosure.
     """
-    settings_service = get_settings_service()
-    scheduler_service = get_scheduler_service()
-    operation_runner = get_operation_runner()
-
-    # Check Plex connection (cached, won't block)
-    plex_connected = settings_service.check_plex_connection()
-
-    # Get scheduler status
-    schedule_status = scheduler_service.get_status()
-
-    return {
-        "status": "healthy",
-        "version": PLEXCACHE_PRODUCT_VERSION,
-        "plex_connected": plex_connected,
-        "scheduler_running": schedule_status.get("running", False),
-        "operation_running": operation_runner.is_running,
-    }
+    return {"status": "healthy"}
 
 
 @router.get("/status")
@@ -682,6 +684,10 @@ def validate_path(path: str = Query("")):
 
     try:
         p = Path(path)
+        # Post-resolve jail check (catches ../ traversal and symlink escapes)
+        resolved_str = str(p.resolve())
+        if resolved_str != "/mnt" and not resolved_str.startswith("/mnt/"):
+            return HTMLResponse("")
         if p.exists() and p.is_dir():
             return HTMLResponse(
                 '<i data-lucide="check-circle" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i>'

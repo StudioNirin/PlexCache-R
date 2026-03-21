@@ -88,7 +88,7 @@
             <div class="form-group">
                 <label for="webhook_url">Webhook URL</label>
                 <div style="display: flex; gap: 0.5rem;">
-                    <input type="url" id="webhook_url" name="webhook_url"
+                    <input type="text" id="webhook_url" name="webhook_url"
                            value="{{ settings.webhook_url | default('') }}"
                            placeholder="https://discord.com/api/webhooks/..."
                            style="flex: 1;">

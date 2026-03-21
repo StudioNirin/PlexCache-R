@@ -1,10 +1,14 @@
 """Cache management routes"""
 
+import logging
+
 from fastapi import APIRouter, Request, Query
 from fastapi.responses import HTMLResponse
 
 from web.config import templates
 from web.services import get_cache_service, get_settings_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -45,7 +49,9 @@ def cache_list(
             "users": f.users,
             "is_ondeck": f.is_ondeck,
             "is_watchlist": f.is_watchlist,
-            "subtitle_count": f.subtitle_count
+            "subtitle_count": f.subtitle_count,
+            "sidecar_count": f.sidecar_count,
+            "associated_files": f.associated_files
         }
         for f in files
     ]

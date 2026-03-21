@@ -33,6 +33,11 @@ def write_settings(filename, data):
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4)
+        # Restrict permissions — settings contain secrets (Plex token, password hashes)
+        try:
+            os.chmod(filename, 0o600)
+        except OSError:
+            pass  # Non-fatal (Windows, Docker with different uid)
     except (IOError, OSError) as e:
         print(f"Error writing settings file: {e}")
         raise
@@ -175,13 +180,17 @@ def prompt_library_path_mapping(library_name: str, plex_locations: list, cache_r
 
         cache_path = None
         if cacheable and cache_root:
-            # Use cache_root + library name (sanitized)
-            # e.g., /mnt/cache_downloads/ + "Movies" = /mnt/cache_downloads/Movies/
-            lib_folder = library_name.replace('/', '_').replace('\\', '_')
-            if len(plex_locations) > 1:
-                # For multi-location libraries, use folder name from plex path
-                lib_folder = plex_path.rstrip('/').split('/')[-1]
-            suggested_cache = cache_root.rstrip('/') + '/' + lib_folder + '/'
+            # Derive cache_path from plex_path with prefix swap to preserve full structure
+            # e.g., /data/GUEST/Movies/ with cache_root /mnt/cache/ -> /mnt/cache/GUEST/Movies/
+            suggested_cache = plex_path_normalized
+            for docker_prefix in ['/data/', '/media/']:
+                if plex_path_normalized.startswith(docker_prefix):
+                    suggested_cache = plex_path_normalized.replace(docker_prefix, cache_root.rstrip('/') + '/', 1)
+                    break
+            else:
+                # Fallback for non-standard docker prefixes: use library name
+                lib_folder = library_name.replace('/', '_').replace('\\', '_')
+                suggested_cache = cache_root.rstrip('/') + '/' + lib_folder + '/'
 
             print(f"\n  Where should cached files be stored?")
             cache_path = input(f"  Cache path [{suggested_cache}]: ").strip() or suggested_cache

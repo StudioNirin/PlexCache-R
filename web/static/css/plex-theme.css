@@ -25,7 +25,7 @@ body {
     --plex-warning: #ff9800;
     --plex-error: #FF453A;
     --plex-info: #0A84FF;
-    --sidebar-width: 240px;
+    --sidebar-width: 200px;
     --sidebar-collapsed: 60px;
 
     /* Color aliases for convenience */
@@ -130,7 +130,7 @@ body {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 1.25rem;
+    padding: 0.85rem 1rem;
     border-bottom: 1px solid var(--plex-border);
     background: transparent;
 }
@@ -153,24 +153,39 @@ body {
     height: 18px;
 }
 
-.sidebar-brand span {
+.sidebar-brand-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.sidebar-brand-text > span {
     font-size: 1.25rem;
     font-weight: 700;
     color: var(--plex-text);
     white-space: nowrap;
 }
 
+.sidebar-brand-version {
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--plex-text-secondary);
+    line-height: 1;
+    margin-top: 0.1rem;
+    white-space: nowrap;
+}
+
 .sidebar-brand .dev-badge {
-    font-size: 0.6rem;
+    font-size: 0.55rem;
     font-weight: 700;
-    letter-spacing: 0.05em;
-    padding: 0.15rem 0.4rem;
-    border-radius: 4px;
+    letter-spacing: 0.03em;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
     background: var(--plex-orange);
     color: #000;
     line-height: 1;
-    flex-shrink: 0;
-    align-self: center;
+    vertical-align: middle;
+    margin-left: 0.2rem;
 }
 
 .sidebar-nav {
@@ -183,7 +198,7 @@ body {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.75rem 1.25rem;
+    padding: 0.6rem 1rem;
     color: var(--plex-text-muted);
     text-decoration: none;
     transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -209,14 +224,46 @@ body {
     flex-shrink: 0;
 }
 
-.sidebar-footer {
-    padding: 1rem 0.5rem;
-    border-top: 1px solid var(--plex-border);
-    color: var(--plex-text-muted);
-    font-size: 0.8rem;
+.sidebar-logout-btn {
     display: flex;
     align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.6rem 1rem;
+    margin-bottom: 0.5rem;
+    background: none;
+    border: 1px solid rgba(244, 67, 54, 0.2);
+    border-radius: var(--plex-radius-sm, 8px);
+    color: var(--plex-text-muted);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.sidebar-logout-btn:hover {
+    color: var(--plex-error);
+    background: rgba(244, 67, 54, 0.08);
+    border-color: rgba(244, 67, 54, 0.3);
+}
+
+.sidebar-logout-btn i {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.sidebar.collapsed .sidebar-logout-btn span {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-logout-btn {
     justify-content: center;
+    padding: 0.6rem;
+}
+
+.sidebar-footer {
+    padding: 0.5rem;
+    border-top: 1px solid var(--plex-border);
 }
 
 /* Top right controls (theme toggle, etc.) - positioned in content-wrapper */
@@ -254,27 +301,40 @@ body {
 
 /* Collapse toggle button */
 .sidebar-collapse-btn {
-    background: none;
-    border: none;
-    color: var(--plex-text-muted);
-    cursor: pointer;
-    padding: 0.5rem;
-    border-radius: 4px;
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.6rem 1rem;
+    background: none;
+    border: 1px solid var(--plex-border);
+    border-radius: var(--plex-radius-sm, 8px);
+    color: var(--plex-text-muted);
+    font-size: 0.875rem;
+    cursor: pointer;
     transition: all 0.15s ease;
 }
 
 .sidebar-collapse-btn:hover {
     background: var(--plex-bg-hover);
     color: var(--plex-text);
+    border-color: var(--plex-border-light);
 }
 
 .sidebar-collapse-btn i {
     width: 18px;
     height: 18px;
+    flex-shrink: 0;
     transition: transform 0.3s ease;
+}
+
+.sidebar.collapsed .sidebar-collapse-btn span {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-collapse-btn {
+    justify-content: center;
+    padding: 0.6rem;
 }
 
 /* ==================== Collapsed Sidebar ==================== */
@@ -283,7 +343,7 @@ body {
     width: var(--sidebar-collapsed);
 }
 
-.sidebar.collapsed .sidebar-brand span,
+.sidebar.collapsed .sidebar-brand-text,
 .sidebar.collapsed .sidebar-nav li a span,
 .sidebar.collapsed .sidebar-footer small {
     display: none;
@@ -291,7 +351,7 @@ body {
 
 .sidebar.collapsed .sidebar-brand {
     justify-content: center;
-    padding: 1.25rem 0.5rem;
+    padding: 0.85rem 0.5rem;
 }
 
 .sidebar.collapsed .sidebar-nav li a {
@@ -1416,18 +1476,20 @@ textarea {
 
 .tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 0;
     border-bottom: 1px solid var(--plex-border);
     margin-bottom: 1.5rem;
 }
 
 .tab {
-    padding: 0.75rem 1.25rem;
+    padding: 0.75rem 1rem;
     color: var(--plex-text-muted);
     text-decoration: none;
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
     transition: all 0.15s ease;
+    white-space: nowrap;
 }
 
 .tab:hover {
@@ -2537,7 +2599,11 @@ footer .version {
         width: var(--sidebar-width);
     }
 
-    .sidebar.collapsed .sidebar-brand span,
+    .sidebar.collapsed .sidebar-brand-text,
+    .sidebar.collapsed .sidebar-nav li a span {
+        display: flex;
+    }
+
     .sidebar.collapsed .sidebar-nav li a span {
         display: inline;
     }
@@ -2759,7 +2825,10 @@ footer .version {
     display: flex;
     flex-direction: column;
     gap: 0.375rem;
-    max-width: 280px;
+    max-width: 320px;
+}
+.breakdown-line > span:first-child {
+    margin-right: 1rem;
 }
 
 .breakdown-line {

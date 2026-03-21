@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field, asdict
 
-from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE
+from web.config import DATA_DIR, SETTINGS_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,11 @@ class SettingsService:
         try:
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2)
+            # Restrict permissions — settings contain secrets (Plex token, password hashes)
+            try:
+                os.chmod(self.settings_file, 0o600)
+            except OSError:
+                pass  # Non-fatal (Windows, Docker with different uid)
             self._cached_settings = None  # Invalidate cache
             return True
         except IOError:
@@ -330,9 +335,13 @@ class SettingsService:
                 real_path = plex_path.replace(docker_prefix, host_prefix, 1)
                 break
 
-        # Generate cache_path from library folder name
-        lib_folder = plex_path.rstrip("/").split("/")[-1]
-        cache_path = f"{cache_dir}/{lib_folder}/"
+        # Derive cache_path using prefix swap to preserve full structure
+        # e.g., /data/GUEST/Movies/ -> /mnt/cache/GUEST/Movies/
+        cache_path = plex_path
+        for docker_prefix in ["/data/", "/media/"]:
+            if plex_path.startswith(docker_prefix):
+                cache_path = plex_path.replace(docker_prefix, cache_dir + "/", 1)
+                break
 
         return {
             "name": library["title"],
@@ -361,6 +370,7 @@ class SettingsService:
             "cleanup_empty_folders": raw.get("cleanup_empty_folders", True),
             "use_symlinks": raw.get("use_symlinks", False),
             "hardlinked_files": raw.get("hardlinked_files", "skip"),
+            "cache_associated_files": raw.get("cache_associated_files", "subtitles"),
             "cache_retention_hours": raw.get("cache_retention_hours", 12),
             "cache_drive_size": raw.get("cache_drive_size", ""),
             "cache_limit": raw.get("cache_limit", "250GB"),
@@ -403,6 +413,7 @@ class SettingsService:
             "cleanup_empty_folders": ("cleanup_empty_folders", lambda x: x == "on" or x is True),
             "use_symlinks": ("use_symlinks", lambda x: x == "on" or x is True),
             "hardlinked_files": ("hardlinked_files", str),
+            "cache_associated_files": ("cache_associated_files", str),
             "cache_retention_hours": ("cache_retention_hours", safe_int),
             "cache_drive_size": ("cache_drive_size", str),
             "cache_limit": ("cache_limit", str),
@@ -602,6 +613,53 @@ class SettingsService:
                     raw["activity_retention_hours"] = activity_retention_hours
             except (ValueError, TypeError):
                 pass
+
+        return self._save_raw(raw)
+
+    def get_security_settings(self) -> Dict[str, Any]:
+        """Get security/auth settings"""
+        raw = self._load_raw()
+        return {
+            "auth_enabled": raw.get("auth_enabled", False),
+            "auth_admin_plex_id": raw.get("auth_admin_plex_id", ""),
+            "auth_admin_username": raw.get("auth_admin_username", ""),
+            "auth_password_enabled": raw.get("auth_password_enabled", False),
+            "auth_password_username": raw.get("auth_password_username", ""),
+            "auth_session_hours": raw.get("auth_session_hours", 24),
+        }
+
+    def save_security_settings(self, settings: Dict[str, Any]) -> bool:
+        """Save security/auth settings"""
+        raw = self._load_raw()
+
+        if "auth_enabled" in settings:
+            raw["auth_enabled"] = bool(settings["auth_enabled"])
+
+        if "auth_session_hours" in settings:
+            try:
+                hours = int(float(settings["auth_session_hours"]))
+                if 1 <= hours <= 720:
+                    raw["auth_session_hours"] = hours
+            except (ValueError, TypeError):
+                pass
+
+        if "auth_password_enabled" in settings:
+            raw["auth_password_enabled"] = bool(settings["auth_password_enabled"])
+
+        if "auth_password_username" in settings:
+            raw["auth_password_username"] = str(settings["auth_password_username"]).strip()
+
+        if "auth_password_hash" in settings:
+            raw["auth_password_hash"] = settings["auth_password_hash"]
+
+        if "auth_password_salt" in settings:
+            raw["auth_password_salt"] = settings["auth_password_salt"]
+
+        if "auth_admin_plex_id" in settings:
+            raw["auth_admin_plex_id"] = settings["auth_admin_plex_id"]
+
+        if "auth_admin_username" in settings:
+            raw["auth_admin_username"] = settings["auth_admin_username"]
 
         return self._save_raw(raw)
 
@@ -1154,6 +1212,18 @@ class SettingsService:
             # Redact arr instance API keys
             for inst in settings.get("arr_instances", []):
                 inst["api_key"] = ""
+
+            # Redact auth credentials and identity
+            if "auth_password_hash" in settings:
+                settings["auth_password_hash"] = "[REDACTED]"
+            if "auth_password_salt" in settings:
+                settings["auth_password_salt"] = "[REDACTED]"
+            if "auth_password_username" in settings:
+                settings["auth_password_username"] = "[REDACTED]"
+            if "auth_admin_plex_id" in settings:
+                settings["auth_admin_plex_id"] = "[REDACTED]"
+            if "auth_admin_username" in settings:
+                settings["auth_admin_username"] = "[REDACTED]"
 
             # Anonymize users in both _cached_users and users arrays
             for i, user in enumerate(settings.get("_cached_users", []), 1):

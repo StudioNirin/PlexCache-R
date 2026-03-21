@@ -1,16 +1,21 @@
 """Settings routes"""
 
+import json
+import logging
 import time
 import uuid
 import threading
 from pathlib import Path
 from typing import Dict, Any, List
+from urllib.parse import urlparse
 
 import requests
-from fastapi import APIRouter, Request, Form, Query
+from fastapi import APIRouter, Depends, Request, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.datastructures import ImmutableMultiDict
 
 from web.config import templates, CONFIG_DIR, PLEXCACHE_PRODUCT_VERSION
+from web.dependencies import parse_form
 from web.services import get_settings_service, get_scheduler_service
 from core.system_utils import get_disk_usage, detect_zfs, parse_size_bytes
 from core.file_operations import (
@@ -21,6 +26,8 @@ from core.file_operations import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # OAuth constants
@@ -29,6 +36,25 @@ PLEXCACHE_PRODUCT_NAME = 'PlexCache-D'
 # Store OAuth state in memory (with lock for thread safety)
 _oauth_state: Dict[str, Any] = {}
 _oauth_state_lock = threading.Lock()
+
+
+def _validate_outbound_url(url: str) -> tuple:
+    """Validate a URL is safe for server-side requests (SSRF prevention).
+
+    Returns (is_valid: bool, error_message: str).
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False, "Invalid URL"
+
+    if parsed.scheme not in ("http", "https"):
+        return False, "URL must use http:// or https://"
+
+    if not parsed.hostname:
+        return False, "URL must include a hostname"
+
+    return True, ""
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -151,13 +177,12 @@ def test_plex_connection(request: Request):
 
 
 @router.put("/plex", response_class=HTMLResponse)
-async def save_plex_settings(request: Request):
+def save_plex_settings(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Save Plex Server connection settings (URL + token only)"""
     settings_service = get_settings_service()
 
-    form = await request.form()
-    plex_url = form.get("plex_url", "")
-    plex_token = form.get("plex_token", "")
+    plex_url = form_data.get("plex_url", "")
+    plex_token = form_data.get("plex_token", "")
 
     success = settings_service.save_plex_settings({
         "plex_url": plex_url,
@@ -213,9 +238,6 @@ def settings_users(request: Request):
 @router.get("/users/list", response_class=HTMLResponse)
 def get_users_list(request: Request):
     """Fetch users list for lazy loading (HTMX partial)"""
-    import logging
-    logger = logging.getLogger(__name__)
-
     try:
         settings_service = get_settings_service()
         user_settings = settings_service.get_user_settings()
@@ -278,10 +300,9 @@ def sync_users(request: Request):
 
 
 @router.put("/users", response_class=HTMLResponse)
-async def save_user_settings(request: Request):
+def save_user_settings(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Save user preferences"""
     settings_service = get_settings_service()
-    form = await request.form()
 
     # Get current users from settings
     user_settings = settings_service.get_user_settings()
@@ -293,8 +314,8 @@ async def save_user_settings(request: Request):
     for user in users:
         title = user.get("title", "")
         # Checkboxes: "on" if checked, absent if unchecked
-        include_ondeck = form.get(f"include_ondeck_{title}") == "on"
-        include_watchlist = form.get(f"include_watchlist_{title}") == "on"
+        include_ondeck = form_data.get(f"include_ondeck_{title}") == "on"
+        include_watchlist = form_data.get(f"include_watchlist_{title}") == "on"
 
         # skip = NOT include (checkbox off means skip)
         user["skip_ondeck"] = not include_ondeck
@@ -302,9 +323,9 @@ async def save_user_settings(request: Request):
         user["skip_watchlist"] = not include_watchlist
 
     # Get toggle settings
-    users_toggle = form.get("users_toggle") == "on"
-    remote_watchlist_toggle = form.get("remote_watchlist_toggle") == "on"
-    remote_watchlist_rss_url = form.get("remote_watchlist_rss_url", "")
+    users_toggle = form_data.get("users_toggle") == "on"
+    remote_watchlist_toggle = form_data.get("remote_watchlist_toggle") == "on"
+    remote_watchlist_rss_url = form_data.get("remote_watchlist_rss_url", "")
 
     success = settings_service.save_user_settings(
         users=users,
@@ -709,16 +730,14 @@ def settings_cache(request: Request):
 
 
 @router.put("/cache", response_class=HTMLResponse)
-async def save_cache_settings(request: Request):
+def save_cache_settings(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Save cache settings"""
     settings_service = get_settings_service()
 
-    # Parse form data
-    form = await request.form()
-    settings_dict = dict(form)
+    settings_dict = dict(form_data)
 
     # Handle list fields that need getlist() instead of single value
-    excluded_folders = form.getlist("excluded_folders")
+    excluded_folders = form_data.getlist("excluded_folders")
     settings_dict["excluded_folders"] = [f for f in excluded_folders if f and f.strip()]
 
     success = settings_service.save_cache_settings(settings_dict)
@@ -814,7 +833,6 @@ def save_notification_settings(
 @router.post("/notifications/test", response_class=HTMLResponse)
 def test_webhook(request: Request, webhook_url: str = Form(...)):
     """Send a test message to the configured webhook"""
-    import json
     import requests
     from datetime import datetime
 
@@ -822,6 +840,13 @@ def test_webhook(request: Request, webhook_url: str = Form(...)):
         return templates.TemplateResponse(
             "partials/alert.html",
             {"request": request, "type": "error", "message": "No webhook URL provided"}
+        )
+
+    valid, err = _validate_outbound_url(webhook_url)
+    if not valid:
+        return templates.TemplateResponse(
+            "partials/alert.html",
+            {"request": request, "type": "error", "message": err}
         )
 
     # Detect platform from URL
@@ -958,6 +983,137 @@ def save_logging_settings(
 
 
 # =============================================================================
+# Security tab endpoints
+# =============================================================================
+
+@router.get("/security", response_class=HTMLResponse)
+def settings_security(request: Request):
+    """Security settings tab"""
+    from web.services.auth_service import get_auth_service
+
+    settings_service = get_settings_service()
+    auth_service = get_auth_service()
+    settings = settings_service.get_security_settings()
+
+    return templates.TemplateResponse(
+        "settings/security.html",
+        {
+            "request": request,
+            "page_title": "Security Settings",
+            "active_tab": "security",
+            "settings": settings,
+            "active_sessions": auth_service.active_session_count(),
+        }
+    )
+
+
+@router.put("/security", response_class=HTMLResponse)
+def save_security_settings(
+    request: Request,
+    auth_enabled: str = Form(None),
+    auth_session_hours: int = Form(24),
+    auth_password_enabled: str = Form(None),
+    auth_password_username: str = Form(""),
+    auth_password: str = Form(""),
+):
+    """Save security settings"""
+    from web.services.auth_service import get_auth_service
+
+    settings_service = get_settings_service()
+    auth_service = get_auth_service()
+
+    was_enabled = settings_service.get_security_settings().get("auth_enabled", False)
+    now_enabled = auth_enabled == "true"
+    password_enabled = auth_password_enabled == "true"
+
+    save_data = {
+        "auth_enabled": now_enabled,
+        "auth_session_hours": auth_session_hours,
+        "auth_password_enabled": password_enabled,
+    }
+
+    if password_enabled:
+        if auth_password_username:
+            save_data["auth_password_username"] = auth_password_username
+        if auth_password:
+            pw_hash, pw_salt = auth_service.hash_password(auth_password)
+            save_data["auth_password_hash"] = pw_hash
+            save_data["auth_password_salt"] = pw_salt
+
+    # Capture admin identity when enabling auth for the first time
+    if now_enabled and not was_enabled:
+        result = auth_service.capture_admin_identity()
+        if result is None:
+            return templates.TemplateResponse(
+                "partials/alert.html",
+                {
+                    "request": request,
+                    "type": "error",
+                    "message": "Could not capture admin identity from Plex. "
+                               "Ensure your Plex server is reachable and PLEX_TOKEN is configured."
+                }
+            )
+        save_data["auth_admin_plex_id"] = result["account_id"]
+        save_data["auth_admin_username"] = result["username"]
+
+    # When disabling auth, destroy all sessions
+    if was_enabled and not now_enabled:
+        auth_service.destroy_all_sessions()
+
+    # Track if session duration changed
+    old_session_hours = settings_service.get_security_settings().get("auth_session_hours", 24)
+
+    success = settings_service.save_security_settings(save_data)
+
+    # Recalculate existing session expiry when duration changes
+    if success and auth_session_hours != old_session_hours and now_enabled:
+        auth_service.update_session_expiry()
+
+    if success:
+        msg = "Security settings saved"
+        if now_enabled and not was_enabled:
+            msg += ". Authentication is now enabled — you will be redirected to sign in."
+        elif was_enabled and not now_enabled:
+            msg += ". Authentication disabled — all sessions cleared."
+
+        return templates.TemplateResponse(
+            "partials/alert.html",
+            {
+                "request": request,
+                "type": "success",
+                "message": msg,
+            }
+        )
+    else:
+        return templates.TemplateResponse(
+            "partials/alert.html",
+            {
+                "request": request,
+                "type": "error",
+                "message": "Failed to save security settings"
+            }
+        )
+
+
+@router.post("/security/logout-all", response_class=HTMLResponse)
+def security_logout_all(request: Request):
+    """Sign out all active sessions"""
+    from web.services.auth_service import get_auth_service
+
+    auth_service = get_auth_service()
+    auth_service.destroy_all_sessions()
+
+    return templates.TemplateResponse(
+        "partials/alert.html",
+        {
+            "request": request,
+            "type": "success",
+            "message": "All sessions signed out"
+        }
+    )
+
+
+# =============================================================================
 # Integrations tab endpoints (Sonarr/Radarr)
 # =============================================================================
 
@@ -1073,6 +1229,10 @@ def test_arr_connection(
     if not url or not api_key:
         return JSONResponse({"success": False, "message": "URL and API key are required"})
 
+    valid, err = _validate_outbound_url(url)
+    if not valid:
+        return JSONResponse({"success": False, "message": err})
+
     type_label = arr_type.title()  # "Sonarr" or "Radarr"
 
     try:
@@ -1153,7 +1313,6 @@ def settings_import_export(request: Request):
 @router.get("/import-export/export")
 def export_settings_file(request: Request, include_sensitive: bool = True):
     """Export settings as downloadable JSON file"""
-    import json
     from datetime import datetime
     from fastapi.responses import StreamingResponse
     from io import BytesIO
@@ -1181,15 +1340,11 @@ def export_settings_file(request: Request, include_sensitive: bool = True):
 
 
 @router.post("/import-export/validate", response_class=HTMLResponse)
-async def validate_settings_file(request: Request):
+def validate_settings_file(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Validate uploaded settings JSON file"""
-    import json
-
     settings_service = get_settings_service()
 
-    # Get uploaded file
-    form = await request.form()
-    file = form.get("settings_file")
+    file = form_data.get("settings_file")
 
     if not file:
         return templates.TemplateResponse(
@@ -1203,8 +1358,13 @@ async def validate_settings_file(request: Request):
         )
 
     try:
-        # Read and parse JSON
-        content = await file.read()
+        # Read and parse JSON (cap at 1 MB to prevent abuse)
+        content = file.file.read(1_048_576 + 1)
+        if len(content) > 1_048_576:
+            return templates.TemplateResponse(
+                "settings/partials/backup_validation.html",
+                {"request": request, "valid": False, "errors": ["File too large (max 1 MB)"], "warnings": []}
+            )
         settings_data = json.loads(content.decode('utf-8'))
     except json.JSONDecodeError as e:
         return templates.TemplateResponse(
@@ -1242,16 +1402,12 @@ async def validate_settings_file(request: Request):
 
 
 @router.post("/import-export/import", response_class=HTMLResponse)
-async def import_settings_file(request: Request):
+def import_settings_file(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
     """Import settings from uploaded JSON file"""
-    import json
-
     settings_service = get_settings_service()
 
-    # Get form data
-    form = await request.form()
-    file = form.get("settings_file")
-    merge_mode = form.get("import_mode") == "merge"
+    file = form_data.get("settings_file")
+    merge_mode = form_data.get("import_mode") == "merge"
 
     if not file:
         return templates.TemplateResponse(
@@ -1264,8 +1420,13 @@ async def import_settings_file(request: Request):
         )
 
     try:
-        # Read and parse JSON
-        content = await file.read()
+        # Read and parse JSON (cap at 1 MB to prevent abuse)
+        content = file.file.read(1_048_576 + 1)
+        if len(content) > 1_048_576:
+            return templates.TemplateResponse(
+                "partials/alert.html",
+                {"request": request, "type": "error", "message": "File too large (max 1 MB)"}
+            )
         settings_data = json.loads(content.decode('utf-8'))
     except json.JSONDecodeError as e:
         return templates.TemplateResponse(
@@ -1340,8 +1501,7 @@ def _get_or_create_client_id() -> str:
         settings_service.save_general_settings({"plexcache_client_id": client_id})
         return client_id
     except Exception as e:
-        import logging
-        logging.warning(f"Could not load/save client ID: {e}")
+        logger.warning(f"Could not load/save client ID: {e}")
         return str(uuid.uuid4())
 
 
