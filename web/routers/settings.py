@@ -335,12 +335,14 @@ def save_user_settings(request: Request, form_data: ImmutableMultiDict = Depends
     users_toggle = form_data.get("users_toggle") == "on"
     remote_watchlist_toggle = form_data.get("remote_watchlist_toggle") == "on"
     remote_watchlist_rss_url = form_data.get("remote_watchlist_rss_url", "")
+    auth_link_enabled = form_data.get("auth_link_enabled") == "on"
 
     success = settings_service.save_user_settings(
         users=users,
         users_toggle=users_toggle,
         remote_watchlist_toggle=remote_watchlist_toggle,
-        remote_watchlist_rss_url=remote_watchlist_rss_url
+        remote_watchlist_rss_url=remote_watchlist_rss_url,
+        auth_link_enabled=auth_link_enabled
     )
 
     if success:

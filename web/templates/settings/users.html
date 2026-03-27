@@ -14,7 +14,7 @@
             <label class="switch">
                 <input type="checkbox" name="users_toggle" id="users_toggle"
                        {% if settings.users_toggle %}checked{% endif %}
-                       onchange="document.getElementById('user-list-section').style.display = this.checked ? 'block' : 'none'; document.getElementById('rss-section').style.display = this.checked ? 'block' : 'none';">
+                       onchange="var d = this.checked ? 'block' : 'none'; document.getElementById('user-list-section').style.display = d; document.getElementById('auth-link-section').style.display = d; document.getElementById('rss-section').style.display = d;">
                 <span>Enable Multi-User Support</span>
             </label>
             <div class="form-hint">Cache media from other Plex Home users' OnDeck and Watchlist</div>
@@ -54,6 +54,39 @@
              hx-target="this"
              hx-swap="innerHTML">
             {% include "settings/partials/users_skeleton.html" %}
+        </div>
+    </div>
+</div>
+
+<!-- Self-Service Auth Link Card -->
+<div class="card" id="auth-link-section" style="{% if not settings.users_toggle %}display: none;{% endif %}">
+    <div class="card-header">
+        <i data-lucide="link"></i>
+        <h2>Self-Service Authentication</h2>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <label class="switch">
+                <input type="checkbox" name="auth_link_enabled" id="auth_link_enabled"
+                       {% if settings.auth_link_enabled %}checked{% endif %}
+                       onchange="document.getElementById('auth-link-url').style.display = this.checked ? 'block' : 'none';">
+                <span>Enable Self-Service Auth Link</span>
+            </label>
+            <div class="form-hint">Allow shared users to link their Plex account by visiting a URL. Requires PlexCache to be reachable from outside your network (reverse proxy, Tailscale, etc.).</div>
+        </div>
+
+        <div id="auth-link-url" class="form-group mb-0" style="{% if not settings.auth_link_enabled %}display: none;{% endif %}">
+            <label>Shareable Link</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input type="text" id="auth-link-url-input" readonly
+                       class="form-control"
+                       style="font-family: monospace; font-size: 0.85rem; flex: 1;">
+                <button type="button" class="btn btn-secondary" onclick="copyAuthLink()" title="Copy to clipboard"
+                        style="flex-shrink: 0; padding: 0.5rem 0.75rem;">
+                    <i data-lucide="copy" style="width: 14px; height: 14px;"></i>
+                </button>
+            </div>
+            <div class="form-hint">Share this URL with your Plex friends. They sign in with their Plex account and their token is saved automatically.</div>
         </div>
     </div>
 </div>
@@ -111,4 +144,30 @@
 .htmx-request .htmx-indicator { display: inline-block; }
 .htmx-request .htmx-indicator-hide { display: none; }
 </style>
+
+<script>
+// Generate the auth link URL from the current page origin
+(function() {
+    var input = document.getElementById('auth-link-url-input');
+    if (input) {
+        input.value = window.location.origin + '/auth/link';
+    }
+})();
+
+var copyAuthLink = function() {
+    var input = document.getElementById('auth-link-url-input');
+    if (input && navigator.clipboard) {
+        navigator.clipboard.writeText(input.value).then(function() {
+            var btn = input.nextElementSibling;
+            var original = btn.innerHTML;
+            btn.innerHTML = '<i data-lucide="check" style="width: 14px; height: 14px;"></i>';
+            lucide.createIcons({nameAttr: 'data-lucide', node: btn});
+            setTimeout(function() {
+                btn.innerHTML = original;
+                lucide.createIcons({nameAttr: 'data-lucide', node: btn});
+            }, 2000);
+        });
+    }
+};
+</script>
 {% endblock %}

@@ -925,7 +925,8 @@ class SettingsService:
             "skip_ondeck": raw.get("skip_ondeck", []),
             "skip_watchlist": raw.get("skip_watchlist", []),
             "remote_watchlist_toggle": raw.get("remote_watchlist_toggle", False),
-            "remote_watchlist_rss_url": raw.get("remote_watchlist_rss_url", "")
+            "remote_watchlist_rss_url": raw.get("remote_watchlist_rss_url", ""),
+            "auth_link_enabled": raw.get("auth_link_enabled", False)
         }
 
     def sync_users_from_plex(self) -> Dict[str, Any]:
@@ -1055,7 +1056,8 @@ class SettingsService:
 
     def save_user_settings(self, users: List[Dict[str, Any]], users_toggle: bool,
                            remote_watchlist_toggle: bool = False,
-                           remote_watchlist_rss_url: str = "") -> bool:
+                           remote_watchlist_rss_url: str = "",
+                           auth_link_enabled: bool = False) -> bool:
         """Save user preferences and rebuild skip lists.
 
         Args:
@@ -1063,6 +1065,7 @@ class SettingsService:
             users_toggle: Whether multi-user support is enabled
             remote_watchlist_toggle: Whether remote watchlist RSS is enabled
             remote_watchlist_rss_url: RSS URL for remote watchlists
+            auth_link_enabled: Whether self-service auth link is enabled
         """
         raw = self._load_raw()
 
@@ -1071,6 +1074,7 @@ class SettingsService:
         raw["users_toggle"] = users_toggle
         raw["remote_watchlist_toggle"] = remote_watchlist_toggle
         raw["remote_watchlist_rss_url"] = remote_watchlist_rss_url
+        raw["auth_link_enabled"] = auth_link_enabled
 
         # Rebuild skip lists from user preferences (use title/username for skip lists)
         raw["skip_ondeck"] = [u["title"] for u in users if u.get("skip_ondeck")]
@@ -1078,6 +1082,27 @@ class SettingsService:
         raw["skip_watchlist"] = [u["title"] for u in users if u.get("skip_watchlist")]
 
         return self._save_raw(raw)
+
+    def save_user_token_by_username(self, username: str, token: str) -> tuple:
+        """Save a token for a user matched by Plex username (case-insensitive).
+
+        Used by the self-service auth link flow when a shared user authenticates.
+
+        Returns:
+            (success: bool, matched_username: str or None)
+        """
+        raw = self._load_raw()
+        users = raw.get("users", [])
+
+        for user in users:
+            if user.get("title", "").lower() == username.lower():
+                user["token"] = token
+                raw["users"] = users
+                if self._save_raw(raw):
+                    return True, user["title"]
+                return False, None
+
+        return False, None
 
     def get_last_run_time(self) -> Optional[str]:
         """Get the last time PlexCache ran.

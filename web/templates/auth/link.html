@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Link Account - PlexCache</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <script src="/static/js/vendor/lucide.min.js"></script>
+    <link rel="stylesheet" href="/static/css/plex-theme.css">
+    <style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--plex-bg-darker);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: var(--plex-text);
+        }
+
+        .link-card {
+            width: 100%;
+            max-width: 400px;
+            padding: 0 1rem;
+        }
+
+        .link-brand {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .link-brand-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1rem;
+            background: linear-gradient(135deg, var(--plex-orange), #c98d0c);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 24px rgba(229, 160, 13, 0.25);
+        }
+
+        .link-brand-icon i {
+            width: 32px;
+            height: 32px;
+            color: white;
+        }
+
+        .link-brand h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0 0 0.25rem;
+            color: var(--plex-text);
+        }
+
+        .link-brand p {
+            font-size: 0.875rem;
+            color: var(--plex-text-muted);
+            margin: 0;
+        }
+
+        .link-body {
+            background: var(--plex-bg-card);
+            border: 1px solid var(--plex-border);
+            border-radius: var(--plex-radius-lg, 16px);
+            padding: 1.75rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .link-info {
+            font-size: 0.875rem;
+            color: var(--plex-text-muted);
+            line-height: 1.5;
+            margin-bottom: 1.25rem;
+            text-align: center;
+        }
+
+        .link-disabled {
+            text-align: center;
+            padding: 1rem 0;
+        }
+
+        .link-disabled i {
+            width: 48px;
+            height: 48px;
+            color: var(--plex-text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        .link-disabled p {
+            color: var(--plex-text-muted);
+            font-size: 0.9rem;
+            margin: 0;
+        }
+
+        /* Plex OAuth button */
+        .btn-plex {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: rgba(229, 160, 13, 0.08);
+            border: 1px solid rgba(229, 160, 13, 0.4);
+            border-radius: 8px;
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.625rem;
+            transition: all 0.15s ease;
+        }
+
+        .btn-plex:hover {
+            background: rgba(229, 160, 13, 0.15);
+            border-color: rgba(229, 160, 13, 0.6);
+        }
+
+        .btn-plex:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-plex img {
+            height: 22px;
+            width: auto;
+        }
+
+        /* OAuth status */
+        .oauth-status {
+            text-align: center;
+            padding: 0.75rem 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+        }
+
+        .oauth-status .spinner {
+            width: 18px;
+            height: 18px;
+        }
+
+        .oauth-status-text {
+            color: var(--plex-text-muted);
+            font-size: 0.875rem;
+        }
+
+        /* Success / Error states */
+        .link-error {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            color: var(--plex-error);
+            font-size: 0.875rem;
+            margin-top: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .link-error i {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .link-success {
+            padding: 1.25rem;
+            border-radius: 8px;
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            text-align: center;
+        }
+
+        .link-success i {
+            width: 40px;
+            height: 40px;
+            color: var(--plex-success);
+            margin-bottom: 0.5rem;
+        }
+
+        .link-success h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--plex-text);
+            margin: 0 0 0.25rem;
+        }
+
+        .link-success p {
+            font-size: 0.85rem;
+            color: var(--plex-text-muted);
+            margin: 0;
+        }
+
+        /* Spinner */
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--plex-border);
+            border-top-color: var(--plex-orange);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="link-card">
+        <div class="link-brand">
+            <div class="link-brand-icon">
+                <i data-lucide="link"></i>
+            </div>
+            <h1>Link Your Account</h1>
+            <p>PlexCache</p>
+        </div>
+
+        <div class="link-body">
+            {% if not enabled %}
+            <div class="link-disabled">
+                <i data-lucide="lock"></i>
+                <p>Self-service account linking is not enabled.<br>Contact the server admin for access.</p>
+            </div>
+            {% else %}
+            <div class="link-info">
+                Sign in with your Plex account to link it with this PlexCache server. This allows PlexCache to monitor your OnDeck items.
+            </div>
+
+            <!-- Plex OAuth -->
+            <div id="oauth-section">
+                <button type="button" class="btn-plex" id="plex-oauth-btn" onclick="startLinkOAuth()">
+                    Sign in with <img src="/static/img/plex-logo.svg" alt="Plex">
+                </button>
+
+                <div id="oauth-status" style="display: none;">
+                    <div class="oauth-status">
+                        <div class="spinner"></div>
+                        <span class="oauth-status-text" id="oauth-status-text">Waiting for Plex authorization...</span>
+                    </div>
+                </div>
+
+                <div id="oauth-error" style="display: none;" class="link-error">
+                    <i data-lucide="alert-circle"></i>
+                    <span id="oauth-error-text"></span>
+                </div>
+            </div>
+
+            <!-- Success state (hidden by default) -->
+            <div id="link-success" style="display: none;">
+                <div class="link-success">
+                    <i data-lucide="check-circle-2"></i>
+                    <h3>Account Linked</h3>
+                    <p>Token saved for <strong id="link-username"></strong>. You can close this page.</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        {% if enabled %}
+        var _oauthPollTimer = null;
+        var _oauthPinId = null;
+        var _oauthClientId = null;
+        var _oauthPopup = null;
+        var _oauthPopupCheckTimer = null;
+
+        function startLinkOAuth() {
+            var btn = document.getElementById('plex-oauth-btn');
+            var status = document.getElementById('oauth-status');
+            var errorDiv = document.getElementById('oauth-error');
+
+            // Open popup synchronously on click to avoid popup blockers
+            var w = 600, h = 700;
+            var left = window.screenX + (window.outerWidth - w) / 2;
+            var top = window.screenY + (window.outerHeight - h) / 2;
+            _oauthPopup = window.open('about:blank', 'PlexOAuth',
+                'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
+                ',toolbar=no,menubar=no,scrollbars=yes');
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div>';
+            status.style.display = 'none';
+            errorDiv.style.display = 'none';
+
+            fetch('/auth/link/oauth/start', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (!data.success) {
+                        if (_oauthPopup) _oauthPopup.close();
+                        showError(data.error || 'Failed to start OAuth');
+                        resetBtn();
+                        return;
+                    }
+
+                    _oauthClientId = data.client_id;
+                    _oauthPinId = data.pin_id;
+
+                    if (_oauthPopup && !_oauthPopup.closed) {
+                        _oauthPopup.location = data.auth_url;
+                    } else {
+                        window.open(data.auth_url, '_blank');
+                    }
+
+                    btn.style.display = 'none';
+                    status.style.display = 'block';
+
+                    _oauthPollTimer = setInterval(pollLink, 1000);
+
+                    // Monitor popup close
+                    _oauthPopupCheckTimer = setInterval(function() {
+                        if (_oauthPopup && _oauthPopup.closed) {
+                            clearInterval(_oauthPopupCheckTimer);
+                            _oauthPopupCheckTimer = null;
+                            if (_oauthPollTimer) {
+                                clearInterval(_oauthPollTimer);
+                                _oauthPollTimer = null;
+                                resetBtn();
+                            }
+                        }
+                    }, 1000);
+
+                    // 10-minute timeout
+                    setTimeout(function() {
+                        if (_oauthPollTimer) {
+                            clearInterval(_oauthPollTimer);
+                            _oauthPollTimer = null;
+                            if (_oauthPopup && !_oauthPopup.closed) _oauthPopup.close();
+                            showError('Session expired. Please try again.');
+                            resetBtn();
+                        }
+                    }, 600000);
+                })
+                .catch(function(err) {
+                    if (_oauthPopup) _oauthPopup.close();
+                    showError('Network error: ' + err.message);
+                    resetBtn();
+                });
+        }
+
+        function pollLink() {
+            fetch('/auth/link/oauth/poll?client_id=' + encodeURIComponent(_oauthClientId) + '&pin_id=' + _oauthPinId)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (!data.success) {
+                        clearInterval(_oauthPollTimer);
+                        _oauthPollTimer = null;
+                        if (_oauthPopupCheckTimer) { clearInterval(_oauthPopupCheckTimer); _oauthPopupCheckTimer = null; }
+                        if (_oauthPopup && !_oauthPopup.closed) _oauthPopup.close();
+                        showError(data.error || 'OAuth poll failed');
+                        resetBtn();
+                        return;
+                    }
+
+                    if (!data.complete) return;
+
+                    clearInterval(_oauthPollTimer);
+                    _oauthPollTimer = null;
+                    if (_oauthPopupCheckTimer) { clearInterval(_oauthPopupCheckTimer); _oauthPopupCheckTimer = null; }
+                    if (_oauthPopup && !_oauthPopup.closed) _oauthPopup.close();
+
+                    if (data.linked) {
+                        // Show success
+                        document.getElementById('oauth-section').style.display = 'none';
+                        document.getElementById('link-username').textContent = data.username;
+                        document.getElementById('link-success').style.display = 'block';
+                        lucide.createIcons();
+                    } else {
+                        showError(data.error || 'Account linking failed');
+                        resetBtn();
+                    }
+                })
+                .catch(function() {});
+        }
+
+        function showError(msg) {
+            var errorDiv = document.getElementById('oauth-error');
+            document.getElementById('oauth-error-text').textContent = msg;
+            errorDiv.style.display = 'flex';
+            document.getElementById('oauth-status').style.display = 'none';
+            lucide.createIcons();
+        }
+
+        function resetBtn() {
+            var btn = document.getElementById('plex-oauth-btn');
+            btn.disabled = false;
+            btn.innerHTML = 'Sign in with <img src="/static/img/plex-logo.svg" alt="Plex">';
+            btn.style.display = '';
+        }
+        {% endif %}
+    </script>
+</body>
+</html>
