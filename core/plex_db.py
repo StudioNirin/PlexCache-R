@@ -45,6 +45,16 @@ def fetch_on_deck_from_db(
     if not db_path:
         return []
 
+    # If pointed at a directory, look for the Plex database file inside it
+    if os.path.isdir(db_path):
+        candidate = os.path.join(db_path, "com.plexapp.plugins.library.db")
+        if os.path.isfile(candidate):
+            logging.debug(f"[DB FALLBACK] Auto-detected database: {candidate}")
+            db_path = candidate
+        else:
+            logging.warning(f"[DB FALLBACK] Directory given but com.plexapp.plugins.library.db not found in: {db_path}")
+            return []
+
     if not os.path.isfile(db_path):
         logging.warning(f"[DB FALLBACK] Plex database not found: {db_path}")
         return []
