@@ -102,12 +102,12 @@
             <label for="plex_db_path">Plex Database Path</label>
             <input type="text" name="plex_db_path" id="plex_db_path" class="form-control"
                    value="{{ settings.plex_db_path }}"
-                   placeholder="/config/plex-db/com.plexapp.plugins.library.db">
+                   placeholder="/config/plex-db/com.plexapp.plugins.library.db (mount Databases folder to /config/plex-db)">
             <div class="form-hint">
                 Path to Plex Media Server's SQLite database file (read-only). When shared users don't have an access token,
                 PlexCache can read their OnDeck items directly from the database. Mount the Plex database directory into
                 the container as a read-only volume, e.g.:
-                <code style="display: block; margin-top: 0.35rem; font-size: 0.8rem;">- /path/to/plex/Databases:/config/plex-db:ro</code>
+                <code style="display: block; margin-top: 0.35rem; font-size: 0.8rem;">- /path/to/PlexMediaServer/Library/Application Support/Plex Media Server/Plug-in Support/Databases:/config/plex-db:ro</code>
             </div>
         </div>
     </div>
