@@ -657,6 +657,7 @@ class PlexManager:
             for username, token in token_items:
                 # Skip main account (already added as None)
                 if token == self.plex_token:
+                    added_usernames.add(username)  # Prevent re-add in tokenless loop
                     continue
                 # Check skip list
                 if username in skip_ondeck or (token and token in skip_ondeck):
@@ -1243,6 +1244,7 @@ class PlexManager:
                 token_items = list(self._user_tokens.items())
             for username, token in token_items:
                 if token == self.plex_token:
+                    added_usernames.add(username)  # Prevent re-add in tokenless loop
                     continue
                 if username in skip_watchlist or (token and token in skip_watchlist):
                     logging.info(f"[USER:{username}] Skipping for watchlist — in skip list")
