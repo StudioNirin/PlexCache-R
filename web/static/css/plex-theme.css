@@ -1207,10 +1207,8 @@ textarea {
 
 /* Path Browser Dropdown (autocomplete) */
 .path-browser-dropdown {
-    position: absolute;
-    left: 0;
-    right: 0;
-    z-index: 1000;
+    position: fixed;
+    z-index: 10000;
     max-height: 200px;
     overflow-y: auto;
     background: var(--plex-bg-card);
