@@ -333,8 +333,9 @@ async def security_headers_middleware(request: Request, call_next):
 async def not_found_handler(request: Request, exc):
     """Custom 404 page"""
     return templates.TemplateResponse(
+        request,
         "errors/404.html",
-        {"request": request},
+        {},
         status_code=404
     )
 
@@ -343,7 +344,8 @@ async def not_found_handler(request: Request, exc):
 async def server_error_handler(request: Request, exc):
     """Custom 500 page"""
     return templates.TemplateResponse(
+        request,
         "errors/500.html",
-        {"request": request, "error": str(exc)},
+        {"error": str(exc)},
         status_code=500
     )

@@ -64,9 +64,9 @@ def settings_index(request: Request):
     settings = settings_service.get_plex_settings()
 
     return templates.TemplateResponse(
+        request,
         "settings/plex.html",
         {
-            "request": request,
             "page_title": "Settings",
             "active_tab": "plex",
             "settings": settings,
@@ -81,9 +81,9 @@ def settings_plex(request: Request):
     settings = settings_service.get_plex_settings()
 
     return templates.TemplateResponse(
+        request,
         "settings/plex.html",
         {
-            "request": request,
             "page_title": "Plex Server Settings",
             "active_tab": "plex",
             "settings": settings,
@@ -99,9 +99,9 @@ def get_plex_libraries(request: Request):
     libraries = settings_service.get_plex_libraries()
 
     return templates.TemplateResponse(
+        request,
         "settings/partials/library_checkboxes.html",
         {
-            "request": request,
             "libraries": libraries,
             "selected_sections": settings.get("valid_sections", [])
         }
@@ -117,9 +117,9 @@ def get_plex_users(request: Request):
     plex_error = settings_service.get_last_plex_error()
 
     return templates.TemplateResponse(
+        request,
         "settings/partials/user_list.html",
         {
-            "request": request,
             "users": users,
             "settings": settings,
             "plex_error": plex_error
@@ -138,8 +138,9 @@ def test_plex_connection(request: Request):
 
     if not plex_url or not plex_token:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "error", "message": "Missing Plex URL or token. Save settings first."}
+            {"type": "error", "message": "Missing Plex URL or token. Save settings first."}
         )
 
     try:
@@ -153,8 +154,9 @@ def test_plex_connection(request: Request):
         settings_service._last_plex_error = None
 
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "success", "message": f"Connected to '{server_name}' as {username}"}
+            {"type": "success", "message": f"Connected to '{server_name}' as {username}"}
         )
     except Exception as e:
         error_msg = str(e)
@@ -171,8 +173,9 @@ def test_plex_connection(request: Request):
             hint = f"Error: {error_msg[:150]}"
 
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "error", "message": hint}
+            {"type": "error", "message": hint}
         )
 
 
@@ -191,18 +194,18 @@ def save_plex_settings(request: Request, form_data: ImmutableMultiDict = Depends
 
     if success:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "success",
                 "message": "Connection settings saved successfully"
             }
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": "Failed to save settings"
             }
@@ -224,9 +227,9 @@ def settings_users(request: Request):
     has_plex_config = bool(plex_settings.get("plex_url") and plex_settings.get("plex_token"))
 
     return templates.TemplateResponse(
+        request,
         "settings/users.html",
         {
-            "request": request,
             "page_title": "User Settings",
             "active_tab": "users",
             "settings": user_settings,
@@ -247,9 +250,9 @@ def get_users_list(request: Request):
         logger.info(f"Loading users list: {len(users)} users found")
 
         return templates.TemplateResponse(
+            request,
             "settings/partials/users_table.html",
             {
-                "request": request,
                 "users": users,
                 "settings": user_settings,
                 "plex_error": plex_error
@@ -279,9 +282,9 @@ def sync_users(request: Request):
         # Return updated user list with success message
         user_settings = settings_service.get_user_settings()
         return templates.TemplateResponse(
+            request,
             "settings/partials/users_sync_result.html",
             {
-                "request": request,
                 "success": True,
                 "message": message,
                 "users": result["users"],
@@ -290,9 +293,9 @@ def sync_users(request: Request):
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": f"Sync failed: {result['error']}"
             }
@@ -336,13 +339,15 @@ def save_user_settings(request: Request, form_data: ImmutableMultiDict = Depends
 
     if success:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "success", "message": "User settings saved successfully"}
+            {"type": "success", "message": "User settings saved successfully"}
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "error", "message": "Failed to save settings"}
+            {"type": "error", "message": "Failed to save settings"}
         )
 
 
@@ -387,9 +392,9 @@ def add_path_mapping(
         mappings = settings_service.get_path_mappings()
         index = len(mappings) - 1
         return templates.TemplateResponse(
+            request,
             "settings/partials/path_mapping_card.html",
             {
-                "request": request,
                 "mapping": mapping,
                 "index": index,
             }
@@ -430,9 +435,9 @@ def update_path_mapping(
 
     if success:
         return templates.TemplateResponse(
+            request,
             "settings/partials/path_mapping_card.html",
             {
-                "request": request,
                 "mapping": mapping,
                 "index": index,
             }
@@ -452,8 +457,9 @@ def delete_path_mapping(request: Request, index: int):
         # Return the full updated list with fresh indices
         mappings = settings_service.get_path_mappings()
         return templates.TemplateResponse(
+            request,
             "settings/partials/path_mappings_list.html",
-            {"request": request, "mappings": mappings}
+            {"mappings": mappings}
         )
     else:
         return HTMLResponse("<div class='alert alert-error'>Failed to delete mapping</div>")
@@ -505,9 +511,9 @@ def settings_libraries(request: Request):
         })
 
     return templates.TemplateResponse(
+        request,
         "settings/libraries.html",
         {
-            "request": request,
             "page_title": "Library Settings",
             "active_tab": "libraries",
             "library_cards": library_cards,
@@ -608,8 +614,9 @@ def toggle_library(request: Request, section_id: int):
     }
 
     return templates.TemplateResponse(
+        request,
         "settings/partials/library_card.html",
-        {"request": request, "card": card}
+        {"card": card}
     )
 
 
@@ -677,8 +684,9 @@ async def update_library_paths(request: Request, section_id: int):
     }
 
     return templates.TemplateResponse(
+        request,
         "settings/partials/library_card.html",
-        {"request": request, "card": card}
+        {"card": card}
     )
 
 
@@ -721,8 +729,9 @@ def update_library_path(
     if section_id is None:
         # Orphan mapping — return a path_mapping_card
         return templates.TemplateResponse(
+            request,
             "settings/partials/path_mapping_card.html",
-            {"request": request, "mapping": all_mappings[index], "index": index}
+            {"mapping": all_mappings[index], "index": index}
         )
 
     # Rebuild valid_sections after update
@@ -750,8 +759,9 @@ def update_library_path(
     }
 
     return templates.TemplateResponse(
+        request,
         "settings/partials/library_card.html",
-        {"request": request, "card": card}
+        {"card": card}
     )
 
 
@@ -812,9 +822,9 @@ def settings_cache(request: Request):
         drive_info["cached_files_bytes"] = 0
 
     return templates.TemplateResponse(
+        request,
         "settings/cache.html",
         {
-            "request": request,
             "page_title": "Cache Settings",
             "active_tab": "cache",
             "settings": settings,
@@ -844,18 +854,18 @@ def save_cache_settings(request: Request, form_data: ImmutableMultiDict = Depend
 
     if success:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "success",
                 "message": "Cache settings saved successfully"
             }
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": "Failed to save settings"
             }
@@ -878,9 +888,9 @@ def settings_notifications(request: Request):
     unraid_notify_available = any(os.path.isfile(p) for p in notify_paths)
 
     return templates.TemplateResponse(
+        request,
         "settings/notifications.html",
         {
-            "request": request,
             "page_title": "Notification Settings",
             "active_tab": "notifications",
             "settings": settings,
@@ -912,18 +922,18 @@ def save_notification_settings(
 
     if success:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "success",
                 "message": "Notification settings saved successfully"
             }
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": "Failed to save settings"
             }
@@ -938,15 +948,17 @@ def test_webhook(request: Request, webhook_url: str = Form(...)):
 
     if not webhook_url:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "error", "message": "No webhook URL provided"}
+            {"type": "error", "message": "No webhook URL provided"}
         )
 
     valid, err = _validate_outbound_url(webhook_url)
     if not valid:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "error", "message": err}
+            {"type": "error", "message": err}
         )
 
     # Detect platform from URL
@@ -1007,23 +1019,27 @@ def test_webhook(request: Request, webhook_url: str = Form(...)):
 
         if response.status_code in [200, 204]:
             return templates.TemplateResponse(
+                request,
                 "partials/alert.html",
-                {"request": request, "type": "success", "message": f"Test message sent successfully! (Platform: {platform.title()})"}
+                {"type": "success", "message": f"Test message sent successfully! (Platform: {platform.title()})"}
             )
         else:
             return templates.TemplateResponse(
+                request,
                 "partials/alert.html",
-                {"request": request, "type": "error", "message": f"Webhook returned HTTP {response.status_code}: {response.text[:100]}"}
+                {"type": "error", "message": f"Webhook returned HTTP {response.status_code}: {response.text[:100]}"}
             )
     except requests.Timeout:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "error", "message": "Webhook request timed out"}
+            {"type": "error", "message": "Webhook request timed out"}
         )
     except requests.RequestException as e:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
-            {"request": request, "type": "error", "message": f"Webhook request failed: {str(e)[:100]}"}
+            {"type": "error", "message": f"Webhook request failed: {str(e)[:100]}"}
         )
 
 
@@ -1034,9 +1050,9 @@ def settings_logging(request: Request):
     settings = settings_service.get_logging_settings()
 
     return templates.TemplateResponse(
+        request,
         "settings/logging.html",
         {
-            "request": request,
             "page_title": "Logging Settings",
             "active_tab": "logging",
             "settings": settings
@@ -1064,18 +1080,18 @@ def save_logging_settings(
 
     if success:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "success",
                 "message": "Logging settings saved successfully"
             }
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": "Failed to save settings"
             }
@@ -1096,9 +1112,9 @@ def settings_security(request: Request):
     settings = settings_service.get_security_settings()
 
     return templates.TemplateResponse(
+        request,
         "settings/security.html",
         {
-            "request": request,
             "page_title": "Security Settings",
             "active_tab": "security",
             "settings": settings,
@@ -1145,9 +1161,9 @@ def save_security_settings(
         result = auth_service.capture_admin_identity()
         if result is None:
             return templates.TemplateResponse(
+                request,
                 "partials/alert.html",
                 {
-                    "request": request,
                     "type": "error",
                     "message": "Could not capture admin identity from Plex. "
                                "Ensure your Plex server is reachable and PLEX_TOKEN is configured."
@@ -1177,18 +1193,18 @@ def save_security_settings(
             msg += ". Authentication disabled — all sessions cleared."
 
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "success",
                 "message": msg,
             }
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": "Failed to save security settings"
             }
@@ -1220,9 +1236,9 @@ def settings_integrations(request: Request):
     instances = settings_service.get_arr_instances()
 
     return templates.TemplateResponse(
+        request,
         "settings/integrations.html",
         {
-            "request": request,
             "page_title": "Integration Settings",
             "active_tab": "integrations",
             "instances": instances,
@@ -1256,8 +1272,9 @@ def add_arr_instance(
         instances = settings_service.get_arr_instances()
         index = len(instances) - 1
         return templates.TemplateResponse(
+            request,
             "settings/partials/arr_instance_card.html",
-            {"request": request, "instance": instances[index], "index": index}
+            {"instance": instances[index], "index": index}
         )
     else:
         return HTMLResponse("<div class='alert alert-error'>Failed to add instance</div>")
@@ -1288,8 +1305,9 @@ def update_arr_instance(
 
     if success:
         return templates.TemplateResponse(
+            request,
             "settings/partials/arr_instance_card.html",
-            {"request": request, "instance": instance, "index": index}
+            {"instance": instance, "index": index}
         )
     else:
         return HTMLResponse("<div class='alert alert-error'>Failed to update instance</div>")
@@ -1305,8 +1323,9 @@ def delete_arr_instance(request: Request, index: int):
     if success:
         instances = settings_service.get_arr_instances()
         return templates.TemplateResponse(
+            request,
             "settings/partials/arr_instances_list.html",
-            {"request": request, "instances": instances}
+            {"instances": instances}
         )
     else:
         return HTMLResponse("<div class='alert alert-error'>Failed to delete instance</div>")
@@ -1360,9 +1379,9 @@ def settings_schedule(request: Request):
     schedule = scheduler_service.get_status()
 
     return templates.TemplateResponse(
+        request,
         "settings/schedule.html",
         {
-            "request": request,
             "page_title": "Schedule Settings",
             "active_tab": "schedule",
             "schedule": schedule
@@ -1396,9 +1415,9 @@ def settings_import_export(request: Request):
     has_completed_import = import_completed_dir.exists() and any(import_completed_dir.iterdir()) if import_completed_dir.exists() else False
 
     return templates.TemplateResponse(
+        request,
         "settings/backup.html",
         {
-            "request": request,
             "page_title": "Import/Export Settings",
             "active_tab": "import-export",
             "has_completed_import": has_completed_import
@@ -1444,9 +1463,9 @@ def validate_settings_file(request: Request, form_data: ImmutableMultiDict = Dep
 
     if not file:
         return templates.TemplateResponse(
+            request,
             "settings/partials/backup_validation.html",
             {
-                "request": request,
                 "valid": False,
                 "errors": ["No file uploaded"],
                 "warnings": []
@@ -1458,15 +1477,16 @@ def validate_settings_file(request: Request, form_data: ImmutableMultiDict = Dep
         content = file.file.read(1_048_576 + 1)
         if len(content) > 1_048_576:
             return templates.TemplateResponse(
+                request,
                 "settings/partials/backup_validation.html",
-                {"request": request, "valid": False, "errors": ["File too large (max 1 MB)"], "warnings": []}
+                {"valid": False, "errors": ["File too large (max 1 MB)"], "warnings": []}
             )
         settings_data = json.loads(content.decode('utf-8'))
     except json.JSONDecodeError as e:
         return templates.TemplateResponse(
+            request,
             "settings/partials/backup_validation.html",
             {
-                "request": request,
                 "valid": False,
                 "errors": [f"Invalid JSON: {str(e)}"],
                 "warnings": []
@@ -1474,9 +1494,9 @@ def validate_settings_file(request: Request, form_data: ImmutableMultiDict = Dep
         )
     except Exception as e:
         return templates.TemplateResponse(
+            request,
             "settings/partials/backup_validation.html",
             {
-                "request": request,
                 "valid": False,
                 "errors": [f"Error reading file: {str(e)}"],
                 "warnings": []
@@ -1487,9 +1507,9 @@ def validate_settings_file(request: Request, form_data: ImmutableMultiDict = Dep
     result = settings_service.validate_import_settings(settings_data)
 
     return templates.TemplateResponse(
+        request,
         "settings/partials/backup_validation.html",
         {
-            "request": request,
             "valid": result["valid"],
             "errors": result["errors"],
             "warnings": result["warnings"]
@@ -1507,9 +1527,9 @@ def import_settings_file(request: Request, form_data: ImmutableMultiDict = Depen
 
     if not file:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": "No file uploaded"
             }
@@ -1520,24 +1540,25 @@ def import_settings_file(request: Request, form_data: ImmutableMultiDict = Depen
         content = file.file.read(1_048_576 + 1)
         if len(content) > 1_048_576:
             return templates.TemplateResponse(
+                request,
                 "partials/alert.html",
-                {"request": request, "type": "error", "message": "File too large (max 1 MB)"}
+                {"type": "error", "message": "File too large (max 1 MB)"}
             )
         settings_data = json.loads(content.decode('utf-8'))
     except json.JSONDecodeError as e:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": f"Invalid JSON: {str(e)}"
             }
         )
     except Exception as e:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": f"Error reading file: {str(e)}"
             }
@@ -1547,9 +1568,9 @@ def import_settings_file(request: Request, form_data: ImmutableMultiDict = Depen
     validation = settings_service.validate_import_settings(settings_data)
     if not validation["valid"]:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": f"Validation failed: {', '.join(validation['errors'])}"
             }
@@ -1561,18 +1582,18 @@ def import_settings_file(request: Request, form_data: ImmutableMultiDict = Depen
     if result["success"]:
         mode_text = "merged with" if merge_mode else "replaced"
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "success",
                 "message": f"Settings {mode_text} successfully. Refresh the page to see changes."
             }
         )
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": result["message"]
             }
