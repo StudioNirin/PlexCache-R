@@ -83,7 +83,6 @@ def setup_wizard(request: Request, step: int = 1):
 
     # Get any existing values for pre-population
     context = {
-        "request": request,
         "page_title": "Setup",
         "step": step,
         "total_steps": 7,
@@ -160,7 +159,7 @@ def setup_wizard(request: Request, step: int = 1):
         context["users_count"] = len(settings.get("users", [])) + 1  # +1 for main account
         context["auth_enabled"] = settings.get("auth_enabled", False)
 
-    return templates.TemplateResponse(f"setup/step{step}.html", context)
+    return templates.TemplateResponse(request, f"setup/step{step}.html", context)
 
 
 @router.post("/setup/step1", response_class=HTMLResponse)
@@ -184,9 +183,9 @@ def setup_step2_post(
     except Exception as e:
         # Return to step 2 with error
         return templates.TemplateResponse(
+            request,
             "setup/step2.html",
             {
-                "request": request,
                 "page_title": "Setup",
                 "step": 2,
                 "total_steps": 7,

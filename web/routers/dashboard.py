@@ -32,9 +32,9 @@ def dashboard(request: Request):
     retention_label = _retention_label(retention_hours)
 
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "page_title": "Dashboard",
             "stats": stats,
             "op_status": op_status,
@@ -58,9 +58,9 @@ def refresh_stats(request: Request):
     stats, cache_age = _get_dashboard_stats_data(use_cache=False)
 
     return templates.TemplateResponse(
+        request,
         "partials/dashboard_stats_container.html",
         {
-            "request": request,
             "stats": stats,
             "cache_age": cache_age
         }

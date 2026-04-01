@@ -73,9 +73,9 @@ def cache_list(
         totals["total_size_display"] = f"{totals['total_size'] / 1024:.2f} KB"
 
     return templates.TemplateResponse(
+        request,
         "cache/list.html",
         {
-            "request": request,
             "page_title": "Cached Files",
             "files": files_data,
             "source_filter": source,
@@ -102,9 +102,9 @@ def cache_drive(request: Request, expiring_within: int = 7):
     drive_details = cache_service.get_drive_details(expiring_within_days=expiring_within)
 
     return templates.TemplateResponse(
+        request,
         "cache/drive.html",
         {
-            "request": request,
             "page_title": "Storage",
             "data": drive_details
         }
@@ -119,9 +119,9 @@ def cache_priorities(
 ):
     """Priority report page with detailed analysis (lazy loaded)"""
     return templates.TemplateResponse(
+        request,
         "cache/priorities.html",
         {
-            "request": request,
             "page_title": "Priority Report",
             "sort_by": sort,
             "sort_dir": dir

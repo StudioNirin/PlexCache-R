@@ -122,9 +122,9 @@ def logs_viewer(request: Request):
         )
 
     return templates.TemplateResponse(
+        request,
         "logs/viewer.html",
         {
-            "request": request,
             "page_title": "Logs",
             "log_files": log_files,
             "current_file": log_files[0] if log_files else None
@@ -137,8 +137,9 @@ def get_log_content(request: Request, filename: str = "", lines: int = 100):
     """Get log file content with structured parsing"""
     if not filename:
         return templates.TemplateResponse(
+            request,
             "logs/partials/log_content.html",
-            {"request": request, "lines": [], "counts": {}, "filename": "", "capped": False}
+            {"lines": [], "counts": {}, "filename": "", "capped": False}
         )
 
     # Security: prevent directory traversal
@@ -147,9 +148,9 @@ def get_log_content(request: Request, filename: str = "", lines: int = 100):
 
     if not log_path.exists() or not log_path.is_file():
         return templates.TemplateResponse(
+            request,
             "logs/partials/log_content.html",
             {
-                "request": request,
                 "lines": [{'raw': f'Log file not found: {safe_filename}', 'level': 'ERROR',
                            'timestamp': '', 'phase': '', 'is_continuation': False}],
                 "counts": {'ERROR': 1},
@@ -183,7 +184,6 @@ def get_log_content(request: Request, filename: str = "", lines: int = 100):
     is_htmx = request.headers.get("HX-Request") == "true"
 
     template_context = {
-        "request": request,
         "lines": parsed_lines,
         "counts": counts,
         "filename": safe_filename,
@@ -192,6 +192,7 @@ def get_log_content(request: Request, filename: str = "", lines: int = 100):
 
     if is_htmx:
         return templates.TemplateResponse(
+            request,
             "logs/partials/log_content.html",
             template_context
         )

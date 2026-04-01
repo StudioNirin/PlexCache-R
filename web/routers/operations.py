@@ -58,9 +58,9 @@ def run_operation(
         # Use global banner template if targeting the global banner
         if hx_target == "global-operation-banner":
             response = templates.TemplateResponse(
+                request,
                 "components/global_operation_banner.html",
                 {
-                    "request": request,
                     "status": status,
                     "maint_status": maint_status,
                     "blocked_message": message if not success else None
@@ -69,9 +69,9 @@ def run_operation(
             return response
         # Default to original operation_status template
         return templates.TemplateResponse(
+            request,
             "components/operation_status.html",
             {
-                "request": request,
                 "status": status,
                 "message": message,
                 "success": success
@@ -106,18 +106,18 @@ def stop_operation(request: Request):
         # Use global banner template if targeting the global banner
         if hx_target == "global-operation-banner":
             return templates.TemplateResponse(
+                request,
                 "components/global_operation_banner.html",
                 {
-                    "request": request,
                     "status": status,
                     "maint_status": maint_status
                 }
             )
         # Default to original operation_status template
         return templates.TemplateResponse(
+            request,
             "components/operation_status.html",
             {
-                "request": request,
                 "status": status,
                 "message": message,
                 "success": success
@@ -141,9 +141,9 @@ def get_status(request: Request):
 
     if is_htmx:
         return templates.TemplateResponse(
+            request,
             "components/operation_status.html",
             {
-                "request": request,
                 "status": status
             }
         )
@@ -163,7 +163,6 @@ def get_recent_activity(request: Request):
 
     if is_htmx:
         context = {
-            "request": request,
             "activity": activity,
         }
         # Pass extra context when activity is empty for contextual empty states
@@ -173,6 +172,7 @@ def get_recent_activity(request: Request):
             context["last_run"] = settings_service.get_last_run_time()
 
         return templates.TemplateResponse(
+            request,
             "components/recent_activity.html",
             context
         )
