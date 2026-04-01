@@ -305,9 +305,66 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     }
 });
 
+// ── Connection-lost detection ─────────────────────────────────────────
+// Track consecutive banner poll failures. After 3 failures, replace the
+// pill with a "Connection Lost" state so the user knows the server is
+// unreachable (instead of the banner just freezing on its last state).
+var _diBannerFailCount = 0;
+var _diBannerDisconnected = false;
+
+document.addEventListener('htmx:sendError', function(evt) {
+    if (!evt.detail.elt || !evt.detail.elt.closest('#global-operation-banner')) return;
+    _diBannerFailCount++;
+    if (_diBannerFailCount >= 3 && !_diBannerDisconnected) {
+        _diBannerDisconnected = true;
+        var banner = document.getElementById('global-operation-banner');
+        if (!banner) return;
+        // Preserve expansion state on outer div — only replace inner content
+        banner.innerHTML =
+            '<div class="di-pill di-pill--disconnected" data-state="disconnected"' +
+            '     hx-get="/api/operation-banner" hx-trigger="every 5s" hx-swap="innerHTML" hx-target="#global-operation-banner">' +
+            '  <div class="di-pill__compact">' +
+            '    <div class="di-pill__left">' +
+            '      <div class="di-icon"><i data-lucide="wifi-off" style="width:14px;height:14px;"></i></div>' +
+            '      <span class="di-label">Connection Lost</span>' +
+            '    </div>' +
+            '  </div>' +
+            '  <div class="di-pill__expanded">' +
+            '    <div class="di-expanded__header">' +
+            '      <div class="di-expanded__header-left">' +
+            '        <div class="di-icon"><i data-lucide="wifi-off" style="width:14px;height:14px;"></i></div>' +
+            '        <span class="di-label">Server Unreachable</span>' +
+            '      </div>' +
+            '    </div>' +
+            '    <div style="font-size:0.78rem;color:rgba(255,255,255,0.5);text-align:center;padding:0.3rem 0;">' +
+            '      Unable to reach the server. Retrying&hellip;' +
+            '    </div>' +
+            '  </div>' +
+            '</div>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        if (typeof htmx !== 'undefined') htmx.process(banner);
+    }
+});
+
+// Also catch HTTP errors (5xx) on the banner poll as connection issues
+document.addEventListener('htmx:responseError', function(evt) {
+    if (!evt.detail.elt || !evt.detail.elt.closest('#global-operation-banner')) return;
+    _diBannerFailCount++;
+    if (_diBannerFailCount >= 3 && !_diBannerDisconnected) {
+        // Trigger the same logic — dispatch a synthetic sendError
+        document.dispatchEvent(new CustomEvent('htmx:sendError', {
+            detail: { elt: evt.detail.elt }
+        }));
+    }
+});
+
 // After every HTMX swap: re-render icons, sync animations, one-shot entrance
 document.addEventListener('htmx:afterSwap', function(evt) {
     if (evt.detail.target && evt.detail.target.id === 'global-operation-banner') {
+        // Successful swap — reset connection failure tracking
+        _diBannerFailCount = 0;
+        _diBannerDisconnected = false;
+
         if (typeof lucide !== 'undefined') lucide.createIcons();
 
         // Sync looping animations to wall clock so they don't visibly reset on 2s swap.
