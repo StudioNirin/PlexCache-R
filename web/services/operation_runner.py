@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Callable
 from dataclasses import dataclass, field
 
-from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
+from web.config import PROJECT_ROOT, DATA_DIR, LOGS_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
 from core.system_utils import format_bytes, format_duration
 from core.file_operations import save_json_atomically
 
@@ -135,6 +136,255 @@ class OperationRunner:
         # Tracker data for user lookups (loaded on operation start)
         self._ondeck_tracker: Dict = {}
         self._watchlist_tracker: Dict = {}
+        # External CLI process detection
+        self._lock_file = PROJECT_ROOT / "plexcache.lock"
+        self._log_file = LOGS_DIR / "plexcache.log"
+        # Cache parsed external log state between polls (avoids re-parsing entire file)
+        self._external_log_state: Optional[dict] = None
+
+    # ── External CLI process detection ─────────────────────────────────
+
+    def _check_external_process(self) -> Optional[int]:
+        """Check if an external PlexCache process is running via lock file.
+
+        Returns the PID if a live external process is detected, None otherwise.
+        Only detects processes NOT started by this OperationRunner.
+        """
+        if not self._lock_file.exists():
+            return None
+
+        try:
+            with open(self._lock_file, 'r') as f:
+                pid_str = f.read().strip()
+            if not pid_str:
+                return None
+            pid = int(pid_str)
+
+            # Verify process is actually alive via /proc (Linux/Docker)
+            if os.path.exists(f'/proc/{pid}'):
+                return pid
+        except (ValueError, IOError, OSError):
+            pass
+        return None
+
+    def _parse_external_log(self) -> dict:
+        """Parse the log file to extract progress for an external CLI run.
+
+        Finds the last run header ("=== PlexCache") and parses lines after it
+        using the same phase markers and file operation patterns as the web runner.
+
+        Returns a status dict compatible with the running state format.
+        """
+        result = {
+            "phase": "starting",
+            "current_phase_display": "Starting...",
+            "files_cached_so_far": 0,
+            "files_restored_so_far": 0,
+            "files_to_cache_total": 0,
+            "files_to_restore_total": 0,
+            "bytes_cached_so_far": 0,
+            "bytes_restored_so_far": 0,
+            "last_completed_file": "",
+            "error_count": 0,
+            "recent_logs": [],
+            "recent_files": [],
+            "started_at": None,
+        }
+
+        try:
+            if not self._log_file.exists():
+                return result
+
+            # Read last 200KB of log file (enough for a full run)
+            file_size = self._log_file.stat().st_size
+            read_start = max(0, file_size - 200 * 1024)
+
+            with open(self._log_file, 'r', encoding='utf-8', errors='replace') as f:
+                if read_start > 0:
+                    f.seek(read_start)
+                    f.readline()  # Skip partial line
+                lines = f.readlines()
+
+            if not lines:
+                return result
+
+            # Find the last run header
+            run_start_idx = None
+            for i in range(len(lines) - 1, -1, -1):
+                if '=== PlexCache' in lines[i]:
+                    run_start_idx = i
+                    break
+
+            if run_start_idx is None:
+                return result
+
+            # Parse lines from the run header onwards
+            run_lines = lines[run_start_idx:]
+            all_logs = []
+            current_operation = None
+
+            for line in run_lines:
+                line = line.rstrip('\n')
+                if not line.strip():
+                    continue
+
+                # Strip timestamp/level prefix for matching
+                clean_msg = line
+                for sep in (' - INFO - ', ' - DEBUG - ', ' - WARNING - ', ' - ERROR - ', ' - CRITICAL - '):
+                    if sep in line:
+                        clean_msg = line.split(sep, 1)[-1]
+                        break
+
+                all_logs.append(line)
+
+                # Detect errors
+                if ' - ERROR - ' in line or ' - CRITICAL - ' in line:
+                    result["error_count"] += 1
+
+                # Detect phase transitions (reuse same markers)
+                for marker, phase_key, phase_display in self._PHASE_MARKERS:
+                    if marker in clean_msg:
+                        result["phase"] = phase_key
+                        result["current_phase_display"] = phase_display
+                        break
+
+                # Extract file count totals
+                m = self._return_header.search(clean_msg) or self._copy_header.search(clean_msg)
+                if m:
+                    result["files_to_restore_total"] += int(m.group(1))
+                    current_operation = "Restored"
+                    continue
+
+                m = self._cache_count_re.search(clean_msg)
+                if m:
+                    result["files_to_cache_total"] = int(m.group(1))
+                    current_operation = "Cached"
+                    continue
+
+                if 'Caching to' in clean_msg or '--- Moving Files ---' in clean_msg:
+                    current_operation = "Cached"
+                    continue
+                if 'Returning to array' in clean_msg or 'Copying to array' in clean_msg:
+                    current_operation = "Restored"
+                    continue
+                if '--- Results ---' in clean_msg:
+                    current_operation = None
+                    continue
+
+                # Parse file completions: "  [Action] filename (size)"
+                action_match = self._action_entry.match(clean_msg)
+                if action_match:
+                    action = action_match.group(1)
+                    filename = action_match.group(2).strip()
+                    size_str = action_match.group(3)
+                    size_bytes = self._parse_size(size_str) if size_str else 0
+
+                    if action == "Cached":
+                        result["files_cached_so_far"] += 1
+                        result["bytes_cached_so_far"] += size_bytes
+                    elif action in ("Restored", "Moved"):
+                        result["files_restored_so_far"] += 1
+                        result["bytes_restored_so_far"] += size_bytes
+
+                    result["last_completed_file"] = filename
+                    result["recent_files"].insert(0, {
+                        "action": action,
+                        "filename": filename,
+                        "size": format_bytes(size_bytes) if size_bytes else "",
+                    })
+
+            # Trim recent files to last 8
+            result["recent_files"] = result["recent_files"][:8]
+            # Last 5 log lines
+            result["recent_logs"] = all_logs[-5:]
+
+            # Try to extract start time from the first log line timestamp
+            if run_lines:
+                first_line = run_lines[0]
+                # Match common timestamp formats: "HH:MM:SS" or "H:MM:SS AM/PM"
+                ts_match = re.match(r'^(\d{1,2}:\d{2}:\d{2}(?:\s*[AP]M)?)', first_line)
+                if ts_match:
+                    ts_str = ts_match.group(1).strip()
+                    for fmt in ('%I:%M:%S %p', '%H:%M:%S'):
+                        try:
+                            t = datetime.strptime(ts_str, fmt)
+                            result["started_at"] = datetime.now().replace(
+                                hour=t.hour, minute=t.minute, second=t.second, microsecond=0
+                            )
+                            break
+                        except ValueError:
+                            continue
+
+        except (IOError, OSError) as e:
+            logging.debug("Error parsing external log: %s", e)
+
+        return result
+
+    def _get_external_status_dict(self, pid: int) -> dict:
+        """Build a status dict for an externally-running CLI process."""
+        log_state = self._parse_external_log()
+        self._external_log_state = log_state
+
+        # Calculate elapsed time
+        elapsed = 0
+        started_at = log_state.get("started_at")
+        if started_at:
+            elapsed = (datetime.now() - started_at).total_seconds()
+
+        total_files = log_state["files_to_cache_total"] + log_state["files_to_restore_total"]
+        completed_files = log_state["files_cached_so_far"] + log_state["files_restored_so_far"]
+
+        progress_percent = 0
+        if total_files > 0:
+            progress_percent = min(int(completed_files / total_files * 100), 100)
+
+        # ETA
+        eta_display = ""
+        if completed_files > 0 and total_files > 0 and elapsed > 0:
+            avg = elapsed / completed_files
+            remaining = total_files - completed_files
+            eta_display = self._format_duration(avg * remaining)
+
+        # Bytes display
+        total_bytes = log_state["bytes_cached_so_far"] + log_state["bytes_restored_so_far"]
+
+        status = {
+            "state": "running",
+            "is_running": True,
+            "external": True,
+            "external_pid": pid,
+            "dry_run": False,
+            "started_at": started_at.isoformat() if started_at else None,
+            "completed_at": None,
+            "duration_seconds": 0,
+            "files_cached": 0,
+            "files_restored": 0,
+            "bytes_cached": 0,
+            "bytes_restored": 0,
+            "error_message": None,
+            # Phase and progress
+            "phase": log_state["phase"],
+            "current_phase": log_state["phase"],
+            "current_phase_display": log_state["current_phase_display"],
+            "files_to_cache_total": log_state["files_to_cache_total"],
+            "files_to_restore_total": log_state["files_to_restore_total"],
+            "files_cached_so_far": log_state["files_cached_so_far"],
+            "files_restored_so_far": log_state["files_restored_so_far"],
+            "error_count": log_state["error_count"],
+            "last_completed_file": log_state["last_completed_file"],
+            "total_files": total_files,
+            "completed_files": completed_files,
+            "progress_percent": progress_percent,
+            "elapsed_display": self._format_duration(elapsed),
+            "eta_display": eta_display,
+            "bytes_display": self._format_bytes(total_bytes) if total_bytes > 0 else "",
+            "recent_logs": log_state["recent_logs"],
+            "recent_files": log_state["recent_files"],
+            "active_files": [],  # Can't read FileMover state from external process
+            "message": log_state["current_phase_display"],
+        }
+
+        return status
 
     def _load_trackers(self) -> None:
         """Load OnDeck and Watchlist trackers for user lookups"""
@@ -247,8 +497,13 @@ class OperationRunner:
 
     @property
     def is_running(self) -> bool:
-        """Check if an operation is currently running"""
-        return self.state == OperationState.RUNNING
+        """Check if an operation is currently running (web-triggered or external CLI)"""
+        if self.state == OperationState.RUNNING:
+            return True
+        # Also check for external CLI process when we're idle
+        if self.state == OperationState.IDLE:
+            return self._check_external_process() is not None
+        return False
 
     @property
     def stop_requested(self) -> bool:
@@ -488,6 +743,12 @@ class OperationRunner:
         from web.services.maintenance_runner import get_maintenance_runner
         if get_maintenance_runner().is_running:
             logging.info("Operation blocked - maintenance action in progress")
+            return False
+
+        # Check if an external CLI process is already running
+        ext_pid = self._check_external_process()
+        if ext_pid is not None:
+            logging.info("Operation blocked - external CLI process running (PID %d)", ext_pid)
             return False
 
         with self._lock:
@@ -808,6 +1069,14 @@ class OperationRunner:
     def get_status_dict(self) -> dict:
         """Get status as a dictionary for API responses"""
         result = self.current_result
+
+        # Check for external CLI process when not running a web-triggered operation
+        if self._state != OperationState.RUNNING:
+            ext_pid = self._check_external_process()
+            if ext_pid is not None:
+                return self._get_external_status_dict(ext_pid)
+            # Clear stale external log state when no external process
+            self._external_log_state = None
 
         if result is None:
             return {

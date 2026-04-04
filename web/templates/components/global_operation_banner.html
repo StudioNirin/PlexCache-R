@@ -710,7 +710,9 @@ function dismissMaintCompletionBanner() {
 {% elif status.state == 'running' %}
 {# ═══════════════════════════════════════════════════════════
    OPERATION RUNNING — Green (caching) or Orange (evicting) pill
+   Also handles external CLI runs (status.external == true)
    ═══════════════════════════════════════════════════════════ #}
+{% set is_external = status.external|default(false) %}
 {% set phase = status.phase|default(status.current_phase|default('starting')) %}
 {% if status.dry_run %}
   {% set color_mod = 'dry-run' %}
@@ -722,10 +724,10 @@ function dismissMaintCompletionBanner() {
   {% set phase_label = status.current_phase_display|default('Restoring...') %}
 {% else %}
   {% set color_mod = 'caching' %}
-  {% set icon_name = 'cloud-download' %}
+  {% set icon_name = is_external and 'terminal' or 'cloud-download' %}
   {% set phase_label = status.current_phase_display|default('Caching...') %}
 {% endif %}
-{% set poll_interval = '8s' if (blocked_message is defined and blocked_message) else '2s' %}
+{% set poll_interval = '8s' if (blocked_message is defined and blocked_message) else ('3s' if is_external else '2s') %}
 
 <div class="di-pill di-pill--{{ color_mod }} di-glow" data-state="op-running-{{ color_mod }}"
      hx-get="/api/operation-banner" hx-trigger="every {{ poll_interval }}" hx-swap="innerHTML" hx-target="#global-operation-banner"
@@ -735,6 +737,7 @@ function dismissMaintCompletionBanner() {
     <div class="di-pill__compact">
         <div class="di-pill__left">
             <div class="di-icon"><i data-lucide="{{ icon_name }}" style="width: 14px; height: 14px;"></i></div>
+            {% if is_external %}<span class="di-cli-badge">CLI</span>{% endif %}
             <span class="di-label">{{ phase_label|truncate(20, True, '...') }}</span>
             <div class="di-spinner"></div>
             {% if status.error_count is defined and status.error_count > 0 %}
@@ -758,6 +761,7 @@ function dismissMaintCompletionBanner() {
         <div class="di-expanded__header">
             <div class="di-expanded__header-left">
                 <div class="di-icon"><i data-lucide="{{ icon_name }}" style="width: 14px; height: 14px;"></i></div>
+                {% if is_external %}<span class="di-cli-badge">CLI</span>{% endif %}
                 <span class="di-label">{{ phase_label }}</span>
                 <div class="di-spinner"></div>
                 {% if status.error_count is defined and status.error_count > 0 %}
@@ -768,11 +772,13 @@ function dismissMaintCompletionBanner() {
                 <a href="/logs?live=true" class="di-dismiss" title="View logs" onclick="event.stopPropagation();" style="text-decoration: none;">
                     <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
                 </a>
+                {% if not is_external %}
                 <button class="di-stop" title="Stop"
                         hx-post="/operations/stop" hx-target="#global-operation-banner" hx-swap="innerHTML"
                         onclick="event.stopPropagation()">
                     <div class="di-stop__inner"></div>
                 </button>
+                {% endif %}
                 <button class="di-dismiss" title="Minimize" onclick="event.stopPropagation(); diMinimize();">&minus;</button>
             </div>
         </div>
@@ -873,7 +879,11 @@ function dismissMaintCompletionBanner() {
 <script>
     lucide.createIcons();
 
+    {% if not is_external %}
     if (window.BannerLogStream) BannerLogStream.connect();
+    {% else %}
+    if (window.BannerLogStream) BannerLogStream.disconnect();
+    {% endif %}
     {% if blocked_message is defined and blocked_message %}showBannerWarning('{{ blocked_message }}');{% endif %}
 </script>
 
@@ -1283,7 +1293,7 @@ function dismissCompletionBanner() {
    ═══════════════════════════════════════════════════════════ #}
 {% if scheduler_status is defined and scheduler_status and scheduler_status.next_run_relative %}
 <div class="di-pill di-pill--idle" id="idle-countdown-pill" data-state="idle"
-     hx-get="/api/operation-banner" hx-trigger="every 30s" hx-swap="innerHTML" hx-target="#global-operation-banner"
+     hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"
      onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
 
     <!-- Compact view -->
@@ -1351,7 +1361,7 @@ function diTriggerRun(dryRun) {
 {% else %}
 {# ── No schedule configured — persistent "Ready" pill with quick actions ── #}
 <div class="di-pill di-pill--idle" id="idle-ready-pill" data-state="idle-ready"
-     hx-get="/api/operation-banner" hx-trigger="every 30s" hx-swap="innerHTML" hx-target="#global-operation-banner"
+     hx-get="/api/operation-banner" hx-trigger="every 10s" hx-swap="innerHTML" hx-target="#global-operation-banner"
      onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
 
     <!-- Compact view -->
