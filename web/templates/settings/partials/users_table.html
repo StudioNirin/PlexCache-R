@@ -5,7 +5,7 @@
         <span class="toggle-col">OnDeck</span>
         <span class="toggle-col">Watchlist</span>
         <span class="monitor-col" title="OnDeck monitoring window per user (blank = global default)">OnDeck Days</span>
-        <span class="monitor-col" title="Watchlist retention per user (blank = global default)">WL Days</span>
+        <span class="monitor-col" title="Watchlist retention per user (blank = global default)">Watchlist Days</span>
         <span class="token-status-col">Token</span>
     </div>
     <div class="user-list-body">
@@ -30,14 +30,14 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </span>
-                <span class="toggle-col">
+                <span class="toggle-col" style="position: relative;">
                     <label class="toggle-switch" {% if not user.is_local %}title="Remote users use RSS feed"{% endif %}>
                         <input type="checkbox" name="include_watchlist_{{ user.title }}" value="on"
                                {% if not user.skip_watchlist %}checked{% endif %}
                                {% if user.is_admin %}disabled checked{% endif %}>
                         <span class="toggle-slider"></span>
                     </label>
-                    {% if not user.is_local %}<span class="text-muted" style="font-size: 0.7rem; margin-left: 4px;">RSS</span>{% endif %}
+                    {% if not user.is_local %}<span class="text-muted" style="font-size: 0.65rem; position: absolute; right: -2px; top: 50%; transform: translateY(-50%);">RSS</span>{% endif %}
                 </span>
                 <span class="monitor-col">
                     <input type="number" name="ondeck_days_{{ user.title }}"
