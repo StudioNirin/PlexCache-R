@@ -55,16 +55,16 @@
                     <span class="monitor-col">
                         <input type="number" name="ondeck_days_{{ user.title }}"
                                value="{{ user.days_to_monitor if user.days_to_monitor is defined and user.days_to_monitor is not none else '' }}"
-                               placeholder="{{ settings.days_to_monitor|default(183) }}"
+                               placeholder="&#8212;"
                                min="1" max="9999" class="monitor-input"
-                               title="OnDeck days to monitor (blank = {{ settings.days_to_monitor|default(183) }}d global default)">
+                               title="OnDeck days to monitor (blank = global default: {{ settings.days_to_monitor|default(183) }} days)">
                     </span>
                     <span class="monitor-col">
                         <input type="number" name="watchlist_days_{{ user.title }}"
                                value="{{ user.watchlist_retention_days if user.watchlist_retention_days is defined and user.watchlist_retention_days is not none else '' }}"
-                               placeholder="{{ settings.watchlist_retention_days|default(0)|int or 'off' }}"
+                               placeholder="&#8212;"
                                min="0" max="9999" class="monitor-input"
-                               title="Watchlist retention days (blank = {{ settings.watchlist_retention_days|default(0) or 'off' }} global default)">
+                               title="Watchlist retention days (blank = global default: {{ settings.watchlist_retention_days|default(0) or 'disabled' }})">
                     </span>
                 </span>
                 <span class="token-status-col" {% if not user.is_admin %}onclick="toggleTokenPanel({{ loop.index }})"{% endif %}>
