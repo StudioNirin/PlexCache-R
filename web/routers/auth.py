@@ -55,9 +55,9 @@ def login_page(request: Request, next: str = "/"):
     password_enabled = settings.get("auth_password_enabled", False)
 
     return templates.TemplateResponse(
+        request,
         "auth/login.html",
         {
-            "request": request,
             "next_url": safe_next,
             "password_enabled": password_enabled,
             "error": None,
@@ -204,9 +204,9 @@ def password_login(
     if not allowed:
         settings = auth_service._load_settings()
         return templates.TemplateResponse(
+            request,
             "auth/login.html",
             {
-                "request": request,
                 "next_url": safe_next,
                 "password_enabled": settings.get("auth_password_enabled", False),
                 "error": f"Too many login attempts. Try again in {retry_after} seconds.",
@@ -239,9 +239,9 @@ def password_login(
     auth_service.record_login_attempt(client_ip, False)
     settings = auth_service._load_settings()
     return templates.TemplateResponse(
+        request,
         "auth/login.html",
         {
-            "request": request,
             "next_url": safe_next,
             "password_enabled": settings.get("auth_password_enabled", False),
             "error": "Invalid username or password",

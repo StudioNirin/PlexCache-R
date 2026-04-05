@@ -218,9 +218,9 @@ def _start_async_action(action_name: str, service_method, method_args=(), method
 def maintenance_page(request: Request):
     """Main maintenance page - loads instantly with skeleton, audit fetched via HTMX"""
     return templates.TemplateResponse(
+        request,
         "maintenance/index.html",
         {
-            "request": request,
             "page_title": "Maintenance"
         }
     )
@@ -246,9 +246,9 @@ def run_audit(request: Request, refresh: bool = Query(default=False, description
         pass
 
     response = templates.TemplateResponse(
+        request,
         "maintenance/partials/audit_results.html",
         {
-            "request": request,
             "results": results,
             "cache_age": cache_age or "just now",
             "dup_summary": dup_summary,
@@ -266,9 +266,9 @@ def health_summary(request: Request):
     health = service.get_health_summary()
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/health_widget.html",
         {
-            "request": request,
             "health": health
         }
     )
@@ -289,8 +289,9 @@ def stop_maintenance_action(request: Request):
     maint_status = runner.get_status_dict()
 
     return templates.TemplateResponse(
+        request,
         "components/global_operation_banner.html",
-        {"request": request, "status": status, "maint_status": maint_status}
+        {"status": status, "maint_status": maint_status}
     )
 
 
@@ -356,9 +357,9 @@ def action_history(
     time_format = get_time_format()
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/action_history.html",
         {
-            "request": request,
             "entries": entries,
             "time_format": time_format,
             "total_count": total_count,
@@ -393,8 +394,9 @@ def restore_plexcached(
 
         audit_results = service.run_full_audit()
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
-            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+            {"action_result": result, "results": audit_results, "dry_run": True}
         )
 
     # Async path - run in background
@@ -440,8 +442,9 @@ def delete_plexcached(
 
         audit_results = service.run_full_audit()
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
-            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+            {"action_result": result, "results": audit_results, "dry_run": True}
         )
 
     # Async path
@@ -485,8 +488,9 @@ def repair_plexcached(
 
         audit_results = service.run_full_audit()
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
-            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+            {"action_result": result, "results": audit_results, "dry_run": True}
         )
 
     # Async path
@@ -530,8 +534,9 @@ def delete_extensionless(
 
         audit_results = service.run_full_audit()
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
-            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+            {"action_result": result, "results": audit_results, "dry_run": True}
         )
 
     # Async path
@@ -570,8 +575,9 @@ def fix_with_backup(
         result = service.fix_with_backup(paths, dry_run=True)
         audit_results = service.run_full_audit()
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
-            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+            {"action_result": result, "results": audit_results, "dry_run": True}
         )
 
     max_workers = _get_max_workers()
@@ -601,8 +607,9 @@ def sync_to_array(
         result = service.sync_to_array(paths, dry_run=True)
         audit_results = service.run_full_audit()
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
-            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+            {"action_result": result, "results": audit_results, "dry_run": True}
         )
 
     max_workers = _get_max_workers()
@@ -657,8 +664,9 @@ def protect_with_backup(
         result = service.protect_with_backup(paths, dry_run=True)
         audit_results = service.run_full_audit()
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
-            {"request": request, "action_result": result, "results": audit_results, "dry_run": True}
+            {"action_result": result, "results": audit_results, "dry_run": True}
         )
 
     max_workers = _get_max_workers()
@@ -695,9 +703,9 @@ def add_to_exclude(
     audit_results = service.run_full_audit()
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/action_result.html",
         {
-            "request": request,
             "action_result": result,
             "results": audit_results,
             "dry_run": dry_run
@@ -722,9 +730,9 @@ def clean_exclude(
     audit_results = service.run_full_audit()
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/action_result.html",
         {
-            "request": request,
             "action_result": result,
             "results": audit_results,
             "dry_run": dry_run
@@ -749,9 +757,9 @@ def clean_timestamps(
     audit_results = service.run_full_audit()
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/action_result.html",
         {
-            "request": request,
             "action_result": result,
             "results": audit_results,
             "dry_run": dry_run
@@ -779,9 +787,9 @@ def fix_timestamps(
     audit_results = service.run_full_audit()
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/action_result.html",
         {
-            "request": request,
             "action_result": result,
             "results": audit_results,
             "dry_run": dry_run
@@ -808,9 +816,9 @@ def resolve_duplicate(
     audit_results = service.run_full_audit()
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/action_result.html",
         {
-            "request": request,
             "action_result": result,
             "results": audit_results,
             "dry_run": dry_run
@@ -909,9 +917,9 @@ def get_duplicates(request: Request, show_ignored: bool = Query(default=False)):
     )
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/duplicate_card.html",
         {
-            "request": request,
             "scan_results": results,
             "arr_configured": arr_configured,
             "ignored_count": len(ignores),
@@ -975,9 +983,9 @@ def delete_duplicates(
         else:
             result = service.delete_files(paths=paths, dry_run=True)
         return templates.TemplateResponse(
+            request,
             "maintenance/partials/action_result.html",
             {
-                "request": request,
                 "action_result": result,
                 "results": _get_cached_audit_results()[0],
                 "dry_run": True,
@@ -1011,9 +1019,9 @@ def preview_restore_plexcached(request: Request):
     result = service.restore_all_plexcached(dry_run=True)
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/preview_result.html",
         {
-            "request": request,
             "action": "Restore .plexcached Backups",
             "result": result
         }
@@ -1028,9 +1036,9 @@ def preview_clean_exclude(request: Request):
     stale_entries = list(service.get_exclude_files() - service.get_cache_files())[:50]
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/preview_result.html",
         {
-            "request": request,
             "action": "Clean Stale Exclude Entries",
             "result": result,
             "items": stale_entries
@@ -1046,9 +1054,9 @@ def preview_clean_timestamps(request: Request):
     stale_entries = list(service.get_timestamp_files() - service.get_cache_files())[:50]
 
     return templates.TemplateResponse(
+        request,
         "maintenance/partials/preview_result.html",
         {
-            "request": request,
             "action": "Clean Stale Timestamp Entries",
             "result": result,
             "items": stale_entries

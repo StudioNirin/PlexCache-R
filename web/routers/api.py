@@ -26,7 +26,8 @@ router = APIRouter()
 def _render_alert(request: Request, type: str, message: str) -> str:
     """Render alert partial to string for HTML concatenation."""
     return templates.TemplateResponse(
-        "partials/alert.html", {"request": request, "type": type, "message": message}
+        request,
+        "partials/alert.html", {"type": type, "message": message}
     ).body.decode()
 
 
@@ -131,9 +132,9 @@ def dashboard_stats_content(request: Request):
     stats, cache_age = _get_dashboard_stats_data(use_cache=True)
 
     return templates.TemplateResponse(
+        request,
         "partials/dashboard_stats_container.html",
         {
-            "request": request,
             "stats": stats,
             "cache_age": cache_age
         }
@@ -146,9 +147,9 @@ def dashboard_stats(request: Request):
     stats, _ = _get_dashboard_stats_data(use_cache=True)
 
     return templates.TemplateResponse(
+        request,
         "partials/dashboard_stats.html",
         {
-            "request": request,
             "stats": stats
         }
     )
@@ -210,9 +211,9 @@ def cache_files_table(
     eviction_enabled = settings.get("cache_eviction_mode", "none") != "none"
 
     return templates.TemplateResponse(
+        request,
         "cache/partials/file_table.html",
         {
-            "request": request,
             "files": files_data,
             "source_filter": source,
             "search": search,
@@ -232,8 +233,8 @@ def evict_file(request: Request, file_path: str):
     # URL decode the path and validate
     decoded_path = unquote(file_path)
     if not decoded_path or not decoded_path.startswith("/"):
-        return templates.TemplateResponse("partials/alert.html", {
-            "request": request, "type": "error", "message": "Invalid file path"
+        return templates.TemplateResponse(request, "partials/alert.html", {
+            "type": "error", "message": "Invalid file path"
         })
 
     result = cache_service.evict_file(decoded_path)
@@ -244,8 +245,8 @@ def evict_file(request: Request, file_path: str):
         return HTMLResponse(alert + "<script>htmx.trigger('#cache-table-body', 'refresh');</script>")
     else:
         message = result.get("message", "Eviction failed")
-        return templates.TemplateResponse("partials/alert.html", {
-            "request": request, "type": "error", "message": message
+        return templates.TemplateResponse(request, "partials/alert.html", {
+            "type": "error", "message": message
         })
 
 
@@ -257,8 +258,8 @@ def evict_bulk(request: Request, form_data: ImmutableMultiDict = Depends(parse_f
     paths = form_data.getlist("paths")
 
     if not paths:
-        return templates.TemplateResponse("partials/alert.html", {
-            "request": request, "type": "warning", "message": "No files selected"
+        return templates.TemplateResponse(request, "partials/alert.html", {
+            "type": "warning", "message": "No files selected"
         })
 
     # URL decode paths
@@ -280,8 +281,8 @@ def evict_bulk(request: Request, form_data: ImmutableMultiDict = Depends(parse_f
         </script>""")
     else:
         errors_str = "; ".join(result["errors"][:3])
-        return templates.TemplateResponse("partials/alert.html", {
-            "request": request, "type": "error",
+        return templates.TemplateResponse(request, "partials/alert.html", {
+            "type": "error",
             "message": f"Failed to evict files: {errors_str}"
         })
 
@@ -320,9 +321,9 @@ def save_schedule_settings(request: Request, form_data: ImmutableMultiDict = Dep
         ''')
     else:
         return templates.TemplateResponse(
+            request,
             "partials/alert.html",
             {
-                "request": request,
                 "type": "error",
                 "message": "Failed to save schedule settings"
             }
@@ -346,9 +347,9 @@ def cache_storage_stats(request: Request, expiring_within: int = 7):
     drive_details = cache_service.get_drive_details(expiring_within_days=expiring_within)
 
     return templates.TemplateResponse(
+        request,
         "cache/partials/storage_stats.html",
         {
-            "request": request,
             "data": drive_details
         }
     )
@@ -389,9 +390,9 @@ def cache_priorities_content(
     report_data["files"] = files
 
     return templates.TemplateResponse(
+        request,
         "cache/partials/priorities_content.html",
         {
-            "request": request,
             "data": report_data,
             "eviction_enabled": eviction_enabled,
             "sort_by": sort,
@@ -411,9 +412,9 @@ def simulate_eviction(request: Request, threshold: int = 95):
     result = cache_service.simulate_eviction(threshold)
 
     return templates.TemplateResponse(
+        request,
         "cache/partials/eviction_simulation.html",
         {
-            "request": request,
             "threshold": threshold,
             "result": result
         }
@@ -544,14 +545,16 @@ def get_operation_indicator(request: Request):
 
     if is_running:
         return templates.TemplateResponse(
+            request,
             "components/global_operation_indicator.html",
-            {"request": request, "is_running": True}
+            {"is_running": True}
         )
     else:
         # Return empty div that continues polling less frequently
         return templates.TemplateResponse(
+            request,
             "components/global_operation_indicator.html",
-            {"request": request, "is_running": False}
+            {"is_running": False}
         )
 
 
@@ -564,7 +567,7 @@ def get_operation_banner(request: Request):
     status = operation_runner.get_status_dict()
     maint_status = get_maintenance_runner().get_status_dict()
 
-    context = {"request": request, "status": status, "maint_status": maint_status}
+    context = {"status": status, "maint_status": maint_status}
 
     # When both runners are idle, include scheduler countdown info
     if not operation_runner.is_running and not get_maintenance_runner().is_running:
@@ -577,6 +580,7 @@ def get_operation_banner(request: Request):
             }
 
     return templates.TemplateResponse(
+        request,
         "components/global_operation_banner.html",
         context
     )
