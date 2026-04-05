@@ -133,6 +133,8 @@ class OperationRunner:
         self._results_pattern = re.compile(r'Moved to cache:\s*(\d+)|Moved to array:\s*(\d+)')
         # New pattern for real-time completion logs: "  [Action] filename (size)"
         self._action_entry = re.compile(r'^  \[(Cached|Restored|Moved)\]\s+(.+?)(?:\s+\(([^)]+)\))?$')
+        # Copy-start log: "  [Copying] filename (size)" — used to derive active files for external runs
+        self._copying_entry = re.compile(r'^  \[Copying\]\s+(.+?)(?:\s+\(([^)]+)\))?$')
         # Tracker data for user lookups (loaded on operation start)
         self._ondeck_tracker: Dict = {}
         self._watchlist_tracker: Dict = {}
@@ -193,6 +195,7 @@ class OperationRunner:
             "error_messages": [],
             "recent_logs": [],
             "recent_files": [],
+            "active_files": [],
             "started_at": None,
             "dry_run": False,
         }
@@ -228,6 +231,9 @@ class OperationRunner:
             run_lines = lines[run_start_idx:]
             all_logs = []
             current_operation = None
+            # Track [Copying] → [Cached]/[Restored] to derive active files
+            copying_files = {}   # filename → (size_str, size_bytes)
+            completed_files = set()  # filenames that finished
 
             # Detect dry run from early log lines (appears near header)
             for line in run_lines[:20]:
@@ -286,6 +292,14 @@ class OperationRunner:
                     current_operation = None
                     continue
 
+                # Track copy-start: "  [Copying] filename (size)"
+                copy_match = self._copying_entry.match(clean_msg)
+                if copy_match:
+                    fname = copy_match.group(1).strip()
+                    sz_str = copy_match.group(2)
+                    copying_files[fname] = (sz_str or "", self._parse_size(sz_str) if sz_str else 0)
+                    continue
+
                 # Parse file completions: "  [Action] filename (size)"
                 action_match = self._action_entry.match(clean_msg)
                 if action_match:
@@ -293,6 +307,8 @@ class OperationRunner:
                     filename = action_match.group(2).strip()
                     size_str = action_match.group(3)
                     size_bytes = self._parse_size(size_str) if size_str else 0
+
+                    completed_files.add(filename)
 
                     if action == "Cached":
                         result["files_cached_so_far"] += 1
@@ -313,6 +329,13 @@ class OperationRunner:
                         "size": format_bytes(size_bytes) if size_bytes else "",
                         "users": users,
                     })
+
+            # Derive active files: [Copying] started but not yet [Cached]/[Restored]
+            result["active_files"] = [
+                (fname, sz_bytes)
+                for fname, (sz_str, sz_bytes) in copying_files.items()
+                if fname not in completed_files
+            ]
 
             # Trim recent files to last 8
             result["recent_files"] = result["recent_files"][:8]
@@ -403,7 +426,7 @@ class OperationRunner:
             "bytes_display": self._format_bytes(total_bytes) if total_bytes > 0 else "",
             "recent_logs": log_state["recent_logs"],
             "recent_files": log_state["recent_files"],
-            "active_files": [],  # Can't read FileMover state from external process
+            "active_files": log_state["active_files"],
             "message": log_state["current_phase_display"],
         }
 

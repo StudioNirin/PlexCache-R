@@ -4629,6 +4629,10 @@ class FileMover:
         with self._progress_lock:
             self._active_files[thread_id] = (filename, file_size)
 
+        # Log copy start for external process detection (web UI parses this)
+        size_str = format_bytes(file_size) if file_size else ""
+        logging.info(f"  [Copying] {filename} ({size_str})")
+
         try:
             if destination == 'cache':
                 result = self._move_to_cache(src, dest, cache_file_name, original_path, byte_callback=worker_byte_cb)
