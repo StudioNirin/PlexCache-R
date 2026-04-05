@@ -1246,6 +1246,10 @@ textarea {
     overflow-y: auto;
 }
 
+.user-list-scrollable .user-list-header {
+    padding-right: calc(1rem + 15px); /* account for scrollbar width */
+}
+
 #user-list-container {
     position: relative;
 }
