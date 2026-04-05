@@ -1181,12 +1181,13 @@ class WatchlistTracker(JSONTracker):
 
             self._save()
 
-    def is_expired(self, file_path: str, retention_days: int) -> bool:
+    def is_expired(self, file_path: str, retention_days: int, username: str = None) -> bool:
         """Check if a watchlist item has expired based on retention period.
 
         Args:
             file_path: The path to the media file.
             retention_days: Number of days before expiry.
+            username: The user being checked (for accurate log attribution).
 
         Returns:
             True if the item was added more than retention_days ago, False otherwise.
@@ -1220,12 +1221,11 @@ class WatchlistTracker(JSONTracker):
                 age_days = (datetime.now() - watchlisted_at).total_seconds() / 86400
 
                 if age_days > retention_days:
-                    users = entry.get('users', ['unknown'])
                     filename = os.path.basename(file_path)
-                    for user in users:
-                        logging.debug(
-                            f"[USER:{user}] Watchlist retention expired ({age_days:.1f} days > {retention_days} days): {filename}"
-                        )
+                    log_user = username or 'unknown'
+                    logging.debug(
+                        f"[USER:{log_user}] Watchlist retention expired ({age_days:.1f} days > {retention_days} days): {filename}"
+                    )
                     return True
                 return False
             except (ValueError, TypeError) as e:
@@ -1608,18 +1608,22 @@ class OnDeckTracker(JSONTracker):
 
             return len(unseen)
 
-    def is_expired(self, file_path: str, retention_days: float) -> bool:
+    def is_expired(self, file_path: str, retention_days: float,
+                   per_user_days: Optional[Dict[str, int]] = None) -> bool:
         """Check if an OnDeck item has expired based on per-user retention.
 
-        An item only expires when ALL current users have exceeded the retention
-        period. If ANY user is still within retention, the item stays protected.
+        An item only expires when ALL current users have exceeded their
+        retention period. If ANY user is still within retention, the item
+        stays protected. Each user's retention threshold can be overridden
+        via per_user_days.
 
         Args:
             file_path: The path to the media file.
-            retention_days: Number of days before expiry. 0 = disabled.
+            retention_days: Default number of days before expiry. 0 = disabled.
+            per_user_days: Optional dict of {username: days} overrides.
 
         Returns:
-            True if all current users have exceeded retention_days.
+            True if all current users have exceeded their retention threshold.
             Returns False if disabled, no entry exists, no users, or any
             user is still within retention.
         """
@@ -1642,6 +1646,7 @@ class OnDeckTracker(JSONTracker):
             max_age = 0.0
 
             for user in current_users:
+                user_retention = (per_user_days or {}).get(user, retention_days)
                 ufs_str = user_first_seen.get(user)
                 if not ufs_str:
                     # Migration: no per-user data, fall back to file-level first_seen
@@ -1653,10 +1658,10 @@ class OnDeckTracker(JSONTracker):
                     first_seen = datetime.fromisoformat(ufs_str)
                     age_days = (now - first_seen).total_seconds() / 86400
                     max_age = max(max_age, age_days)
-                    if age_days <= retention_days:
+                    if age_days <= user_retention:
                         logging.debug(
                             f"OnDeck retention: {filename} kept alive by {user} "
-                            f"({age_days:.1f} days <= {retention_days} days)"
+                            f"({age_days:.1f} days <= {user_retention} days)"
                         )
                         return False  # This user is still within retention
                 except (ValueError, TypeError):
