@@ -5,6 +5,7 @@ Orchestrates all components and provides the main business logic.
 
 import signal
 import sys
+import threading
 import time
 import logging
 import re
@@ -129,9 +130,11 @@ class PlexCacheApp:
                 return
 
             # Register SIGTERM handler for graceful stop (allows web UI to stop CLI runs)
-            def _sigterm_handler(signum, frame):
-                self.request_stop()
-            signal.signal(signal.SIGTERM, _sigterm_handler)
+            # Only works in main thread — skip when run from web UI's background thread
+            if threading.current_thread() is threading.main_thread():
+                def _sigterm_handler(signum, frame):
+                    self.request_stop()
+                signal.signal(signal.SIGTERM, _sigterm_handler)
 
             # Wait for Unraid mover to finish (prevents race condition)
             if self._is_mover_running():
