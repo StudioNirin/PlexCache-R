@@ -4,7 +4,7 @@ requests>=2.25.0
 tqdm>=4.60.0
 
 # Web UI dependencies
-fastapi>=0.109.0
+fastapi>=0.109.0,<1.0
 uvicorn[standard]>=0.27.0
 jinja2>=3.1.0
 starlette>=0.29.0

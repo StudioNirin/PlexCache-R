@@ -109,6 +109,7 @@ class PlexConfig:
     skip_ondeck: Optional[List[str]] = None
     skip_watchlist: Optional[List[str]] = None
     users: Optional[List[dict]] = None  # User list from settings file
+    plex_db_path: str = ""  # Path to Plex SQLite DB (fallback for tokenless shared users)
 
     def __post_init__(self):
         if self.valid_sections is None:
@@ -378,7 +379,8 @@ class ConfigManager:
         self.plex.valid_sections = self.settings_data['valid_sections']
         self.plex.days_to_monitor = self.settings_data['days_to_monitor']
         self.plex.users_toggle = self.settings_data['users_toggle']
-        
+        self.plex.plex_db_path = self.settings_data.get('plex_db_path', '')
+
         # Load users list first (contains tokens and per-user skip settings)
         self.plex.users = self.settings_data.get('users', [])
 

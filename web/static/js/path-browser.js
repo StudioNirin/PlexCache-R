@@ -24,17 +24,11 @@ var PathBrowser = PathBrowser || {
     },
 
     _attach: function(input) {
-        // Create dropdown container
+        // Create dropdown container (appended to body for fixed positioning)
         var dropdown = document.createElement('div');
         dropdown.className = 'path-browser-dropdown';
         dropdown.style.display = 'none';
-
-        // Position relative to parent
-        var wrapper = input.parentElement;
-        if (getComputedStyle(wrapper).position === 'static') {
-            wrapper.style.position = 'relative';
-        }
-        wrapper.appendChild(dropdown);
+        document.body.appendChild(dropdown);
         PathBrowser._dropdowns.set(input, dropdown);
 
         // Input handler (debounced)
@@ -216,6 +210,12 @@ var PathBrowser = PathBrowser || {
             dropdown.appendChild(item);
         });
 
+        // Position dropdown below input using fixed positioning
+        var rect = input.getBoundingClientRect();
+        dropdown.style.position = 'fixed';
+        dropdown.style.left = rect.left + 'px';
+        dropdown.style.top = rect.bottom + 'px';
+        dropdown.style.width = rect.width + 'px';
         dropdown.style.display = 'block';
     },
 

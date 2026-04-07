@@ -625,11 +625,14 @@ def browse_directory(path: str = Query("")):
 
     Security:
     - Rejects null bytes, control characters, paths > 4096 chars
-    - Pre-resolve jail: must start with /mnt/
-    - Post-resolve jail: resolved path must still start with /mnt/
+    - Pre-resolve jail: must start with an allowed prefix
+    - Post-resolve jail: resolved path must still start with an allowed prefix
     - Only returns directories (not files), skips dotfiles
     - Capped at 100 entries
     """
+    # Allowed path prefixes (media paths + common Docker mount points)
+    ALLOWED_PREFIXES = ("/mnt/", "/config/", "/plex/", "/data/")
+
     # Input validation
     if not path:
         return JSONResponse({"error": "path is required"}, status_code=400)
@@ -639,8 +642,8 @@ def browse_directory(path: str = Query("")):
         return JSONResponse({"error": "invalid characters in path"}, status_code=400)
 
     # Pre-resolve jail check
-    if not path.startswith("/mnt/"):
-        return JSONResponse({"error": "path must be under /mnt/"}, status_code=403)
+    if not any(path.startswith(p) for p in ALLOWED_PREFIXES):
+        return JSONResponse({"error": "path must be under an allowed directory"}, status_code=403)
 
     try:
         resolved = Path(path).resolve()
@@ -649,8 +652,8 @@ def browse_directory(path: str = Query("")):
 
     # Post-resolve jail check (catches ../ traversal and symlink escapes)
     resolved_str = str(resolved)
-    if resolved_str != "/mnt" and not resolved_str.startswith("/mnt/"):
-        return JSONResponse({"error": "path must be under /mnt/"}, status_code=403)
+    if not any(resolved_str == p.rstrip('/') or resolved_str.startswith(p) for p in ALLOWED_PREFIXES):
+        return JSONResponse({"error": "path must be under an allowed directory"}, status_code=403)
 
     if not resolved.is_dir():
         return JSONResponse({"error": "not a directory"}, status_code=404)

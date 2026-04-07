@@ -171,7 +171,8 @@ class PlexManager:
     """Manages Plex server connections and operations."""
 
     def __init__(self, plex_url: str, plex_token: str, retry_limit: int = 3, delay: int = 5,
-                 token_cache_file: Optional[str] = None, rss_cache_file: Optional[str] = None):
+                 token_cache_file: Optional[str] = None, rss_cache_file: Optional[str] = None,
+                 plex_db_path: str = ""):
         self.plex_url = plex_url
         self.plex_token = plex_token
         self.retry_limit = retry_limit
@@ -179,9 +180,12 @@ class PlexManager:
         self.plex = None
         self._token_cache = UserTokenCache(cache_file=token_cache_file, cache_expiry_hours=24)
         self._rss_cache_file = rss_cache_file  # Path to RSS cache file
+        self._plex_db_path = plex_db_path  # Path to Plex SQLite DB (fallback for tokenless shared users)
         self._user_tokens: Dict[str, str] = {}  # username -> token (populated at startup)
         self._token_lock = threading.Lock()  # Protects _user_tokens dict access
         self._user_id_to_name: Dict[str, str] = {}  # user_id (str) -> username (for RSS author lookup)
+        self._user_is_home: Dict[str, bool] = {}  # username -> True if home/managed user (for switchHomeUser fallback)
+        self._user_account_ids: Dict[str, int] = {}  # username -> Plex account ID (for DB fallback)
         self._resolved_uuids: Set[str] = set()  # UUIDs we've tried to resolve (avoid repeated API calls)
         self._newly_discovered_users: List[dict] = []  # Users found on plex.tv but not in settings
         self._users_loaded = False
@@ -238,6 +242,13 @@ class PlexManager:
 
             # Track username even if no token (user may have been auto-added with tracking prefs only)
             settings_usernames.add(username)
+
+            # Track home user status for switchHomeUser fallback (before token check)
+            self._user_is_home[username] = is_local
+
+            # Track account ID for DB fallback
+            if user_id:
+                self._user_account_ids[username] = int(user_id)
 
             # Skip token loading if no token present
             if not token:
@@ -340,12 +351,14 @@ class PlexManager:
                     logging.debug(f"[USER:{username}] Skipping (in skip list)")
                     continue
 
+                is_home = getattr(user, "home", False)
+
                 # Helper to build user info dict
-                def build_user_info(token: str) -> dict:
+                def build_user_info(token: Optional[str]) -> dict:
                     info = {
                         'title': username,
                         'token': token,
-                        'is_local': False,  # account.users() returns shared/friend users
+                        'is_local': bool(is_home),
                         'skip_ondeck': True,
                         'skip_watchlist': True
                     }
@@ -354,6 +367,9 @@ class PlexManager:
                     if user_uuid:
                         info['uuid'] = user_uuid
                     return info
+
+                # Track home user status for switchHomeUser fallback
+                self._user_is_home[username] = bool(is_home)
 
                 # Try to get token from disk cache first
                 cached_token = self._token_cache.get_token(username, machine_id)
@@ -367,23 +383,26 @@ class PlexManager:
                     self._newly_discovered_users.append(build_user_info(cached_token))
                     continue
 
-                # Fetch fresh token from plex.tv
+                # Fetch fresh token from plex.tv (may return None due to Plex API changes)
                 try:
                     self._rate_limited_api_call()
                     token = user.get_token(machine_id)
-                    if token:
-                        if token in skip_users:
-                            logging.debug(f"[USER:{username}] Skipping (token in skip list)")
-                            continue
-                        with self._token_lock:
-                            self._user_tokens[username] = token
-                        self._token_cache.set_token(username, token, machine_id)
-                        logging.debug(f"[USER:{username}] Fetched fresh token")
-                        self._newly_discovered_users.append(build_user_info(token))
-                    else:
-                        logging.debug(f"[USER:{username}] No token available")
                 except Exception as e:
                     _log_api_error(f"get token for {username}", e)
+                    token = None
+
+                if token:
+                    if token in skip_users:
+                        logging.debug(f"[USER:{username}] Skipping (token in skip list)")
+                        continue
+                    with self._token_lock:
+                        self._user_tokens[username] = token
+                    self._token_cache.set_token(username, token, machine_id)
+                    logging.debug(f"[USER:{username}] Fetched fresh token")
+                else:
+                    logging.debug(f"[USER:{username}] No token available (Plex API change)")
+
+                self._newly_discovered_users.append(build_user_info(token))
         except Exception as e:
             _log_api_error("check for new users", e)
 
@@ -548,8 +567,23 @@ class PlexManager:
                     return None, None
 
             if not token:
-                logging.warning(f"[PLEX API] No token available for {username}")
-                return None, None
+                # Try switchHomeUser for home/managed users (no individual token needed)
+                is_home = self._user_is_home.get(username, False)
+                if is_home:
+                    try:
+                        from plexapi.myplex import MyPlexAccount
+                        logging.debug(f"[PLEX API] No token for {username}, trying switchHomeUser...")
+                        self._rate_limited_api_call()
+                        admin_account = MyPlexAccount(token=self.plex_token)
+                        self._rate_limited_api_call()
+                        switched = admin_account.switchHomeUser(username)
+                        return username, PlexServer(self.plex_url, switched.authenticationToken)
+                    except Exception as e:
+                        _log_api_error(f"switchHomeUser for {username}", e)
+                        return None, None
+                else:
+                    logging.warning(f"[PLEX API] No token for shared user {username} — OnDeck unavailable")
+                    return None, None
 
             try:
                 return username, PlexServer(self.plex_url, token)
@@ -620,19 +654,30 @@ class PlexManager:
         """
         on_deck_files: List[OnDeckItem] = []
 
-        # Build list of users to fetch using cached tokens
+        # Build list of users to fetch using cached tokens + home users via switchHomeUser
         users_to_fetch = [None]  # Always include main local account
         if users_toggle:
-            # Use cached tokens - no API calls to plex.tv here
+            added_usernames = set()
+            # Users with cached tokens
             with self._token_lock:
                 token_items = list(self._user_tokens.items())
             for username, token in token_items:
                 # Skip main account (already added as None)
                 if token == self.plex_token:
+                    added_usernames.add(username)  # Prevent re-add in tokenless loop
                     continue
                 # Check skip list
-                if username in skip_ondeck or token in skip_ondeck:
+                if username in skip_ondeck or (token and token in skip_ondeck):
                     logging.info(f"[USER:{username}] Skipping for OnDeck — in skip list")
+                    continue
+                users_to_fetch.append(UserProxy(username))
+                added_usernames.add(username)
+
+            # Also add home users without cached tokens (switchHomeUser handles auth)
+            for username, is_home in self._user_is_home.items():
+                if not is_home or username in added_usernames:
+                    continue
+                if username in skip_ondeck:
                     continue
                 users_to_fetch.append(UserProxy(username))
 
@@ -653,6 +698,35 @@ class PlexManager:
                     on_deck_files.extend(future.result())
                 except Exception as e:
                     logging.error(f"An error occurred while fetching OnDeck media for a user: {e}")
+
+        # DB fallback for shared users with no token
+        if users_toggle and self._plex_db_path:
+            users_with_results = {item.username for item in on_deck_files}
+            db_fallback_users = []
+            for username, is_home in self._user_is_home.items():
+                if is_home or username in users_with_results or username in (skip_ondeck or []):
+                    continue
+                with self._token_lock:
+                    has_token = username in self._user_tokens
+                if not has_token:
+                    db_fallback_users.append(username)
+
+            if db_fallback_users:
+                logging.info(f"[DB FALLBACK] Querying Plex DB for {len(db_fallback_users)} shared user(s): {', '.join(db_fallback_users)}")
+                try:
+                    from core.plex_db import fetch_on_deck_from_db
+                    db_items = fetch_on_deck_from_db(
+                        db_path=self._plex_db_path,
+                        usernames=db_fallback_users,
+                        valid_sections=valid_sections,
+                        days_to_monitor=days_to_monitor,
+                        number_episodes=number_episodes,
+                        user_id_map=self._user_account_ids
+                    )
+                    on_deck_files.extend(db_items)
+                except Exception as e:
+                    logging.error(f"[DB FALLBACK] Failed: {e}")
+                    self._ondeck_data_complete = False
 
         # Log OnDeck items grouped by user (sequential output after parallel fetch)
         items_by_user: Dict[str, List[OnDeckItem]] = {}
@@ -1017,16 +1091,14 @@ class PlexManager:
 
         logging.debug(f"[USER:{current_username}] Fetching watchlist media")
 
-        # Skip users in the skip list (use cached tokens)
+        # Skip users in the skip list
         if user:
             with self._token_lock:
                 token = self._user_tokens.get(current_username)
-            if not token:
-                logging.warning(f"[USER:{current_username}] No cached token; skipping watchlist")
-                return
-            if token in skip_watchlist or current_username in skip_watchlist:
+            if current_username in skip_watchlist or (token and token in skip_watchlist):
                 logging.info(f"[USER:{current_username}] Skipping — in watchlist skip list")
                 return
+            # No token is OK for home users — switchHomeUser path below handles auth
 
         # --- Obtain Plex account instance ---
         try:
@@ -1203,15 +1275,24 @@ class PlexManager:
         users_to_fetch = [None]  # always include the main local account
 
         if users_toggle:
+            added_usernames = set()
             with self._token_lock:
                 token_items = list(self._user_tokens.items())
             for username, token in token_items:
                 if token == self.plex_token:
+                    added_usernames.add(username)  # Prevent re-add in tokenless loop
                     continue
-                if username in skip_watchlist or token in skip_watchlist:
+                if username in skip_watchlist or (token and token in skip_watchlist):
                     logging.info(f"[USER:{username}] Skipping for watchlist — in skip list")
                     continue
                 if username not in home_users:
+                    continue
+                users_to_fetch.append(UserProxy(username))
+                added_usernames.add(username)
+
+            # Also add home users without cached tokens (switchHomeUser handles auth)
+            for username in home_users:
+                if username in added_usernames or username in skip_watchlist:
                     continue
                 users_to_fetch.append(UserProxy(username))
 

@@ -4,42 +4,82 @@
         <span class="user-col">User</span>
         <span class="toggle-col">OnDeck</span>
         <span class="toggle-col">Watchlist</span>
+        <span class="token-status-col">Token</span>
     </div>
     <div class="user-list-body">
         {% for user in users %}
-        <div class="user-row {% if user.is_admin %}user-admin{% endif %}">
-            <span class="user-col">
-                <span class="user-name">{{ user.title }}</span>
-                {% if user.is_admin %}
-                    <span class="badge badge-muted">Admin</span>
-                {% elif user.is_local %}
-                    <span class="badge badge-info">Local</span>
-                {% else %}
-                    <span class="badge badge-warning">Remote</span>
-                {% endif %}
-            </span>
-            <span class="toggle-col">
-                <label class="toggle-switch">
-                    <input type="checkbox" name="include_ondeck_{{ user.title }}" value="on"
-                           {% if not user.skip_ondeck %}checked{% endif %}
-                           {% if user.is_admin %}disabled checked{% endif %}>
-                    <span class="toggle-slider"></span>
-                </label>
-            </span>
-            <span class="toggle-col">
-                <label class="toggle-switch" {% if not user.is_local %}title="Remote users use RSS feed"{% endif %}>
-                    <input type="checkbox" name="include_watchlist_{{ user.title }}" value="on"
-                           {% if not user.skip_watchlist %}checked{% endif %}
-                           {% if user.is_admin %}disabled checked{% endif %}>
-                    <span class="toggle-slider"></span>
-                </label>
-                {% if not user.is_local %}<span class="text-muted" style="font-size: 0.7rem; margin-left: 4px;">RSS</span>{% endif %}
-            </span>
+        <div class="user-row-wrapper">
+            <div class="user-row {% if user.is_admin %}user-admin{% endif %}">
+                <span class="user-col">
+                    <span class="user-name">{{ user.title }}</span>
+                    {% if user.is_admin %}
+                        <span class="badge badge-muted">Admin</span>
+                    {% elif user.is_local %}
+                        <span class="badge badge-info">Local</span>
+                    {% else %}
+                        <span class="badge badge-warning">Remote</span>
+                    {% endif %}
+                </span>
+                <span class="toggle-col">
+                    <label class="toggle-switch">
+                        <input type="checkbox" name="include_ondeck_{{ user.title }}" value="on"
+                               {% if not user.skip_ondeck %}checked{% endif %}
+                               {% if user.is_admin %}disabled checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </span>
+                <span class="toggle-col">
+                    <label class="toggle-switch" {% if not user.is_local %}title="Remote users use RSS feed"{% endif %}>
+                        <input type="checkbox" name="include_watchlist_{{ user.title }}" value="on"
+                               {% if not user.skip_watchlist %}checked{% endif %}
+                               {% if user.is_admin %}disabled checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    {% if not user.is_local %}<span class="text-muted" style="font-size: 0.7rem; margin-left: 4px;">RSS</span>{% endif %}
+                </span>
+                <span class="token-status-col" {% if not user.is_admin %}onclick="toggleTokenPanel({{ loop.index }})"{% endif %}>
+                    {% if user.is_admin %}
+                        {# Admin uses own token — no management needed #}
+                    {% elif user.token %}
+                        <i data-lucide="key-round" class="token-ok" title="Token configured"></i>
+                    {% elif user.is_local %}
+                        <i data-lucide="key-round" class="token-fallback" title="Using Home User fallback (switchHomeUser)"></i>
+                    {% else %}
+                        <i data-lucide="key-round" class="token-missing" title="No token — OnDeck unavailable"></i>
+                    {% endif %}
+                </span>
+            </div>
+            {% if not user.is_admin %}
+            <div class="token-detail-row" id="token-panel-{{ loop.index }}" style="display: none;">
+                <input type="password" name="user_token_{{ user.title }}" id="token-input-{{ loop.index }}"
+                       value="{{ user.token or '' }}"
+                       placeholder="Paste user's Plex token here"
+                       class="form-control token-input">
+                <button type="button" class="btn btn-sm btn-secondary"
+                        onclick="toggleTokenVisibility({{ loop.index }})" title="Show/hide token">
+                    <i data-lucide="eye" style="width: 14px; height: 14px;"></i>
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary"
+                        hx-post="/settings/users/test-token"
+                        hx-include="#token-input-{{ loop.index }}"
+                        hx-target="#token-result-{{ loop.index }}"
+                        hx-swap="innerHTML"
+                        hx-indicator="#token-spinner-{{ loop.index }}">
+                    <span id="token-spinner-{{ loop.index }}" class="htmx-indicator spinner" style="width: 12px; height: 12px;"></span>
+                    <span class="htmx-indicator-hide">Test</span>
+                </button>
+                <span class="token-test-result" id="token-result-{{ loop.index }}">
+                    {% if user.is_local and not user.token %}
+                        <span class="text-muted" style="font-size: 0.75rem;">Home user — works without token</span>
+                    {% endif %}
+                </span>
+            </div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
 </div>
-<div class="form-hint mt-1">Toggle OFF to exclude a user's data from caching. Remote users marked "RSS" use the RSS feed for Watchlist.</div>
+<div class="form-hint mt-1">Toggle OFF to exclude a user's data from caching. Click the token icon to add or update a user's access token.</div>
 {% else %}
 <div class="no-libraries">
     <i data-lucide="users"></i>
@@ -50,4 +90,21 @@
     {% endif %}
 </div>
 {% endif %}
-<script>lucide.createIcons();</script>
+<script>
+var toggleTokenPanel = function(index) {
+    var panel = document.getElementById('token-panel-' + index);
+    if (panel) {
+        panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+        if (panel.style.display === 'flex') {
+            lucide.createIcons({nameAttr: 'data-lucide', node: panel});
+        }
+    }
+};
+var toggleTokenVisibility = function(index) {
+    var input = document.getElementById('token-input-' + index);
+    if (input) {
+        input.type = input.type === 'password' ? 'text' : 'password';
+    }
+};
+lucide.createIcons();
+</script>

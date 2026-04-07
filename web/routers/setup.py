@@ -367,13 +367,11 @@ def setup_step4_post(request: Request, form_data: ImmutableMultiDict = Depends(p
                         if form_data.get(f"user_{username}") != "on":
                             continue
 
-                        # Get user token
+                        # Attempt to get user token (may return None due to Plex API changes)
                         try:
                             token = plex_user.get_token(plex.machineIdentifier)
-                            if token is None:
-                                continue
                         except Exception:
-                            continue
+                            token = None
 
                         # Get user ID and UUID
                         user_id = getattr(plex_user, "id", None)
@@ -402,8 +400,8 @@ def setup_step4_post(request: Request, form_data: ImmutableMultiDict = Depends(p
                     pass
 
     # Build skip lists
-    skip_ondeck = [u["token"] for u in users if u.get("skip_ondeck")]
-    skip_watchlist = [u["token"] for u in users if u.get("is_local") and u.get("skip_watchlist")]
+    skip_ondeck = [u["title"] for u in users if u.get("skip_ondeck")]
+    skip_watchlist = [u["title"] for u in users if u.get("skip_watchlist")]
 
     # Get RSS URL for remote watchlists (optional)
     remote_watchlist_rss_url = form_data.get("remote_watchlist_rss_url", "").strip()
@@ -684,22 +682,15 @@ def prefetch_users(
         try:
             account = plex.myPlexAccount()
             for user in account.users():
-                # Try to get token for this user
-                try:
-                    token = user.get_token(plex.machineIdentifier)
-                    has_access = token is not None
-                except Exception:
-                    has_access = False
-
                 users.append({
                     "title": user.title,
                     "id": getattr(user, "id", None),
                     "thumb": getattr(user, "thumb", ""),
                     "is_home": getattr(user, "home", False),
-                    "has_access": has_access
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.warning(f"Could not prefetch users: {e}")
 
         # Cache the prefetched users
         settings_service._prefetched_users = users
@@ -733,39 +724,42 @@ def prefetch_tokens():
         token_count = 0
 
         try:
+            import logging
             account = plex.myPlexAccount()
             for plex_user in account.users():
                 username = plex_user.title
 
-                # Get user token
+                # Attempt to get user token (may return None due to Plex API changes)
                 try:
                     token = plex_user.get_token(machine_id)
-                    if token:
-                        # Get user ID and UUID
-                        user_id = getattr(plex_user, "id", None)
-                        user_uuid = None
-                        thumb = getattr(plex_user, "thumb", "")
-                        if thumb and "/users/" in thumb:
-                            try:
-                                user_uuid = thumb.split("/users/")[1].split("/")[0]
-                            except (IndexError, AttributeError):
-                                pass
+                except Exception as e:
+                    logging.debug(f"Could not get token for {username}: {e}")
+                    token = None
 
-                        is_home = getattr(plex_user, "home", False)
+                # Get user ID and UUID
+                user_id = getattr(plex_user, "id", None)
+                user_uuid = None
+                thumb = getattr(plex_user, "thumb", "")
+                if thumb and "/users/" in thumb:
+                    try:
+                        user_uuid = thumb.split("/users/")[1].split("/")[0]
+                    except (IndexError, AttributeError):
+                        pass
 
-                        prefetched_tokens[username] = {
-                            "title": username,
-                            "id": user_id,
-                            "uuid": user_uuid,
-                            "token": token,
-                            "is_local": bool(is_home)
-                        }
-                        token_count += 1
-                except Exception:
-                    # Skip users we can't get tokens for
-                    pass
-        except Exception:
-            pass
+                is_home = getattr(plex_user, "home", False)
+
+                prefetched_tokens[username] = {
+                    "title": username,
+                    "id": user_id,
+                    "uuid": user_uuid,
+                    "token": token,
+                    "is_local": bool(is_home)
+                }
+                if token:
+                    token_count += 1
+        except Exception as e:
+            import logging
+            logging.warning(f"Could not prefetch tokens: {e}")
 
         # Store prefetched tokens in setup state
         update_setup_state({"_prefetched_user_tokens": prefetched_tokens})

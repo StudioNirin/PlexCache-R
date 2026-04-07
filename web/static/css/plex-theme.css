@@ -1207,10 +1207,8 @@ textarea {
 
 /* Path Browser Dropdown (autocomplete) */
 .path-browser-dropdown {
-    position: absolute;
-    left: 0;
-    right: 0;
-    z-index: 1000;
+    position: fixed;
+    z-index: 10000;
     max-height: 200px;
     overflow-y: auto;
     background: var(--plex-bg-card);
@@ -1310,6 +1308,77 @@ textarea {
     width: 80px;
     text-align: center;
     flex-shrink: 0;
+}
+
+/* Token status column in user rows */
+.token-status-col {
+    width: 70px;
+    text-align: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+}
+
+.user-list-header .token-status-col {
+    cursor: default;
+}
+
+.token-status-col .token-ok {
+    width: 14px;
+    height: 14px;
+    color: var(--plex-success);
+}
+
+.token-status-col .token-missing {
+    width: 14px;
+    height: 14px;
+    color: var(--plex-error);
+}
+
+.token-status-col .token-fallback {
+    width: 14px;
+    height: 14px;
+    color: var(--plex-info);
+}
+
+/* Token detail row (expandable panel) */
+.token-detail-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.token-detail-row .token-input {
+    flex: 1;
+    font-size: 0.85rem;
+    font-family: monospace;
+    min-width: 0;
+}
+
+.token-detail-row .btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.token-test-result {
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+/* User row wrapper to group row + detail panel */
+.user-row-wrapper:last-child .user-row {
+    border-bottom: none;
+}
+
+.user-row-wrapper:last-child .token-detail-row {
+    border-bottom: none;
 }
 
 /* Toggle Switch (small inline version) */

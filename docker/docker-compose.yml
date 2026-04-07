@@ -56,6 +56,10 @@ services:
       - /mnt/user0:/mnt/user0
       - /mnt/user:/mnt/user:ro
 
+      # Plex database (read-only, for shared user OnDeck without tokens)
+      # Uncomment and update the path to your Plex appdata location
+      # - /mnt/user/appdata/PlexMediaServer/Library/Application Support/Plex Media Server/Plug-in Support/Databases:/plex:ro
+
     ports:
       # Web UI port (container:host)
       - 5757:5757

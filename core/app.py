@@ -462,7 +462,8 @@ class PlexCacheApp:
             retry_limit=self.config_manager.performance.retry_limit,
             delay=self.config_manager.performance.delay,
             token_cache_file=token_cache_file,
-            rss_cache_file=rss_cache_file
+            rss_cache_file=rss_cache_file,
+            plex_db_path=self.config_manager.plex.plex_db_path
         )
 
     def _init_path_modifier(self) -> None:

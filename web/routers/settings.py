@@ -325,16 +325,26 @@ def save_user_settings(request: Request, form_data: ImmutableMultiDict = Depends
         # All users can have watchlist disabled (local via API, remote via RSS filtering)
         user["skip_watchlist"] = not include_watchlist
 
+        # Token paste: update token only if a non-empty value was provided
+        # Empty field preserves existing token (prevents accidental clearing)
+        form_token = form_data.get(f"user_token_{title}", "").strip()
+        if form_token:
+            user["token"] = form_token
+
     # Get toggle settings
     users_toggle = form_data.get("users_toggle") == "on"
     remote_watchlist_toggle = form_data.get("remote_watchlist_toggle") == "on"
     remote_watchlist_rss_url = form_data.get("remote_watchlist_rss_url", "")
+    auth_link_enabled = form_data.get("auth_link_enabled") == "on"
+    plex_db_path = form_data.get("plex_db_path", "").strip()
 
     success = settings_service.save_user_settings(
         users=users,
         users_toggle=users_toggle,
         remote_watchlist_toggle=remote_watchlist_toggle,
-        remote_watchlist_rss_url=remote_watchlist_rss_url
+        remote_watchlist_rss_url=remote_watchlist_rss_url,
+        auth_link_enabled=auth_link_enabled,
+        plex_db_path=plex_db_path
     )
 
     if success:
@@ -349,6 +359,36 @@ def save_user_settings(request: Request, form_data: ImmutableMultiDict = Depends
             "partials/alert.html",
             {"type": "error", "message": "Failed to save settings"}
         )
+
+
+@router.post("/users/test-token", response_class=HTMLResponse)
+def test_user_token(request: Request, form_data: ImmutableMultiDict = Depends(parse_form)):
+    """Test if a user token can connect to the Plex server"""
+    # The token field name varies (user_token_{title}), so grab whichever key starts with user_token_
+    token = ""
+    for key in form_data:
+        if key.startswith("user_token_"):
+            token = form_data.get(key, "").strip()
+            break
+
+    if not token:
+        return HTMLResponse('<span class="text-muted">No token provided</span>')
+
+    settings_service = get_settings_service()
+    plex_settings = settings_service.get_plex_settings()
+    plex_url = plex_settings.get("plex_url", "")
+
+    if not plex_url:
+        return HTMLResponse('<span class="badge badge-error">No Plex URL configured</span>')
+
+    try:
+        from plexapi.server import PlexServer
+        plex = PlexServer(plex_url, token, timeout=10)
+        friendly = plex.friendlyName
+        return HTMLResponse(f'<span class="badge badge-success">Connected to {friendly}</span>')
+    except Exception as e:
+        error = str(e)[:80]
+        return HTMLResponse(f'<span class="badge badge-error">Failed: {error}</span>')
 
 
 @router.get("/paths", response_class=HTMLResponse)

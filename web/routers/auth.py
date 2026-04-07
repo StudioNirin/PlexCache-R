@@ -261,3 +261,153 @@ def logout(request: Request):
     response = RedirectResponse(url="/auth/login", status_code=302)
     response.delete_cookie(key="plexcache_session", path="/")
     return response
+
+
+# --- Self-Service Auth Link (Tier 2b) ---
+
+@router.get("/link", response_class=HTMLResponse)
+def link_page(request: Request):
+    """Render self-service auth page for shared users to link their Plex account."""
+    from web.services import get_settings_service
+    settings_service = get_settings_service()
+    raw = settings_service._load_raw()
+
+    if not raw.get("auth_link_enabled", False):
+        return templates.TemplateResponse(
+            "auth/link.html",
+            {"request": request, "enabled": False, "error": None},
+        )
+
+    return templates.TemplateResponse(
+        "auth/link.html",
+        {"request": request, "enabled": True, "error": None},
+    )
+
+
+@router.post("/link/oauth/start")
+def link_oauth_start():
+    """Start Plex OAuth flow for self-service user token linking."""
+    from web.services import get_settings_service
+    settings_service = get_settings_service()
+
+    # Check feature is enabled
+    raw = settings_service._load_raw()
+    if not raw.get("auth_link_enabled", False):
+        return JSONResponse({"success": False, "error": "Self-service auth is not enabled"})
+
+    # Reuse client ID from settings
+    client_id = raw.get("plexcache_client_id", "")
+    if not client_id:
+        client_id = str(uuid.uuid4())
+        raw["plexcache_client_id"] = client_id
+        settings_service._save_raw(raw)
+
+    headers = {
+        "Accept": "application/json",
+        "X-Plex-Product": PLEXCACHE_PRODUCT_NAME,
+        "X-Plex-Version": PLEXCACHE_PRODUCT_VERSION,
+        "X-Plex-Client-Identifier": client_id,
+    }
+
+    try:
+        response = requests.post(
+            "https://plex.tv/api/v2/pins",
+            headers=headers,
+            data={"strong": "true"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        pin_data = response.json()
+    except requests.RequestException as e:
+        return JSONResponse({"success": False, "error": str(e)})
+
+    pin_id = pin_data.get("id")
+    pin_code = pin_data.get("code")
+
+    if not pin_id or not pin_code:
+        return JSONResponse({"success": False, "error": "Invalid response from Plex"})
+
+    auth_url = (
+        f"https://app.plex.tv/auth#?clientID={client_id}"
+        f"&code={pin_code}"
+        f"&context%5Bdevice%5D%5Bproduct%5D={PLEXCACHE_PRODUCT_NAME}"
+    )
+
+    return JSONResponse({
+        "success": True,
+        "auth_url": auth_url,
+        "client_id": client_id,
+        "pin_id": pin_id,
+    })
+
+
+@router.get("/link/oauth/poll")
+def link_oauth_poll(request: Request, client_id: str = Query(...), pin_id: int = Query(...)):
+    """Poll for OAuth completion, then match user and save token."""
+    from web.services import get_settings_service
+    settings_service = get_settings_service()
+
+    headers = {
+        "Accept": "application/json",
+        "X-Plex-Product": PLEXCACHE_PRODUCT_NAME,
+        "X-Plex-Version": PLEXCACHE_PRODUCT_VERSION,
+        "X-Plex-Client-Identifier": client_id,
+    }
+
+    try:
+        # Check PIN status
+        response = requests.get(
+            f"https://plex.tv/api/v2/pins/{pin_id}",
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        pin_status = response.json()
+
+        auth_token = pin_status.get("authToken")
+        if not auth_token:
+            return JSONResponse({"success": True, "complete": False})
+
+        # Get the Plex username for this token
+        user_response = requests.get(
+            "https://plex.tv/api/v2/user",
+            headers={
+                "Accept": "application/json",
+                "X-Plex-Token": auth_token,
+            },
+            timeout=15,
+        )
+        user_response.raise_for_status()
+        user_data = user_response.json()
+        plex_username = user_data.get("username") or user_data.get("title", "")
+
+        if not plex_username:
+            return JSONResponse({
+                "success": True,
+                "complete": True,
+                "linked": False,
+                "error": "Could not determine Plex username",
+            })
+
+        # Match against configured users and save token
+        saved, matched_name = settings_service.save_user_token_by_username(plex_username, auth_token)
+
+        if saved:
+            logger.info(f"Self-service auth: token saved for user '{matched_name}'")
+            return JSONResponse({
+                "success": True,
+                "complete": True,
+                "linked": True,
+                "username": matched_name,
+            })
+        else:
+            logger.warning(f"Self-service auth: no matching user for '{plex_username}'")
+            return JSONResponse({
+                "success": True,
+                "complete": True,
+                "linked": False,
+                "error": f"'{plex_username}' is not in the PlexCache user list. Ask the server admin to add you first.",
+            })
+
+    except requests.RequestException as e:
+        return JSONResponse({"success": False, "error": str(e)})
