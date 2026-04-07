@@ -1,5 +1,49 @@
 ## Changelog
 
+### v3.2.0 Updates (March 2026)
+
+**Shared User Token Recovery (Plex API Security Change)**
+- Handle Plex removing shared user tokens from the API ([#123](https://github.com/StudioNirin/PlexCache-R/issues/123))
+- Add `switchHomeUser()` fallback for home/managed users without tokens
+- Add manual token paste for shared users in Settings → Users
+- Add self-service auth link (`/auth/link`) — shared users sign in via Plex OAuth to link their token
+- Add Plex database direct read fallback — queries the Plex SQLite DB for shared users with no token (TV next-episode resolution with season boundary handling, partially watched movies)
+- New `core/plex_db.py` module with configurable database path in Settings → Users
+- Note: Plex [announced](https://forums.plex.tv/t/information-related-to-security-vulnerabilities/935164/57) they are reverting the shared token removal, but plan to remove them again in the future
+
+**Authentication**
+- Add authentication system with Plex OAuth and sliding sessions
+- Session persistence across container restarts
+- Configurable session duration with remember-me support
+
+**Extension-Free Caching**
+- Cache all associated files (artwork, NFOs, subtitles, etc.) alongside video files
+- Configurable associated file support with show-root file discovery
+- Prevents array spinups from Plex reading metadata while video is cached
+
+**Multi-Version (4K) Media Support**
+- Cache multiple versions of the same media item (e.g., 1080p + 4K)
+- Sibling file grouping for multi-version directories
+
+**Dashboard & UI Improvements**
+- Fix dashboard watchlist/OnDeck cached counts to show correct values
+- Add cache limit marker and info line to dashboard cache drive card
+- Improve maintenance UI with bulk actions and directory grouping
+- Improve log viewer with clickable level filters, smart auto-scroll, and regex search
+- Unify associated files display with reusable macros and viewport-aware popups
+- Add connection-lost detection to operation banner
+- UI refinements and sidebar version display
+
+**Duplicate Detection**
+- Add duplicate file detection with multi-version awareness
+- Ignore/dismiss functionality for duplicate scan items
+- Expanded detail rows with visual nesting
+
+**Library Management**
+- Improve library path mapping UX for multi-location libraries
+- Consolidate library path edit into single form with bulk save
+- Sync library path mappings with Plex on toggle
+
 ### V3.0 Updates (Feb 2026)
 - Full update to a Dockerised version!
 - This will encompass all the updates that get added duri g the beta release, which is a lot of stuff, and its unlikely we will bother writing out the full list!
