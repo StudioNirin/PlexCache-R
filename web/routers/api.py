@@ -15,7 +15,8 @@ from web.config import templates, PLEXCACHE_PRODUCT_VERSION
 from web.dependencies import parse_form
 from core.system_utils import format_bytes, format_duration, format_cache_age
 from web.services import get_cache_service, get_settings_service, get_operation_runner, get_scheduler_service, ScheduleConfig, get_maintenance_service
-from web.services.operation_runner import load_last_run_summary, OperationRunner
+from core.activity import load_last_run_summary
+from web.services.operation_runner import OperationRunner
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 logger = logging.getLogger(__name__)
@@ -589,7 +590,9 @@ def get_operation_banner(request: Request):
 @router.post("/dismiss-operation")
 def dismiss_operation():
     """Dismiss a completed/failed operation banner, resetting state to idle."""
-    get_operation_runner().dismiss()
+    runner = get_operation_runner()
+    runner.dismiss()
+    runner.dismiss_external()
     return JSONResponse({"ok": True})
 
 

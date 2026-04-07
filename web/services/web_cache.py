@@ -274,7 +274,8 @@ def init_web_cache():
 
     def refresh_dashboard_stats():
         """Refresh dashboard stats - mirrors _get_dashboard_stats in dashboard.py"""
-        from web.services.operation_runner import load_last_run_summary, OperationRunner as _OR
+        from core.activity import load_last_run_summary
+        from web.services.operation_runner import OperationRunner as _OR
 
         cache_svc = get_cache_service()
         settings_svc = get_settings_service()

@@ -723,6 +723,16 @@ footer {
     font-weight: 600;
     white-space: nowrap;
 }
+.di-cli-badge {
+    background: rgba(155, 89, 182, 0.3);
+    color: #bb8fce;
+    font-size: 0.6rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
 
 /* ── Expanded state ──────────────────────────────────── */
 /* Driven by data-di-expanded on the OUTER #global-operation-banner div

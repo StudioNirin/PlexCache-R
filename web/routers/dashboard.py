@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 
 from web.config import templates
 from web.services import get_operation_runner
-from web.services.operation_runner import _get_activity_retention_hours
+from core.activity import _get_activity_retention_hours
 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 router = APIRouter()

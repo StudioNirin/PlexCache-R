@@ -1,6 +1,8 @@
 """Operation routes - run cache operations"""
 
 import logging
+import os
+import signal
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -93,12 +95,26 @@ def stop_operation(request: Request):
     is_htmx = request.headers.get("HX-Request") == "true"
     hx_target = request.headers.get("HX-Target", "")
 
-    if runner.is_running:
+    if runner.state.value == "running":
+        # Web-triggered operation — use normal stop
         success = runner.stop_operation()
         message = "Stop requested - operation will stop after current file" if success else "Failed to stop operation"
     else:
-        success = False
-        message = "No operation is currently running"
+        # Check for external CLI process
+        ext_pid = runner._check_external_process()
+        if ext_pid is not None:
+            try:
+                os.kill(ext_pid, signal.SIGTERM)
+                success = True
+                message = "Stop signal sent to CLI process — will stop after current file"
+                logger.info("Sent SIGTERM to external CLI process (PID %d)", ext_pid)
+            except (ProcessLookupError, PermissionError) as e:
+                success = False
+                message = f"Failed to stop CLI process: {e}"
+                logger.warning("Failed to send SIGTERM to PID %d: %s", ext_pid, e)
+        else:
+            success = False
+            message = "No operation is currently running"
 
     if is_htmx:
         status = runner.get_status_dict()

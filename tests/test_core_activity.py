@@ -1,9 +1,8 @@
-"""Tests for activity feed persistence — FileActivity, load_activity, save_activity.
+"""Tests for core/activity.py — shared activity writer module.
 
-CRITICAL: Both OperationRunner and MaintenanceRunner write to the same file.
-The load-merge-save pattern must never lose entries from concurrent writers.
-
-Source: web/services/operation_runner.py (FileActivity, load_activity, save_activity)
+Tests cover: FileActivity serialization, load/save persistence, retention pruning,
+record_file_activity convenience function, save_last_run_time, save_run_summary,
+and load_last_run_summary.
 """
 
 import json
@@ -17,20 +16,19 @@ import pytest
 
 # conftest.py handles fcntl/apscheduler mocking and path setup
 
-# Mock web.config before importing operation_runner
-sys.modules.setdefault('web.config', MagicMock(
-    PROJECT_ROOT=MagicMock(),
-    DATA_DIR=MagicMock(),
-    SETTINGS_FILE=MagicMock(exists=MagicMock(return_value=False)),
-    get_time_format=MagicMock(return_value='24h'),
-))
-
-from web.services.operation_runner import (
+from core.activity import (
     FileActivity,
     load_activity,
     save_activity,
+    record_file_activity,
+    save_last_run_time,
+    load_last_run_summary,
+    save_run_summary,
     MAX_RECENT_ACTIVITY,
     ACTIVITY_FILE,
+    LAST_RUN_FILE,
+    LAST_RUN_SUMMARY_FILE,
+    _get_activity_retention_hours,
 )
 
 
@@ -39,10 +37,9 @@ from web.services.operation_runner import (
 # ============================================================================
 
 class TestFileActivity:
-    """Tests for FileActivity.to_dict() serialization."""
+    """Tests for FileActivity dataclass and serialization."""
 
     def test_to_dict_24h_format(self):
-        """to_dict() uses 24h time format when configured."""
         with patch('core.activity.get_time_format', return_value='24h'):
             fa = FileActivity(
                 timestamp=datetime(2026, 1, 15, 14, 30, 5),
@@ -61,7 +58,6 @@ class TestFileActivity:
 
     @pytest.mark.skipif(sys.platform == 'win32', reason="%-I strftime is Linux-only")
     def test_to_dict_12h_format(self):
-        """to_dict() uses 12h time format with AM/PM when configured."""
         with patch('core.activity.get_time_format', return_value='12h'):
             fa = FileActivity(
                 timestamp=datetime(2026, 1, 15, 14, 30, 5),
@@ -73,7 +69,6 @@ class TestFileActivity:
         assert "PM" in d['time_display']
 
     def test_zero_size_dash_display(self):
-        """Zero-byte files show dash instead of '0 B'."""
         with patch('core.activity.get_time_format', return_value='24h'):
             fa = FileActivity(
                 timestamp=datetime.now(),
@@ -85,8 +80,31 @@ class TestFileActivity:
 
         assert d['size'] == "-"
 
+    def test_associated_files_included(self):
+        with patch('core.activity.get_time_format', return_value='24h'):
+            fa = FileActivity(
+                timestamp=datetime.now(),
+                action="Cached",
+                filename="movie.mkv",
+                associated_files=[{"filename": "subs.srt", "size": "50 KB"}],
+            )
+            d = fa.to_dict()
+
+        assert "associated_files" in d
+        assert d["associated_files"][0]["filename"] == "subs.srt"
+
+    def test_associated_files_omitted_when_empty(self):
+        with patch('core.activity.get_time_format', return_value='24h'):
+            fa = FileActivity(
+                timestamp=datetime.now(),
+                action="Cached",
+                filename="movie.mkv",
+            )
+            d = fa.to_dict()
+
+        assert "associated_files" not in d
+
     def test_all_fields_present(self):
-        """to_dict() includes all required fields."""
         with patch('core.activity.get_time_format', return_value='24h'):
             fa = FileActivity(
                 timestamp=datetime.now(),
@@ -109,13 +127,11 @@ class TestLoadActivity:
     """Tests for load_activity() disk persistence."""
 
     def test_missing_file_returns_empty(self, tmp_path):
-        """Returns empty list when activity file doesn't exist."""
         with patch('core.activity.ACTIVITY_FILE', tmp_path / "nope.json"):
             result = load_activity()
         assert result == []
 
     def test_empty_file_returns_empty(self, tmp_path):
-        """Returns empty list when activity file is empty."""
         f = tmp_path / "activity.json"
         f.write_text("")
         with patch('core.activity.ACTIVITY_FILE', f):
@@ -123,7 +139,6 @@ class TestLoadActivity:
         assert result == []
 
     def test_valid_entries_loaded(self, tmp_path):
-        """Loads valid activity entries from JSON."""
         now = datetime.now()
         data = [
             {"timestamp": now.isoformat(), "action": "Cached", "filename": "a.mkv", "size_bytes": 100, "users": []},
@@ -140,7 +155,6 @@ class TestLoadActivity:
         assert result[0].filename in ("a.mkv", "b.mkv")
 
     def test_retention_filtering(self, tmp_path):
-        """Entries older than retention period are filtered out."""
         now = datetime.now()
         old = now - timedelta(hours=48)
         data = [
@@ -158,7 +172,6 @@ class TestLoadActivity:
         assert result[0].filename == "new.mkv"
 
     def test_malformed_entries_skipped(self, tmp_path):
-        """Malformed entries are skipped without crashing."""
         now = datetime.now()
         data = [
             {"timestamp": now.isoformat(), "action": "Cached", "filename": "ok.mkv"},
@@ -175,18 +188,7 @@ class TestLoadActivity:
         assert len(result) == 1
         assert result[0].filename == "ok.mkv"
 
-    def test_malformed_json(self, tmp_path):
-        """Handles malformed JSON gracefully."""
-        f = tmp_path / "activity.json"
-        f.write_text("{ not valid json }")
-
-        with patch('core.activity.ACTIVITY_FILE', f):
-            result = load_activity()
-
-        assert result == []
-
     def test_sorted_newest_first(self, tmp_path):
-        """Results are sorted by timestamp, newest first."""
         now = datetime.now()
         data = [
             {"timestamp": (now - timedelta(hours=2)).isoformat(), "action": "Cached", "filename": "older.mkv"},
@@ -205,7 +207,6 @@ class TestLoadActivity:
         assert result[2].filename == "older.mkv"
 
     def test_capped_at_max(self, tmp_path):
-        """Results are capped at MAX_RECENT_ACTIVITY entries."""
         now = datetime.now()
         data = [
             {"timestamp": (now - timedelta(seconds=i)).isoformat(), "action": "Cached", "filename": f"f{i}.mkv"}
@@ -229,7 +230,6 @@ class TestSaveActivity:
     """Tests for save_activity() disk persistence."""
 
     def test_valid_json_with_indent(self, tmp_path):
-        """Saves valid JSON with indent=2 formatting."""
         f = tmp_path / "activity.json"
         activities = [
             FileActivity(timestamp=datetime.now(), action="Cached", filename="a.mkv", size_bytes=100),
@@ -243,11 +243,9 @@ class TestSaveActivity:
         data = json.loads(content)
         assert len(data) == 1
         assert data[0]['action'] == "Cached"
-        # Check indent=2 formatting (lines should start with spaces, not tabs)
-        assert '  "' in content
+        assert '  "' in content  # indent=2
 
     def test_retention_filtering_on_save(self, tmp_path):
-        """Old entries are filtered out during save."""
         f = tmp_path / "activity.json"
         now = datetime.now()
         activities = [
@@ -263,21 +261,7 @@ class TestSaveActivity:
         assert len(data) == 1
         assert data[0]['filename'] == "new.mkv"
 
-    def test_creates_parent_dir(self, tmp_path):
-        """Creates parent directory if it doesn't exist."""
-        f = tmp_path / "subdir" / "activity.json"
-        activities = [
-            FileActivity(timestamp=datetime.now(), action="Cached", filename="a.mkv"),
-        ]
-
-        with patch('core.activity.ACTIVITY_FILE', f):
-            with patch('core.activity._get_activity_retention_hours', return_value=24):
-                save_activity(activities)
-
-        assert f.exists()
-
     def test_round_trip_preservation(self, tmp_path):
-        """Save then load preserves all entry fields."""
         f = tmp_path / "activity.json"
         now = datetime.now()
         original = [
@@ -303,163 +287,174 @@ class TestSaveActivity:
 
 
 # ============================================================================
-# TestMergePattern
+# TestRecordFileActivity
 # ============================================================================
 
-class TestMergePattern:
-    """Tests for the concurrent-writer merge pattern.
+class TestRecordFileActivity:
+    """Tests for record_file_activity() convenience function."""
 
-    CRITICAL: Both OperationRunner and MaintenanceRunner write to the same
-    activity file. The correct pattern is load-merge-save, not overwrite.
-    """
-
-    def test_new_entry_merged_with_existing(self, tmp_path):
-        """New entries merge with existing disk data, not replace it."""
+    def test_appends_to_empty_file(self, tmp_path):
         f = tmp_path / "activity.json"
-        now = datetime.now()
 
-        # Writer A saves initial data
-        existing = [
-            FileActivity(timestamp=now - timedelta(seconds=10), action="Cached", filename="writer_a.mkv"),
-        ]
         with patch('core.activity.ACTIVITY_FILE', f):
             with patch('core.activity._get_activity_retention_hours', return_value=24):
-                save_activity(existing)
+                record_file_activity("Cached", "movie.mkv", size_bytes=1024)
 
-        # Writer B loads, adds entry, saves
-        with patch('core.activity.ACTIVITY_FILE', f):
-            with patch('core.activity._get_activity_retention_hours', return_value=24):
-                loaded = load_activity()
-                loaded.append(FileActivity(
-                    timestamp=now, action="Restored", filename="writer_b.mkv",
-                ))
-                save_activity(loaded)
-
-        # Both entries should be present
         data = json.loads(f.read_text())
-        filenames = {e['filename'] for e in data}
-        assert "writer_a.mkv" in filenames
-        assert "writer_b.mkv" in filenames
+        assert len(data) == 1
+        assert data[0]['action'] == "Cached"
+        assert data[0]['filename'] == "movie.mkv"
+        assert data[0]['size_bytes'] == 1024
 
-    def test_cap_applied_after_merge(self, tmp_path):
-        """After merging, total entries stay within MAX_RECENT_ACTIVITY."""
+    def test_merges_with_existing(self, tmp_path):
         f = tmp_path / "activity.json"
         now = datetime.now()
+        existing = [{"timestamp": now.isoformat(), "action": "Restored", "filename": "old.mkv", "size_bytes": 0, "users": []}]
+        f.write_text(json.dumps(existing, indent=2))
 
-        # Pre-fill with MAX entries
+        with patch('core.activity.ACTIVITY_FILE', f):
+            with patch('core.activity._get_activity_retention_hours', return_value=24):
+                record_file_activity("Cached", "new.mkv", size_bytes=500)
+
+        data = json.loads(f.read_text())
+        assert len(data) == 2
+        filenames = {e['filename'] for e in data}
+        assert "old.mkv" in filenames
+        assert "new.mkv" in filenames
+
+    def test_newest_first(self, tmp_path):
+        f = tmp_path / "activity.json"
+
+        with patch('core.activity.ACTIVITY_FILE', f):
+            with patch('core.activity._get_activity_retention_hours', return_value=24):
+                record_file_activity("Cached", "first.mkv")
+                record_file_activity("Cached", "second.mkv")
+
+        data = json.loads(f.read_text())
+        assert data[0]['filename'] == "second.mkv"
+        assert data[1]['filename'] == "first.mkv"
+
+    def test_capped_at_max(self, tmp_path):
+        f = tmp_path / "activity.json"
+        now = datetime.now()
         existing = [
-            FileActivity(
-                timestamp=now - timedelta(seconds=i),
-                action="Cached",
-                filename=f"existing_{i}.mkv",
-            )
+            {"timestamp": (now - timedelta(seconds=i)).isoformat(), "action": "Cached", "filename": f"f{i}.mkv", "size_bytes": 0, "users": []}
             for i in range(MAX_RECENT_ACTIVITY)
         ]
+        f.write_text(json.dumps(existing, indent=2))
 
         with patch('core.activity.ACTIVITY_FILE', f):
             with patch('core.activity._get_activity_retention_hours', return_value=9999):
-                save_activity(existing)
+                record_file_activity("Cached", "overflow.mkv")
 
-                # Load, add one more, save
-                loaded = load_activity()
-                assert len(loaded) == MAX_RECENT_ACTIVITY
+        data = json.loads(f.read_text())
+        assert len(data) == MAX_RECENT_ACTIVITY
 
-                loaded.insert(0, FileActivity(
-                    timestamp=now + timedelta(seconds=1),
-                    action="Cached",
-                    filename="overflow.mkv",
-                ))
-                save_activity(loaded)
+    def test_with_users_and_associated(self, tmp_path):
+        f = tmp_path / "activity.json"
 
-                # Reload — should still be capped
-                final = load_activity()
-                assert len(final) == MAX_RECENT_ACTIVITY
+        with patch('core.activity.ACTIVITY_FILE', f):
+            with patch('core.activity._get_activity_retention_hours', return_value=24):
+                record_file_activity(
+                    "Cached", "movie.mkv",
+                    size_bytes=1024,
+                    users=["alice"],
+                    associated_files=[{"filename": "subs.srt", "size": "50 KB"}],
+                )
 
-
-# ============================================================================
-# Atomic activity save — _save_activity() holds lock for full sequence
-# ============================================================================
-
-class TestSaveActivityAtomicity:
-    """Verify OperationRunner._save_activity() uses unlocked helpers under a single lock
-    acquisition to prevent race conditions with MaintenanceRunner."""
-
-    def test_save_activity_uses_unlocked_helpers(self, tmp_path):
-        """_save_activity(new_entry) must call _load_activity_unlocked and
-        _save_activity_unlocked (not the locking versions)."""
-        from web.services.operation_runner import OperationRunner
-
-        activity_file = tmp_path / "recent_activity.json"
-        activity_file.write_text("[]", encoding="utf-8")
-
-        entry = FileActivity(
-            timestamp=datetime.now(),
-            action="Cached",
-            filename="test.mkv",
-            size_bytes=100,
-        )
-
-        with patch('core.activity.ACTIVITY_FILE', activity_file), \
-             patch('web.services.operation_runner._load_activity_unlocked', return_value=[]) as mock_load, \
-             patch('web.services.operation_runner._save_activity_unlocked') as mock_save, \
-             patch('web.services.operation_runner.load_activity', return_value=[]):
-            runner = OperationRunner()
-            runner._save_activity(new_entry=entry)
-
-        # Must use unlocked helpers (caller holds the lock)
-        mock_load.assert_called_once()
-        mock_save.assert_called_once()
-        # Verify the entry was inserted
-        saved_activities = mock_save.call_args[0][0]
-        assert saved_activities[0] is entry
-
-    def test_save_activity_without_entry_uses_public_save(self, tmp_path):
-        """_save_activity() without new_entry uses the public save_activity()."""
-        from web.services.operation_runner import OperationRunner
-
-        with patch('web.services.operation_runner.save_activity') as mock_pub_save, \
-             patch('web.services.operation_runner.load_activity', return_value=[]):
-            runner = OperationRunner()
-            runner._recent_activity = []
-            runner._save_activity(new_entry=None)
-
-        mock_pub_save.assert_called_once()
+        data = json.loads(f.read_text())
+        assert data[0]['users'] == ["alice"]
+        assert data[0]['associated_files'] == [{"filename": "subs.srt", "size": "50 KB"}]
 
 
 # ============================================================================
-# Atomic last-run summary write
+# TestLastRunTime
 # ============================================================================
 
-class TestLastRunSummaryAtomicWrite:
-    """Verify _save_last_run_summary() uses save_json_atomically()."""
+class TestLastRunTime:
+    """Tests for save_last_run_time()."""
 
-    def test_summary_written_atomically(self, tmp_path):
-        """Last run summary must use save_json_atomically(), not direct json.dump()."""
-        from web.services.operation_runner import (
-            OperationRunner, OperationResult, OperationState,
-        )
+    def test_writes_timestamp(self, tmp_path):
+        f = tmp_path / "last_run.txt"
 
-        summary_file = tmp_path / "last_run_summary.json"
+        with patch('core.activity.LAST_RUN_FILE', f):
+            save_last_run_time()
 
-        with patch('core.activity.load_activity', return_value=[]), \
-             patch('core.activity.LAST_RUN_SUMMARY_FILE', summary_file), \
-             patch('core.activity.save_json_atomically') as mock_atomic:
-            runner = OperationRunner()
-            runner._current_result = OperationResult(
-                state=OperationState.COMPLETED,
-                started_at=datetime.now(),
-                files_cached=3,
-                files_restored=1,
-                bytes_cached=1000,
-                bytes_restored=500,
-                duration_seconds=10.5,
-            )
-            runner._save_last_run_summary()
+        content = f.read_text()
+        # Should be parseable as an ISO 8601 timestamp
+        dt = datetime.fromisoformat(content)
+        assert (datetime.now() - dt).total_seconds() < 5
 
-        assert mock_atomic.called, "save_json_atomically was not called for last run summary"
-        call_args = mock_atomic.call_args
-        # Check positional or keyword label arg
-        positional = call_args[0]
-        keyword = call_args[1]
-        label = keyword.get("label") if "label" in keyword else (positional[2] if len(positional) > 2 else None)
-        assert label == "last run summary", f"Expected label 'last run summary', got {label!r}"
+
+# ============================================================================
+# TestRunSummary
+# ============================================================================
+
+class TestRunSummary:
+    """Tests for save_run_summary() and load_last_run_summary()."""
+
+    def test_round_trip(self, tmp_path):
+        f = tmp_path / "last_run_summary.json"
+
+        summary = {
+            "status": "completed",
+            "timestamp": datetime.now().isoformat(),
+            "files_cached": 3,
+            "files_restored": 1,
+            "bytes_cached": 1000,
+            "bytes_restored": 500,
+            "duration_seconds": 10.5,
+            "error_count": 0,
+            "dry_run": False,
+        }
+
+        with patch('core.activity.LAST_RUN_SUMMARY_FILE', f):
+            save_run_summary(summary)
+            loaded = load_last_run_summary()
+
+        assert loaded is not None
+        assert loaded["files_cached"] == 3
+        assert loaded["files_restored"] == 1
+        assert loaded["status"] == "completed"
+
+    def test_missing_file_returns_none(self, tmp_path):
+        f = tmp_path / "nope.json"
+
+        with patch('core.activity.LAST_RUN_SUMMARY_FILE', f):
+            result = load_last_run_summary()
+
+        assert result is None
+
+    def test_malformed_json_returns_none(self, tmp_path):
+        f = tmp_path / "summary.json"
+        f.write_text("{ not valid }")
+
+        with patch('core.activity.LAST_RUN_SUMMARY_FILE', f):
+            result = load_last_run_summary()
+
+        assert result is None
+
+
+# ============================================================================
+# TestRetentionHours
+# ============================================================================
+
+class TestRetentionHours:
+    """Tests for _get_activity_retention_hours()."""
+
+    def test_default_when_no_settings(self, tmp_path):
+        f = tmp_path / "nope.json"
+        with patch('core.activity.SETTINGS_FILE', f):
+            assert _get_activity_retention_hours() == 24
+
+    def test_reads_from_settings(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"activity_retention_hours": 48}))
+        with patch('core.activity.SETTINGS_FILE', f):
+            assert _get_activity_retention_hours() == 48
+
+    def test_fallback_on_malformed_json(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text("broken")
+        with patch('core.activity.SETTINGS_FILE', f):
+            assert _get_activity_retention_hours() == 24

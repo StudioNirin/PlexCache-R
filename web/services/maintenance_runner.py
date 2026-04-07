@@ -639,10 +639,7 @@ class MaintenanceRunner:
         if not label:
             return
 
-        from web.services.operation_runner import FileActivity, load_activity, save_activity, MAX_RECENT_ACTIVITY
-
-        now = datetime.now()
-        new_entries = []
+        from core.activity import record_file_activity
 
         for path in action_result.affected_paths:
             filename = os.path.basename(path)
@@ -652,18 +649,11 @@ class MaintenanceRunner:
             except OSError:
                 size_bytes = 0
 
-            new_entries.append(FileActivity(
-                timestamp=now,
+            record_file_activity(
                 action=label,
                 filename=filename,
                 size_bytes=size_bytes,
-            ))
-
-        # Load existing, prepend new, cap, save
-        activities = load_activity()
-        activities = new_entries + activities
-        activities = activities[:MAX_RECENT_ACTIVITY]
-        save_activity(activities)
+            )
 
     def _record_history(self, action_name: str, action_result: Optional[ActionResult]):
         """Record this action to the persistent maintenance history."""

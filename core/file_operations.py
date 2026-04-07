@@ -4038,7 +4038,8 @@ class FileMover:
                  use_symlinks: bool = False,
                  bytes_progress_callback: Optional[Callable[[int, int], None]] = None,
                  ondeck_tracker: Optional['OnDeckTracker'] = None,
-                 watchlist_tracker: Optional['WatchlistTracker'] = None):
+                 watchlist_tracker: Optional['WatchlistTracker'] = None,
+                 file_activity_callback: Optional[Callable] = None):
         self.real_source = real_source
         self.cache_dir = cache_dir
         self.is_unraid = is_unraid
@@ -4075,6 +4076,9 @@ class FileMover:
         # Track successful array moves for deferred exclude list cleanup (issue #13)
         self._successful_array_moves: List[str] = []
         self._successful_array_moves_lock = threading.Lock()
+        # Optional callback for recording per-file activity to shared activity feed
+        # Signature: callback(action: str, filename: str, size_bytes: int)
+        self._file_activity_callback = file_activity_callback
 
     def move_media_files(self, files: List[str], destination: str,
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
@@ -4625,6 +4629,10 @@ class FileMover:
         with self._progress_lock:
             self._active_files[thread_id] = (filename, file_size)
 
+        # Log copy start for external process detection (web UI parses this)
+        size_str = format_bytes(file_size) if file_size else ""
+        logging.info(f"  [Copying] {filename} ({size_str})")
+
         try:
             if destination == 'cache':
                 result = self._move_to_cache(src, dest, cache_file_name, original_path, byte_callback=worker_byte_cb)
@@ -4875,6 +4883,10 @@ class FileMover:
             logging.info(f"  [Cached] {display_name} ({size_str})")
             with get_console_lock():
                 tqdm.write(f"Successfully cached: {display_name} ({size_str})")
+
+            # Record to shared activity feed (CLI runs)
+            if self._file_activity_callback:
+                self._file_activity_callback("Cached", display_name, file_size)
 
             # Mark that file activity occurred (for notification level filtering)
             mark_file_activity()
@@ -5294,6 +5306,14 @@ class FileMover:
                 except OSError:
                     size_str = "-"
                 logging.info(f"  [{operation_type}] {display_name} ({size_str})")
+
+                # Record to shared activity feed (CLI runs)
+                if self._file_activity_callback:
+                    try:
+                        cb_size = os.path.getsize(array_file)
+                    except OSError:
+                        cb_size = 0
+                    self._file_activity_callback(operation_type, display_name, cb_size)
 
                 # Mark that file activity occurred (for notification level filtering)
                 from core.logging_config import mark_file_activity

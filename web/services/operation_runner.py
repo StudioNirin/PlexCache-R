@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -12,50 +13,32 @@ from pathlib import Path
 from typing import Optional, List, Dict, Callable
 from dataclasses import dataclass, field
 
-from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
+from web.config import PROJECT_ROOT, DATA_DIR, LOGS_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
 from core.system_utils import format_bytes, format_duration
 from core.file_operations import save_json_atomically
 
-# Activity persistence settings - use DATA_DIR for Docker compatibility
-ACTIVITY_FILE = DATA_DIR / "recent_activity.json"
-LAST_RUN_FILE = DATA_DIR / "last_run.txt"
-LAST_RUN_SUMMARY_FILE = DATA_DIR / "last_run_summary.json"
+# Shared activity module — canonical implementations live in core/activity.py.
+# Re-exported here for backward compatibility with existing consumers.
+from core.activity import (
+    FileActivity,
+    load_activity,
+    save_activity,
+    save_last_run_time,
+    load_last_run_summary,
+    save_run_summary,
+    record_file_activity,
+    MAX_RECENT_ACTIVITY,
+    ACTIVITY_FILE,
+    LAST_RUN_FILE,
+    LAST_RUN_SUMMARY_FILE,
+    _activity_file_lock,
+    _load_activity_unlocked,
+    _save_activity_unlocked,
+    _get_activity_retention_hours,
+    DEFAULT_ACTIVITY_RETENTION_HOURS,
+)
+
 SETTINGS_FILE = CONFIG_SETTINGS_FILE
-DEFAULT_ACTIVITY_RETENTION_HOURS = 24
-_activity_file_lock = threading.Lock()
-
-
-def save_last_run_time():
-    """Save the current timestamp as the last run time."""
-    try:
-        LAST_RUN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(LAST_RUN_FILE, 'w') as f:
-            f.write(datetime.now().isoformat())
-    except IOError:
-        pass
-
-
-def load_last_run_summary() -> Optional[dict]:
-    """Load the last run summary from disk."""
-    try:
-        if LAST_RUN_SUMMARY_FILE.exists():
-            with open(LAST_RUN_SUMMARY_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        pass
-    return None
-
-
-def _get_activity_retention_hours() -> int:
-    """Load activity retention hours from settings, with fallback to default."""
-    try:
-        if SETTINGS_FILE.exists():
-            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-            return settings.get('activity_retention_hours', DEFAULT_ACTIVITY_RETENTION_HOURS)
-    except (json.JSONDecodeError, IOError):
-        pass
-    return DEFAULT_ACTIVITY_RETENTION_HOURS
 
 
 class OperationState(str, Enum):
@@ -64,135 +47,6 @@ class OperationState(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-
-
-@dataclass
-class FileActivity:
-    """Represents a file operation"""
-    timestamp: datetime
-    action: str  # "Cached", "Restored", "Protected", "Moved to Array", etc.
-    filename: str
-    size_bytes: int = 0
-    users: List[str] = field(default_factory=list)
-    associated_files: List[dict] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        fmt = get_time_format()
-        if fmt == "12h":
-            time_display = self.timestamp.strftime("%-I:%M:%S %p")
-        else:
-            time_display = self.timestamp.strftime("%H:%M:%S")
-
-        # Date grouping fields (computed at render time, not stored on disk)
-        today = datetime.now().date()
-        entry_date = self.timestamp.date()
-        if entry_date == today:
-            date_display = "Today"
-        elif entry_date == today - timedelta(days=1):
-            date_display = "Yesterday"
-        else:
-            date_display = self.timestamp.strftime("%a, %b ") + str(self.timestamp.day)
-
-        result = {
-            "timestamp": self.timestamp.isoformat(),
-            "time_display": time_display,
-            "date_key": entry_date.isoformat(),
-            "date_display": date_display,
-            "action": self.action,
-            "filename": self.filename,
-            "size": self._format_size(self.size_bytes),
-            "users": self.users,
-        }
-        if self.associated_files:
-            result["associated_files"] = self.associated_files
-        return result
-
-    def _format_size(self, size_bytes: int) -> str:
-        if size_bytes == 0:
-            return "-"
-        return format_bytes(size_bytes)
-
-
-MAX_RECENT_ACTIVITY = 500
-
-
-def _load_activity_unlocked() -> List[FileActivity]:
-    """Load activity from disk without acquiring _activity_file_lock.
-
-    Caller MUST hold _activity_file_lock.
-    """
-    try:
-        if not ACTIVITY_FILE.exists():
-            return []
-        with open(ACTIVITY_FILE, 'r') as f:
-            data = json.load(f)
-
-        cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
-        activities = []
-
-        for item in data:
-            try:
-                timestamp = datetime.fromisoformat(item['timestamp'])
-                if timestamp > cutoff:
-                    activities.append(FileActivity(
-                        timestamp=timestamp,
-                        action=item['action'],
-                        filename=item['filename'],
-                        size_bytes=item.get('size_bytes', 0),
-                        users=item.get('users', []),
-                        associated_files=item.get('associated_files', [])
-                    ))
-            except (KeyError, ValueError):
-                continue  # Skip malformed entries
-
-        activities.sort(key=lambda x: x.timestamp, reverse=True)
-        return activities[:MAX_RECENT_ACTIVITY]
-
-    except Exception as e:
-        logging.debug(f"Could not load activity history: {e}")
-        return []
-
-
-def _save_activity_unlocked(activities: List[FileActivity]) -> None:
-    """Save activity to disk without acquiring _activity_file_lock.
-
-    Caller MUST hold _activity_file_lock.
-    """
-    try:
-        ACTIVITY_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-        cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
-
-        data = []
-        for activity in activities:
-            if activity.timestamp > cutoff:
-                entry = {
-                    'timestamp': activity.timestamp.isoformat(),
-                    'action': activity.action,
-                    'filename': activity.filename,
-                    'size_bytes': activity.size_bytes,
-                    'users': activity.users,
-                }
-                if activity.associated_files:
-                    entry['associated_files'] = activity.associated_files
-                data.append(entry)
-
-        save_json_atomically(str(ACTIVITY_FILE), data, label="activity")
-
-    except Exception as e:
-        logging.debug(f"Could not save activity history: {e}")
-
-
-def load_activity() -> List[FileActivity]:
-    """Load activity from disk, filtering out entries older than retention period."""
-    with _activity_file_lock:
-        return _load_activity_unlocked()
-
-
-def save_activity(activities: List[FileActivity]) -> None:
-    """Save activity to disk, filtering out old entries."""
-    with _activity_file_lock:
-        _save_activity_unlocked(activities)
 
 
 @dataclass
@@ -279,9 +133,365 @@ class OperationRunner:
         self._results_pattern = re.compile(r'Moved to cache:\s*(\d+)|Moved to array:\s*(\d+)')
         # New pattern for real-time completion logs: "  [Action] filename (size)"
         self._action_entry = re.compile(r'^  \[(Cached|Restored|Moved)\]\s+(.+?)(?:\s+\(([^)]+)\))?$')
+        # Copy-start log: "  [Copying] filename (size)" — used to derive active files for external runs
+        self._copying_entry = re.compile(r'^  \[Copying\]\s+(.+?)(?:\s+\(([^)]+)\))?$')
         # Tracker data for user lookups (loaded on operation start)
         self._ondeck_tracker: Dict = {}
         self._watchlist_tracker: Dict = {}
+        # External CLI process detection
+        self._lock_file = PROJECT_ROOT / "plexcache.lock"
+        self._log_file = LOGS_DIR / "plexcache_log_latest.log"
+        # Cache parsed external log state between polls (avoids re-parsing entire file)
+        self._external_log_state: Optional[dict] = None
+        # Track external run lifecycle for completion detection
+        self._external_was_running = False
+        self._external_completed_at: Optional[datetime] = None
+        self._external_completed_status: Optional[dict] = None
+
+    # ── External CLI process detection ─────────────────────────────────
+
+    def _check_external_process(self) -> Optional[int]:
+        """Check if an external PlexCache process is running via lock file.
+
+        Returns the PID if a live external process is detected, None otherwise.
+        Only detects processes NOT started by this OperationRunner.
+        """
+        if not self._lock_file.exists():
+            return None
+
+        try:
+            with open(self._lock_file, 'r') as f:
+                pid_str = f.read().strip()
+            if not pid_str:
+                return None
+            pid = int(pid_str)
+
+            # Verify process is actually alive via /proc (Linux/Docker)
+            if os.path.exists(f'/proc/{pid}'):
+                return pid
+        except (ValueError, IOError, OSError):
+            pass
+        return None
+
+    def _parse_external_log(self) -> dict:
+        """Parse the log file to extract progress for an external CLI run.
+
+        Finds the last run header ("=== PlexCache") and parses lines after it
+        using the same phase markers and file operation patterns as the web runner.
+
+        Returns a status dict compatible with the running state format.
+        """
+        result = {
+            "phase": "starting",
+            "current_phase_display": "Starting...",
+            "files_cached_so_far": 0,
+            "files_restored_so_far": 0,
+            "files_to_cache_total": 0,
+            "files_to_restore_total": 0,
+            "bytes_cached_so_far": 0,
+            "bytes_restored_so_far": 0,
+            "last_completed_file": "",
+            "error_count": 0,
+            "error_messages": [],
+            "recent_logs": [],
+            "recent_files": [],
+            "active_files": [],
+            "started_at": None,
+            "dry_run": False,
+        }
+
+        try:
+            if not self._log_file.exists():
+                return result
+
+            # Find the run header by reading backwards in chunks.
+            # Verbose logs can be 600KB+; reading everything every 3s is wasteful.
+            file_size = self._log_file.stat().st_size
+            chunk_size = 256 * 1024  # 256KB chunks
+            header_offset = None
+
+            with open(self._log_file, 'rb') as f:
+                pos = file_size
+                while pos > 0:
+                    read_from = max(0, pos - chunk_size)
+                    f.seek(read_from)
+                    chunk = f.read(pos - read_from)
+                    # Search for last occurrence of header in this chunk
+                    idx = chunk.rfind(b'=== PlexCache')
+                    if idx != -1:
+                        header_offset = read_from + idx
+                        break
+                    # Overlap by 50 bytes to catch headers split across chunks
+                    pos = read_from + 50
+
+            if header_offset is None:
+                return result
+
+            # Read from the header to end of file
+            with open(self._log_file, 'r', encoding='utf-8', errors='replace') as f:
+                f.seek(header_offset)
+                # Back up to start of line
+                if header_offset > 0:
+                    f.seek(header_offset - min(header_offset, 200))
+                    partial = f.read(min(header_offset, 200))
+                    newline_pos = partial.rfind('\n')
+                    if newline_pos != -1:
+                        f.seek(header_offset - min(header_offset, 200) + newline_pos + 1)
+                    else:
+                        f.seek(header_offset)
+                run_lines = f.readlines()
+
+            if not run_lines:
+                return result
+            all_logs = []
+            current_operation = None
+            # Track [Copying] → [Cached]/[Restored] to derive active files
+            copying_files = {}   # filename → (size_str, size_bytes)
+            completed_files = set()  # filenames that finished
+
+            # Detect dry run from early log lines (appears near header)
+            for line in run_lines[:20]:
+                if 'DRY RUN' in line or '--dry-run' in line or 'dry_run' in line:
+                    result["dry_run"] = True
+                    break
+
+            for line in run_lines:
+                line = line.rstrip('\n')
+                if not line.strip():
+                    continue
+
+                # Strip timestamp/level prefix for matching
+                clean_msg = line
+                for sep in (' - INFO - ', ' - DEBUG - ', ' - WARNING - ', ' - ERROR - ', ' - CRITICAL - '):
+                    if sep in line:
+                        clean_msg = line.split(sep, 1)[-1]
+                        break
+
+                all_logs.append(line)
+
+                # Detect errors and capture messages
+                if ' - ERROR - ' in line or ' - CRITICAL - ' in line:
+                    result["error_count"] += 1
+                    if len(result["error_messages"]) < 10:
+                        result["error_messages"].append(clean_msg.strip())
+
+                # Detect phase transitions (reuse same markers)
+                for marker, phase_key, phase_display in self._PHASE_MARKERS:
+                    if marker in clean_msg:
+                        result["phase"] = phase_key
+                        prefix = "Dry Run: " if result["dry_run"] else ""
+                        result["current_phase_display"] = prefix + phase_display
+                        break
+
+                # Extract file count totals
+                m = self._return_header.search(clean_msg) or self._copy_header.search(clean_msg)
+                if m:
+                    result["files_to_restore_total"] += int(m.group(1))
+                    current_operation = "Restored"
+                    continue
+
+                m = self._cache_count_re.search(clean_msg)
+                if m:
+                    result["files_to_cache_total"] = int(m.group(1))
+                    current_operation = "Cached"
+                    continue
+
+                if 'Caching to' in clean_msg or '--- Moving Files ---' in clean_msg:
+                    current_operation = "Cached"
+                    continue
+                if 'Returning to array' in clean_msg or 'Copying to array' in clean_msg:
+                    current_operation = "Restored"
+                    continue
+                if '--- Results ---' in clean_msg:
+                    current_operation = None
+                    continue
+
+                # Track copy-start: "  [Copying] filename (size)"
+                copy_match = self._copying_entry.match(clean_msg)
+                if copy_match:
+                    fname = copy_match.group(1).strip()
+                    sz_str = copy_match.group(2)
+                    copying_files[fname] = (sz_str or "", self._parse_size(sz_str) if sz_str else 0)
+                    continue
+
+                # Parse file completions: "  [Action] filename (size)"
+                action_match = self._action_entry.match(clean_msg)
+                if action_match:
+                    action = action_match.group(1)
+                    filename = action_match.group(2).strip()
+                    size_str = action_match.group(3)
+                    size_bytes = self._parse_size(size_str) if size_str else 0
+
+                    completed_files.add(filename)
+
+                    if action == "Cached":
+                        result["files_cached_so_far"] += 1
+                        result["bytes_cached_so_far"] += size_bytes
+                    elif action in ("Restored", "Moved"):
+                        result["files_restored_so_far"] += 1
+                        result["bytes_restored_so_far"] += size_bytes
+
+                    # Look up users from trackers (same as web runner)
+                    users = []
+                    if action == "Cached":
+                        users = self._get_users_for_file(filename)
+
+                    result["last_completed_file"] = filename
+                    result["recent_files"].insert(0, {
+                        "action": action,
+                        "filename": filename,
+                        "size": format_bytes(size_bytes) if size_bytes else "",
+                        "users": users,
+                    })
+
+            # Derive active files: [Copying] started but not yet [Cached]/[Restored]
+            result["active_files"] = [
+                (fname, sz_bytes)
+                for fname, (sz_str, sz_bytes) in copying_files.items()
+                if fname not in completed_files
+            ]
+
+            # Trim recent files to last 8
+            result["recent_files"] = result["recent_files"][:8]
+            # Last 5 log lines
+            result["recent_logs"] = all_logs[-5:]
+
+            # Try to extract start time from the first log line timestamp
+            if run_lines:
+                first_line = run_lines[0]
+                # Match common timestamp formats: "HH:MM:SS" or "H:MM:SS AM/PM"
+                ts_match = re.match(r'^(\d{1,2}:\d{2}:\d{2}(?:\s*[AP]M)?)', first_line)
+                if ts_match:
+                    ts_str = ts_match.group(1).strip()
+                    for fmt in ('%I:%M:%S %p', '%H:%M:%S'):
+                        try:
+                            t = datetime.strptime(ts_str, fmt)
+                            result["started_at"] = datetime.now().replace(
+                                hour=t.hour, minute=t.minute, second=t.second, microsecond=0
+                            )
+                            break
+                        except ValueError:
+                            continue
+
+        except (IOError, OSError) as e:
+            logging.debug("Error parsing external log: %s", e)
+
+        return result
+
+    def _get_external_status_dict(self, pid: int) -> dict:
+        """Build a status dict for an externally-running CLI process."""
+        log_state = self._parse_external_log()
+        self._external_log_state = log_state
+
+        is_dry_run = log_state["dry_run"]
+
+        # Calculate elapsed time
+        elapsed = 0
+        started_at = log_state.get("started_at")
+        if started_at:
+            elapsed = (datetime.now() - started_at).total_seconds()
+
+        total_files = log_state["files_to_cache_total"] + log_state["files_to_restore_total"]
+        completed_files = log_state["files_cached_so_far"] + log_state["files_restored_so_far"]
+
+        progress_percent = 0
+        if total_files > 0:
+            progress_percent = min(int(completed_files / total_files * 100), 100)
+
+        # ETA
+        eta_display = ""
+        if completed_files > 0 and total_files > 0 and elapsed > 0:
+            avg = elapsed / completed_files
+            remaining = total_files - completed_files
+            eta_display = self._format_duration(avg * remaining)
+
+        # Bytes display
+        total_bytes = log_state["bytes_cached_so_far"] + log_state["bytes_restored_so_far"]
+
+        status = {
+            "state": "running",
+            "is_running": True,
+            "external": True,
+            "external_pid": pid,
+            "dry_run": is_dry_run,
+            "started_at": started_at.isoformat() if started_at else None,
+            "completed_at": None,
+            "duration_seconds": 0,
+            "files_cached": 0,
+            "files_restored": 0,
+            "bytes_cached": 0,
+            "bytes_restored": 0,
+            "error_message": None,
+            # Phase and progress
+            "phase": log_state["phase"],
+            "current_phase": log_state["phase"],
+            "current_phase_display": log_state["current_phase_display"],
+            "files_to_cache_total": log_state["files_to_cache_total"],
+            "files_to_restore_total": log_state["files_to_restore_total"],
+            "files_cached_so_far": log_state["files_cached_so_far"],
+            "files_restored_so_far": log_state["files_restored_so_far"],
+            "error_count": log_state["error_count"],
+            "last_completed_file": log_state["last_completed_file"],
+            "total_files": total_files,
+            "completed_files": completed_files,
+            "progress_percent": progress_percent,
+            "elapsed_display": self._format_duration(elapsed),
+            "eta_display": eta_display,
+            "bytes_display": self._format_bytes(total_bytes) if total_bytes > 0 else "",
+            "recent_logs": log_state["recent_logs"],
+            "recent_files": log_state["recent_files"],
+            "active_files": log_state["active_files"],
+            "message": log_state["current_phase_display"],
+        }
+
+        return status
+
+    def _build_external_completed_dict(self, log_state: dict) -> dict:
+        """Build a completed status dict after an external CLI run finishes."""
+        files_cached = log_state["files_cached_so_far"]
+        files_restored = log_state["files_restored_so_far"]
+        bytes_cached = log_state["bytes_cached_so_far"]
+        bytes_restored = log_state["bytes_restored_so_far"]
+        is_dry_run = log_state["dry_run"]
+
+        # Calculate duration from log timestamps
+        duration = 0
+        started_at = log_state.get("started_at")
+        if started_at:
+            duration = (datetime.now() - started_at).total_seconds()
+
+        if is_dry_run:
+            message = f"Dry run completed in {self._format_duration(duration)}"
+        else:
+            message = f"Completed: {files_cached} cached, {files_restored} restored ({self._format_duration(duration)})"
+
+        return {
+            "state": "completed",
+            "is_running": False,
+            "external": True,
+            "dry_run": is_dry_run,
+            "started_at": started_at.isoformat() if started_at else None,
+            "completed_at": datetime.now().isoformat(),
+            "duration_seconds": round(duration, 1),
+            "duration_display": self._format_duration(duration),
+            "files_cached": files_cached,
+            "files_restored": files_restored,
+            "bytes_cached": bytes_cached,
+            "bytes_restored": bytes_restored,
+            "bytes_cached_display": self._format_bytes(bytes_cached) if bytes_cached > 0 else "",
+            "bytes_restored_display": self._format_bytes(bytes_restored) if bytes_restored > 0 else "",
+            "error_message": None,
+            "error_count": log_state["error_count"],
+            "error_messages": log_state["error_messages"][:5],
+            "was_stopped": False,
+            "recent_files": log_state["recent_files"],
+            "message": message,
+        }
+
+    def dismiss_external(self):
+        """Dismiss the external completion banner."""
+        self._external_completed_status = None
+        self._external_completed_at = None
 
     def _load_trackers(self) -> None:
         """Load OnDeck and Watchlist trackers for user lookups"""
@@ -370,25 +580,21 @@ class OperationRunner:
 
     def _save_last_run_summary(self):
         """Save a summary of the completed operation to disk."""
-        try:
-            result = self._current_result
-            if not result:
-                return
-            LAST_RUN_SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            summary = {
-                "status": result.state.value,
-                "timestamp": datetime.now().isoformat(),
-                "files_cached": result.files_cached,
-                "files_restored": result.files_restored,
-                "bytes_cached": result.bytes_cached,
-                "bytes_restored": result.bytes_restored,
-                "duration_seconds": round(result.duration_seconds, 1),
-                "error_count": result.error_count,
-                "dry_run": result.dry_run,
-            }
-            save_json_atomically(str(LAST_RUN_SUMMARY_FILE), summary, label="last run summary")
-        except IOError:
-            pass
+        result = self._current_result
+        if not result:
+            return
+        summary = {
+            "status": result.state.value,
+            "timestamp": datetime.now().isoformat(),
+            "files_cached": result.files_cached,
+            "files_restored": result.files_restored,
+            "bytes_cached": result.bytes_cached,
+            "bytes_restored": result.bytes_restored,
+            "duration_seconds": round(result.duration_seconds, 1),
+            "error_count": result.error_count,
+            "dry_run": result.dry_run,
+        }
+        save_run_summary(summary)
 
     @property
     def state(self) -> OperationState:
@@ -398,8 +604,13 @@ class OperationRunner:
 
     @property
     def is_running(self) -> bool:
-        """Check if an operation is currently running"""
-        return self.state == OperationState.RUNNING
+        """Check if an operation is currently running (web-triggered or external CLI)"""
+        if self.state == OperationState.RUNNING:
+            return True
+        # Also check for external CLI process when we're idle
+        if self.state == OperationState.IDLE:
+            return self._check_external_process() is not None
+        return False
 
     @property
     def stop_requested(self) -> bool:
@@ -641,6 +852,12 @@ class OperationRunner:
             logging.info("Operation blocked - maintenance action in progress")
             return False
 
+        # Check if an external CLI process is already running
+        ext_pid = self._check_external_process()
+        if ext_pid is not None:
+            logging.info("Operation blocked - external CLI process running (PID %d)", ext_pid)
+            return False
+
         with self._lock:
             if self._state == OperationState.RUNNING:
                 return False
@@ -754,7 +971,8 @@ class OperationRunner:
                 dry_run=dry_run,
                 quiet=False,
                 verbose=verbose,
-                bytes_progress_callback=_bytes_cb
+                bytes_progress_callback=_bytes_cb,
+                record_activity=False,  # OperationRunner handles activity via log parsing
             )
 
             # Store reference so stop_operation can signal it
@@ -958,6 +1176,31 @@ class OperationRunner:
     def get_status_dict(self) -> dict:
         """Get status as a dictionary for API responses"""
         result = self.current_result
+
+        # Check for external CLI process when not running a web-triggered operation
+        if self._state != OperationState.RUNNING:
+            ext_pid = self._check_external_process()
+            if ext_pid is not None:
+                self._external_was_running = True
+                return self._get_external_status_dict(ext_pid)
+
+            # External run just finished — parse final log state for completion banner
+            if self._external_was_running:
+                self._external_was_running = False
+                self._external_completed_at = datetime.now()
+                log_state = self._parse_external_log()
+                self._external_completed_status = self._build_external_completed_dict(log_state)
+
+            # Show external completion banner for 60 seconds
+            if self._external_completed_status and self._external_completed_at:
+                age = (datetime.now() - self._external_completed_at).total_seconds()
+                if age < 60:
+                    return self._external_completed_status
+                else:
+                    self._external_completed_status = None
+                    self._external_completed_at = None
+
+            self._external_log_state = None
 
         if result is None:
             return {
