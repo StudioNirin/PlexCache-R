@@ -274,13 +274,15 @@ def link_page(request: Request):
 
     if not raw.get("auth_link_enabled", False):
         return templates.TemplateResponse(
+            request,
             "auth/link.html",
-            {"request": request, "enabled": False, "error": None},
+            {"enabled": False, "error": None},
         )
 
     return templates.TemplateResponse(
+        request,
         "auth/link.html",
-        {"request": request, "enabled": True, "error": None},
+        {"enabled": True, "error": None},
     )
 
 
