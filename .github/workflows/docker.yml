@@ -2,10 +2,10 @@ name: Build and Publish Docker Image
 
 on:
   push:
-    branches: [v3.0-dev, v3.0, main]
+    branches: [dev, v3.0, main]
     tags: ['v*']
   pull_request:
-    branches: [v3.0-dev, v3.0, main]
+    branches: [dev, v3.0, main]
 
 jobs:
   test:
@@ -77,8 +77,8 @@ jobs:
             ${{ vars.DOCKERHUB_ENABLED == 'true' && format('{0}/plexcache-d', secrets.DOCKERHUB_USERNAME) || '' }}
             ghcr.io/${{ github.repository_owner }}/plexcache-d
           tags: |
-            # dev tag for v3.0-dev branch
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/v3.0-dev' }}
+            # dev tag for dev branch
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             # latest tag for v3.0 and main branches
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/v3.0' || github.ref == 'refs/heads/main' }}
             # semver tags for version tags (v3.0.1 -> latest, v3.0.1, v3.0, v3)
@@ -90,7 +90,7 @@ jobs:
       - name: Compute IMAGE_TAG build arg
         id: image_tag
         run: |
-          if [[ "$GITHUB_REF" == refs/heads/v3.0-dev ]]; then
+          if [[ "$GITHUB_REF" == refs/heads/dev ]]; then
             echo "value=dev" >> "$GITHUB_OUTPUT"
           elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
