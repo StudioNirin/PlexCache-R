@@ -42,11 +42,30 @@ import sys
 import time
 from collections import Counter
 
-# Resolve project root (tools/ sits under the repo root)
+# Resolve the PlexCache-R project root. The script may be run from:
+#   - tools/ inside a checkout  -> parent dir
+#   - /tmp (after curl) in the Docker container -> /app
+#   - the project root directly -> cwd
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) if os.path.basename(SCRIPT_DIR) == "tools" else SCRIPT_DIR
+_candidates = [
+    os.path.dirname(SCRIPT_DIR) if os.path.basename(SCRIPT_DIR) == "tools" else SCRIPT_DIR,
+    os.getcwd(),
+    "/app",
+]
+PROJECT_ROOT = None
+for _c in _candidates:
+    if _c and os.path.isdir(os.path.join(_c, "web")) and os.path.isdir(os.path.join(_c, "core")):
+        PROJECT_ROOT = _c
+        break
+if PROJECT_ROOT is None:
+    PROJECT_ROOT = _candidates[0]  # fall through; import will error with a clear message
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+# ``web.config`` derives DATA_DIR from the cwd — make sure it points at the app root.
+try:
+    os.chdir(PROJECT_ROOT)
+except OSError:
+    pass
 
 
 def _human_bytes(n):
