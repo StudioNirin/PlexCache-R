@@ -251,6 +251,53 @@ class LoggingConfig:
     keep_error_logs_days: int = 7
 
 
+def _derive_migrated_cache_path(real_source: str, cache_dir: str) -> str:
+    """Derive a specific cache_path from legacy real_source + cache_dir.
+
+    The legacy settings stored cache_dir as the cache drive root (e.g.
+    "/mnt/cache/") rather than the media subdirectory. When real_source was
+    deeper than that root (e.g. "/mnt/user/Media/"), the old migration copied
+    cache_dir verbatim, leaving the audit to walk the entire cache drive.
+    This helper mirrors the real_source subpath into cache_dir.
+
+    Examples:
+        real_source="/mnt/user/Media/", cache_dir="/mnt/cache/"
+            -> "/mnt/cache/Media/"
+        real_source="/mnt/user/Movies/", cache_dir="/mnt/cache/Movies/"
+            -> "/mnt/cache/Movies/"  (user already specific, unchanged)
+        real_source="/custom/path/", cache_dir="/other/"
+            -> "/other/"  (non-/mnt/user/ real_source, preserve legacy value)
+
+    Args:
+        real_source: Legacy real_source value.
+        cache_dir: Legacy cache_dir value.
+
+    Returns:
+        The derived cache_path string. Falls back to cache_dir unchanged when
+        no safe transformation applies.
+    """
+    if not real_source or not cache_dir:
+        return cache_dir
+
+    real = real_source.rstrip("/\\")
+    cache = cache_dir.rstrip("/\\")
+
+    if not real.startswith("/mnt/user/"):
+        return cache_dir
+
+    # Mirror the subpath under /mnt/cache/
+    translated = real.replace("/mnt/user/", "/mnt/cache/", 1)
+
+    # Only override when cache_dir is the bare cache drive root. If the user
+    # already specified a deeper cache_dir that matches or extends the
+    # translated path, leave it alone.
+    if cache in ("/mnt/cache", "/mnt/cache/"):
+        # Preserve trailing slash convention from the original cache_dir
+        return translated + "/" if cache_dir.endswith("/") else translated
+
+    return cache_dir
+
+
 def migrate_path_settings(settings: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
     """Migrate legacy single-path settings to multi-path format.
 
@@ -280,12 +327,17 @@ def migrate_path_settings(settings: Dict[str, Any]) -> Tuple[Dict[str, Any], boo
 
     logging.info("Migrating legacy path settings to multi-path format...")
 
-    # Create single mapping from legacy settings
+    # Derive a specific cache_path by mirroring the real_source subdir.
+    # See issue #136 — the previous migration copied cache_dir verbatim, which
+    # for users with cache_dir="/mnt/cache/" caused the audit to walk the
+    # entire cache drive.
+    derived_cache_path = _derive_migrated_cache_path(real_source, cache_dir)
+
     mapping = {
         "name": "Default (migrated)",
         "plex_path": plex_source,
         "real_path": real_source,
-        "cache_path": cache_dir,
+        "cache_path": derived_cache_path,
         "cacheable": True,
         "enabled": True
     }
@@ -299,6 +351,8 @@ def migrate_path_settings(settings: Dict[str, Any]) -> Tuple[Dict[str, Any], boo
     logging.info(f"  plex_path: {mapping['plex_path']}")
     logging.info(f"  real_path: {mapping['real_path']}")
     logging.info(f"  cache_path: {mapping['cache_path']}")
+    if derived_cache_path != cache_dir:
+        logging.info(f"  (derived from legacy cache_dir='{cache_dir}' — see issue #136)")
 
     return settings, True
 

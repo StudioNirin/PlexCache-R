@@ -39,6 +39,12 @@
     </div>
 </header>
 
+<!-- Config health warnings (issue #136) - empty unless a path_mapping issue is detected -->
+<div id="config-health-banner"
+     hx-get="/api/config-health"
+     hx-trigger="load"
+     hx-swap="innerHTML"></div>
+
 <!-- Stats Row - lazy loaded -->
 <div id="stats-container"
      hx-get="/api/dashboard/stats-content"

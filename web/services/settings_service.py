@@ -269,6 +269,68 @@ class SettingsService:
                 section_ids.add(int(sid))
         raw["valid_sections"] = sorted(section_ids)
 
+    def detect_path_mapping_health_issues(self) -> List[Dict[str, str]]:
+        """Scan path_mappings for known-bad configurations and return warnings.
+
+        Issue #136 taught us two failure modes that crater audit performance
+        on Unraid:
+
+        1. A legacy-migrated "Default (migrated)" mapping whose cache_path
+           is the bare cache drive root ("/mnt/cache/" or "/mnt/cache").
+           This makes MaintenanceService.run_full_audit() walk the entire
+           SSD — appdata, docker, every other share.
+
+        2. A mapping whose cache_path points at the Unraid FUSE merged view
+           ("/mnt/user/...") instead of the cache drive directly
+           ("/mnt/cache/..."). FUSE reads are 3-5x slower than cache-direct
+           and the audit's cache-vs-array logic can't distinguish the two.
+
+        Returns a list of dicts with keys: mapping_name, issue_type, message.
+        Empty list means no issues detected. This is a read-only check —
+        fixes must be performed by the user via Settings -> Libraries.
+        """
+        raw = self._load_raw()
+        mappings = raw.get("path_mappings", [])
+        issues: List[Dict[str, str]] = []
+
+        for m in mappings:
+            if not m.get("enabled", True):
+                continue
+
+            name = m.get("name", "(unnamed)")
+            cache_path = (m.get("cache_path") or "").rstrip("/\\")
+
+            if not cache_path:
+                continue
+
+            # Issue 1: bare cache drive root
+            if cache_path in ("/mnt/cache", "/mnt/cache/"):
+                issues.append({
+                    "mapping_name": name,
+                    "issue_type": "cache_root",
+                    "message": (
+                        f"Mapping '{name}' has cache_path set to the cache drive "
+                        f"root ('{m.get('cache_path')}'), which causes audits to "
+                        f"walk your entire cache drive. Edit it in Settings → "
+                        f"Libraries to point at a specific media subfolder."
+                    ),
+                })
+                continue
+
+            # Issue 2: FUSE path instead of cache-direct
+            if cache_path.startswith("/mnt/user/") and not cache_path.startswith("/mnt/user0/"):
+                issues.append({
+                    "mapping_name": name,
+                    "issue_type": "fuse_cache_path",
+                    "message": (
+                        f"Mapping '{name}' has cache_path set to a FUSE merged "
+                        f"path ('{m.get('cache_path')}'). Use '/mnt/cache/...' "
+                        f"directly instead — Settings → Libraries → {name}."
+                    ),
+                })
+
+        return issues
+
     def migrate_link_path_mappings_to_libraries(self) -> bool:
         """One-time migration: match existing path_mappings to Plex libraries by plex_path.
 

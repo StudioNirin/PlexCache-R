@@ -433,6 +433,29 @@ def validate_cron_expression(expression: str):
 # Docker API Endpoints
 # =============================================================================
 
+@router.get("/config-health", response_class=HTMLResponse)
+def config_health(request: Request):
+    """Render a dashboard banner for any detected path_mapping health issues.
+
+    Returns the rendered alert partial(s) when problems are found, or an empty
+    body when the config is clean. Triggered by HTMX from the dashboard index
+    template. Non-fatal — any exception collapses to an empty body.
+    """
+    try:
+        settings_service = get_settings_service()
+        issues = settings_service.detect_path_mapping_health_issues()
+    except Exception:
+        return HTMLResponse("")
+
+    if not issues:
+        return HTMLResponse("")
+
+    html_parts: List[str] = []
+    for issue in issues:
+        html_parts.append(_render_alert(request, "warning", issue["message"]))
+    return HTMLResponse("".join(html_parts))
+
+
 @router.get("/health")
 def health_check():
     """

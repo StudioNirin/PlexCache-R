@@ -253,3 +253,110 @@ class TestToggleLibrary:
         assert len(raw["path_mappings"]) == 1  # Not deleted
         assert raw["path_mappings"][0]["enabled"] is False
         assert raw["valid_sections"] == []  # Removed from valid_sections
+
+
+class TestDetectPathMappingHealthIssues:
+    """Tests for detect_path_mapping_health_issues() (issue #136 regression)."""
+
+    def test_healthy_config_returns_empty(self, settings_service):
+        _write_settings(settings_service, {
+            "path_mappings": [
+                {"name": "Movies", "plex_path": "/data/Movies/",
+                 "real_path": "/mnt/user/Media/Movies/",
+                 "cache_path": "/mnt/cache/Media/Movies/",
+                 "cacheable": True, "enabled": True, "section_id": 1},
+            ],
+        })
+        assert settings_service.detect_path_mapping_health_issues() == []
+
+    def test_detects_bare_cache_root(self, settings_service):
+        """The 'Default (migrated)' case from issue #136."""
+        _write_settings(settings_service, {
+            "path_mappings": [
+                {"name": "Default (migrated)", "plex_path": "/data/",
+                 "real_path": "/mnt/user/Media/",
+                 "cache_path": "/mnt/cache/",
+                 "cacheable": True, "enabled": True, "section_id": None},
+            ],
+        })
+        issues = settings_service.detect_path_mapping_health_issues()
+        assert len(issues) == 1
+        assert issues[0]["issue_type"] == "cache_root"
+        assert issues[0]["mapping_name"] == "Default (migrated)"
+        assert "/mnt/cache/" in issues[0]["message"]
+
+    def test_detects_fuse_cache_path(self, settings_service):
+        """The 'Movies → /mnt/user/...' case from issue #136."""
+        _write_settings(settings_service, {
+            "path_mappings": [
+                {"name": "Movies", "plex_path": "/data/Movies/",
+                 "real_path": "/mnt/user/Media/Movies/",
+                 "cache_path": "/mnt/user/Media/Movies/",
+                 "cacheable": True, "enabled": True, "section_id": 4},
+            ],
+        })
+        issues = settings_service.detect_path_mapping_health_issues()
+        assert len(issues) == 1
+        assert issues[0]["issue_type"] == "fuse_cache_path"
+        assert issues[0]["mapping_name"] == "Movies"
+
+    def test_mnt_user0_not_flagged_as_fuse(self, settings_service):
+        """`/mnt/user0/` is the array-direct path, not FUSE — don't flag it."""
+        _write_settings(settings_service, {
+            "path_mappings": [
+                {"name": "Edge", "plex_path": "/data/X/",
+                 "real_path": "/mnt/user0/X/",
+                 "cache_path": "/mnt/user0/X/",
+                 "cacheable": True, "enabled": True, "section_id": 99},
+            ],
+        })
+        assert settings_service.detect_path_mapping_health_issues() == []
+
+    def test_disabled_mappings_skipped(self, settings_service):
+        _write_settings(settings_service, {
+            "path_mappings": [
+                {"name": "Default (migrated)", "plex_path": "/data/",
+                 "real_path": "/mnt/user/Media/",
+                 "cache_path": "/mnt/cache/",
+                 "cacheable": True, "enabled": False, "section_id": None},
+            ],
+        })
+        assert settings_service.detect_path_mapping_health_issues() == []
+
+    def test_multiple_issues_reported(self, settings_service):
+        """Exact replica of the issue #136 reporter's config."""
+        _write_settings(settings_service, {
+            "path_mappings": [
+                {"name": "Default (migrated)", "plex_path": "/data/",
+                 "real_path": "/mnt/user/Media/",
+                 "cache_path": "/mnt/cache/",
+                 "cacheable": True, "enabled": True, "section_id": None},
+                {"name": "Novelas", "plex_path": "/data/Novelas/",
+                 "real_path": "/mnt/user/Media/Novelas/",
+                 "cache_path": "/mnt/cache/Media/Novelas/",
+                 "cacheable": True, "enabled": True, "section_id": 13},
+                {"name": "TV Shows", "plex_path": "/data/TV Shows/",
+                 "real_path": "/mnt/user/Media/TV Shows/",
+                 "cache_path": "/mnt/cache/Media/TV Shows/",
+                 "cacheable": True, "enabled": True, "section_id": 3},
+                {"name": "Movies", "plex_path": "/data/Movies/",
+                 "real_path": "/mnt/user/Media/Movies/",
+                 "cache_path": "/mnt/user/Media/Movies/",
+                 "cacheable": True, "enabled": True, "section_id": 4},
+            ],
+        })
+        issues = settings_service.detect_path_mapping_health_issues()
+        assert len(issues) == 2
+        issue_types = {i["issue_type"] for i in issues}
+        assert issue_types == {"cache_root", "fuse_cache_path"}
+
+    def test_empty_cache_path_ignored(self, settings_service):
+        _write_settings(settings_service, {
+            "path_mappings": [
+                {"name": "Passthrough", "plex_path": "/data/X/",
+                 "real_path": "/mnt/user/X/",
+                 "cache_path": "",
+                 "cacheable": True, "enabled": True, "section_id": 1},
+            ],
+        })
+        assert settings_service.detect_path_mapping_health_issues() == []
