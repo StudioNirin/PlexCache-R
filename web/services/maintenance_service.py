@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -532,10 +533,29 @@ class MaintenanceService:
         return os.path.exists(array_file), array_file
 
     def run_full_audit(self) -> AuditResults:
-        """Run a complete audit and return all results"""
+        """Run a complete audit and return all results.
+
+        Performance: on large libraries the old implementation issued one
+        ``os.path.exists`` call per cache file per check (backup + duplicate +
+        second duplicates pass), totalling ~4 probes per file.  Each probe can
+        block on Unraid array spinup and, on a 1.23M-file library, took ~26
+        minutes per audit cycle — saturating the 5-minute refresh thread.
+
+        This version walks the array disks exactly once (inside
+        ``_get_orphaned_plexcached``), builds an ``array_files_set`` and a
+        ``plexcached_set`` along the way, and answers every backup/duplicate
+        question with O(1) set lookups.  It also collapses the old separate
+        "find duplicates" pass into the main cache-file loop so cache files
+        are iterated exactly once.  See
+        https://github.com/StudioNirin/PlexCache-R/issues/136.
+        """
+        audit_start = time.monotonic()
+
+        phase_start = time.monotonic()
         cache_files = self.get_cache_files()
         exclude_files = self.get_exclude_files()
         timestamp_files = self.get_timestamp_files()
+        scan_duration = time.monotonic() - phase_start
 
         results = AuditResults(
             cache_file_count=len(cache_files),
@@ -543,19 +563,51 @@ class MaintenanceService:
             timestamp_entry_count=len(timestamp_files)
         )
 
-        # Find unprotected files (on cache but not in exclude list)
-        unprotected_paths = cache_files - exclude_files
-        now = datetime.now()
+        # Walk the array exactly once: collects orphaned/extensionless files and
+        # returns the full array_files_set / plexcached_set used below for O(1)
+        # lookups in place of per-file os.path.exists probes.
+        phase_start = time.monotonic()
+        (results.orphaned_plexcached,
+         results.extensionless_files,
+         array_files_set,
+         plexcached_set) = self._get_orphaned_plexcached(cache_files=cache_files)
+        walk_duration = time.monotonic() - phase_start
 
+        now = datetime.now()
         # Cutoff for "invalid" timestamps - before year 2000 or in the future
         min_valid_date = datetime(2000, 1, 1)
 
-        for cache_path in unprotected_paths:
+        # Single pass over cache files: detect unprotected + duplicate in one loop.
+        phase_start = time.monotonic()
+        for cache_path in cache_files:
+            array_path = self._cache_to_array_path(cache_path)
+            has_dup = bool(array_path) and array_path in array_files_set
+            backup_path = (array_path + PLEXCACHED_EXTENSION) if array_path else None
+            has_backup = bool(backup_path) and backup_path in plexcached_set
+
+            # Duplicates: on both cache AND array
+            if has_dup:
+                try:
+                    dup_size = os.path.getsize(cache_path)
+                except OSError:
+                    dup_size = 0
+                results.duplicates.append(DuplicateFile(
+                    cache_path=cache_path,
+                    array_path=array_path,
+                    filename=os.path.basename(cache_path),
+                    size=dup_size,
+                    size_display=format_bytes(dup_size)
+                ))
+
+            # Unprotected: on cache but not in exclude list
+            if cache_path in exclude_files:
+                continue
+
             filename = os.path.basename(cache_path)
             has_invalid_timestamp = False
             try:
-                stat_info = os.stat(cache_path) if os.path.exists(cache_path) else None
-                size = stat_info.st_size if stat_info else 0
+                stat_info = os.stat(cache_path)
+                size = stat_info.st_size
 
                 # Use st_ctime (change time) for age detection on Linux/Unraid.
                 # Radarr/Sonarr preserve the original release mtime when downloading,
@@ -564,10 +616,7 @@ class MaintenanceService:
                 #
                 # On Windows, st_ctime is creation time (also what we want).
                 # Fall back to st_mtime if st_ctime is somehow unavailable.
-                file_timestamp = stat_info.st_ctime if stat_info else None
-                if not file_timestamp and stat_info:
-                    file_timestamp = stat_info.st_mtime
-
+                file_timestamp = stat_info.st_ctime or stat_info.st_mtime
                 created_at = datetime.fromtimestamp(file_timestamp) if file_timestamp else None
                 age_days = (now - created_at).total_seconds() / 86400 if created_at else 999
 
@@ -583,14 +632,7 @@ class MaintenanceService:
                 created_at = None
                 age_days = 999
 
-            has_backup, backup_path = self._check_plexcached_backup(cache_path)
-            has_dup, array_path = self._check_array_duplicate(cache_path)
-
-            # Determine recommended action
-            if has_backup or has_dup:
-                recommended = "fix_with_backup"
-            else:
-                recommended = "sync_to_array"
+            recommended = "fix_with_backup" if (has_backup or has_dup) else "sync_to_array"
 
             results.unprotected_files.append(UnprotectedFile(
                 cache_path=cache_path,
@@ -598,7 +640,7 @@ class MaintenanceService:
                 size=size,
                 size_display=format_bytes(size),
                 has_plexcached_backup=has_backup,
-                backup_path=backup_path,
+                backup_path=backup_path if has_backup else None,
                 has_array_duplicate=has_dup,
                 array_path=array_path if has_dup else None,
                 recommended_action=recommended,
@@ -606,15 +648,13 @@ class MaintenanceService:
                 age_days=age_days,
                 has_invalid_timestamp=has_invalid_timestamp
             ))
+        main_loop_duration = time.monotonic() - phase_start
 
         # Sort unprotected files by filename (default)
         results.unprotected_files.sort(key=lambda f: f.filename.lower())
 
         # Group by directory: video file as primary, sidecars as children
         results.grouped_unprotected = self._group_unprotected_by_directory(results.unprotected_files)
-
-        # Find orphaned .plexcached files and extensionless duplicates
-        results.orphaned_plexcached, results.extensionless_files = self._get_orphaned_plexcached()
 
         # Find stale exclude entries (in exclude but not on cache)
         results.stale_exclude_entries = sorted(list(exclude_files - cache_files))
@@ -636,42 +676,59 @@ class MaintenanceService:
         # Find stale timestamp entries (in timestamps but not on cache)
         results.stale_timestamp_entries = sorted(list(timestamp_files - cache_files))
 
-        # Find duplicates (files that exist on BOTH cache and array)
-        for cache_path in cache_files:
-            has_dup, array_path = self._check_array_duplicate(cache_path)
-            if has_dup:
-                filename = os.path.basename(cache_path)
-                try:
-                    size = os.path.getsize(cache_path)
-                except OSError:
-                    size = 0
-
-                results.duplicates.append(DuplicateFile(
-                    cache_path=cache_path,
-                    array_path=array_path,
-                    filename=filename,
-                    size=size,
-                    size_display=format_bytes(size)
-                ))
-
         results.duplicates.sort(key=lambda f: f.size, reverse=True)
 
         # Calculate health status
         results.calculate_health_status()
 
+        total_duration = time.monotonic() - audit_start
+        logging.info(
+            "run_full_audit: %d cache files, %d unprotected, %d duplicates, "
+            "%d orphaned .plexcached in %.2fs",
+            len(cache_files), len(results.unprotected_files),
+            len(results.duplicates), len(results.orphaned_plexcached),
+            total_duration,
+        )
+        logging.debug(
+            "run_full_audit phases: scan=%.2fs array_walk=%.2fs main_loop=%.2fs",
+            scan_duration, walk_duration, main_loop_duration,
+        )
+
         return results
 
-    def _get_orphaned_plexcached(self) -> Tuple[List[OrphanedBackup], List[ExtensionlessFile]]:
+    def _get_orphaned_plexcached(
+        self,
+        cache_files: Optional[Set[str]] = None,
+    ) -> Tuple[List[OrphanedBackup], List[ExtensionlessFile], Set[str], Set[str]]:
         """Find .plexcached files on array that need cleanup, plus extensionless duplicates.
 
-        Returns a tuple of:
-        1. Backup list with types: "orphaned", "redundant", "superseded", "malformed"
-        2. Extensionless files (from malformed .plexcached restores) with matching media siblings
+        Walks every array directory exactly once and also returns two sets built
+        during the walk so callers (notably ``run_full_audit``) can answer
+        "does this array file exist?" / "does a .plexcached backup exist?"
+        questions with O(1) lookups instead of per-file ``os.path.exists`` probes.
+
+        Args:
+            cache_files: Optional pre-computed cache file set. When omitted it is
+                derived via ``get_cache_files()`` (kept for backwards compatibility
+                with callers that invoke this helper directly).
+
+        Returns:
+            Tuple of:
+              1. Backup list with types: "orphaned", "redundant", "superseded",
+                 "malformed", "repairable"
+              2. Extensionless files with matching media siblings
+              3. ``array_files_set`` — every non-``.plexcached`` file visited on
+                 the array (full paths)
+              4. ``plexcached_set`` — every ``.plexcached`` file visited on the
+                 array (full paths)
         """
         cache_dirs, array_dirs = self._get_paths()
-        cache_files = self.get_cache_files()
+        if cache_files is None:
+            cache_files = self.get_cache_files()
         backups_to_cleanup = []
         extensionless_files = []
+        array_files_set: Set[str] = set()
+        plexcached_set: Set[str] = set()
 
         for i, array_dir in enumerate(array_dirs):
             if not os.path.exists(array_dir):
@@ -683,6 +740,17 @@ class MaintenanceService:
                 # Prune excluded directories
                 dirs[:] = [d for d in dirs if not self._should_skip_directory(d)]
                 file_set = set(files)  # O(1) sibling lookups
+
+                # Populate the global sets used by run_full_audit for O(1) lookups.
+                # We ignore hidden dotfiles to match get_cache_files() behavior.
+                for name in files:
+                    if name.startswith('.'):
+                        continue
+                    full = os.path.join(root, name)
+                    if name.endswith(PLEXCACHED_EXTENSION):
+                        plexcached_set.add(full)
+                    else:
+                        array_files_set.add(full)
                 for f in files:
                     if f.endswith('.plexcached'):
                         plexcached_path = os.path.join(root, f)
@@ -842,7 +910,7 @@ class MaintenanceService:
 
         backups_to_cleanup.sort(key=lambda f: f.size, reverse=True)
         extensionless_files.sort(key=lambda f: f.size, reverse=True)
-        return backups_to_cleanup, extensionless_files
+        return backups_to_cleanup, extensionless_files, array_files_set, plexcached_set
 
     def _find_replacement_file(self, original_name: str, cache_directory: str,
                                cache_files: Set[str]) -> Optional[str]:
@@ -1030,7 +1098,7 @@ class MaintenanceService:
             dry_run: If True, only simulate the restore
             orphaned_only: If True, only restore truly orphaned backups (not redundant ones)
         """
-        backups, _ = self._get_orphaned_plexcached()
+        backups, _, _, _ = self._get_orphaned_plexcached()
 
         if orphaned_only:
             # Filter to only include truly orphaned backups (not redundant)
@@ -1114,7 +1182,7 @@ class MaintenanceService:
 
     def delete_all_plexcached(self, dry_run: bool = True, **kwargs) -> ActionResult:
         """Delete all orphaned .plexcached files"""
-        orphaned, _ = self._get_orphaned_plexcached()
+        orphaned, _, _, _ = self._get_orphaned_plexcached()
         paths = [o.plexcached_path for o in orphaned]
         return self.delete_plexcached(paths, dry_run, **kwargs)
 
@@ -1135,7 +1203,7 @@ class MaintenanceService:
             return ActionResult(success=False, message="No paths provided")
 
         # Build a lookup from current path → repair target
-        backups, _ = self._get_orphaned_plexcached()
+        backups, _, _, _ = self._get_orphaned_plexcached()
         repair_map = {
             b.plexcached_path: b.repair_path
             for b in backups
@@ -1195,7 +1263,7 @@ class MaintenanceService:
 
     def repair_all_plexcached(self, dry_run: bool = True, **kwargs) -> ActionResult:
         """Repair all repairable .plexcached files"""
-        backups, _ = self._get_orphaned_plexcached()
+        backups, _, _, _ = self._get_orphaned_plexcached()
         repairable = [b for b in backups if b.backup_type == "repairable"]
         paths = [b.plexcached_path for b in repairable]
         return self.repair_plexcached(paths, dry_run, **kwargs)
@@ -1267,7 +1335,7 @@ class MaintenanceService:
 
     def delete_all_extensionless(self, dry_run: bool = True, **kwargs) -> ActionResult:
         """Delete all extensionless duplicate files found on array"""
-        _, extensionless = self._get_orphaned_plexcached()
+        _, extensionless, _, _ = self._get_orphaned_plexcached()
         paths = [f.file_path for f in extensionless]
         return self.delete_extensionless_files(paths, dry_run, **kwargs)
 

@@ -729,3 +729,127 @@ class TestAuditResultsHealth:
         results.stale_exclude_entries = ["/stale/path"]
         results.calculate_health_status()
         assert results.health_status == "warnings"
+
+
+# ============================================================================
+# run_full_audit() — audit fan-out fix (issue #136)
+# ============================================================================
+
+class TestRunFullAuditFanOut:
+    """End-to-end tests for the set-based run_full_audit implementation.
+
+    Issue #136 replaced per-file ``os.path.exists`` probes with two sets
+    (``array_files_set`` / ``plexcached_set``) built during a single
+    ``os.walk`` of the array dirs. These tests use real files on tmp_path
+    to verify behavior is preserved and, critically, to assert that
+    ``os.path.exists`` is NOT called per cache file during the audit.
+    """
+
+    def _make_e2e_service(self, tmp_path):
+        cache_root = tmp_path / "cache" / "Movies"
+        array_root = tmp_path / "array" / "Movies"
+        cache_root.mkdir(parents=True)
+        array_root.mkdir(parents=True)
+        settings = {
+            "path_mappings": [
+                {
+                    "name": "Movies",
+                    "cache_path": str(cache_root),
+                    "real_path": str(array_root),
+                    "cacheable": True,
+                    "enabled": True,
+                },
+            ]
+        }
+        svc = _make_service(tmp_path, settings)
+        return svc, cache_root, array_root
+
+    def test_audit_finds_unprotected_duplicate_and_orphaned(self, tmp_path):
+        svc, cache_root, array_root = self._make_e2e_service(tmp_path)
+
+        # Cache files
+        unprotected = cache_root / "Unprotected.mkv"
+        duplicated = cache_root / "Duplicated.mkv"
+        protected = cache_root / "Protected.mkv"
+        for p in (unprotected, duplicated, protected):
+            p.write_bytes(b"x" * 1024)
+
+        # Array side:
+        # - Duplicated.mkv exists on array (triggers duplicate + fix_with_backup)
+        # - Orphan.mkv.plexcached exists with no cache counterpart → orphaned backup
+        # - Protected.mkv.plexcached exists as a backup for a protected cache file
+        (array_root / "Duplicated.mkv").write_bytes(b"x" * 1024)
+        (array_root / "Orphan.mkv.plexcached").write_bytes(b"x" * 1024)
+        (array_root / "Protected.mkv.plexcached").write_bytes(b"x" * 1024)
+
+        # Exclude list protects only Protected.mkv
+        svc.exclude_file.write_text(str(protected) + "\n", encoding="utf-8")
+
+        results = svc.run_full_audit()
+
+        unprotected_paths = {f.cache_path for f in results.unprotected_files}
+        assert str(unprotected) in unprotected_paths
+        assert str(duplicated) in unprotected_paths
+        assert str(protected) not in unprotected_paths
+
+        # Duplicated.mkv should be flagged as duplicate AND marked fix_with_backup
+        dup_entry = next(f for f in results.unprotected_files
+                         if f.cache_path == str(duplicated))
+        assert dup_entry.has_array_duplicate is True
+        assert dup_entry.recommended_action == "fix_with_backup"
+
+        # Unprotected.mkv has no backup/duplicate → sync_to_array
+        un_entry = next(f for f in results.unprotected_files
+                        if f.cache_path == str(unprotected))
+        assert un_entry.has_array_duplicate is False
+        assert un_entry.has_plexcached_backup is False
+        assert un_entry.recommended_action == "sync_to_array"
+
+        # Duplicates list populated once per duplicate (not twice — collapsed pass)
+        dup_paths = [d.cache_path for d in results.duplicates]
+        assert dup_paths == [str(duplicated)]
+
+        # Orphaned backup picked up by the walk
+        orphan_names = {b.original_filename for b in results.orphaned_plexcached}
+        assert "Orphan.mkv" in orphan_names
+
+    def test_audit_does_not_probe_cache_files_individually(self, tmp_path):
+        """The fan-out fix: run_full_audit must answer backup/duplicate
+        questions from the walk-built sets, not by calling os.path.exists
+        once per cache file. This test fails if the old per-file probe
+        pattern is reintroduced.
+        """
+        svc, cache_root, array_root = self._make_e2e_service(tmp_path)
+
+        # 50 cache files, none with array counterparts
+        for i in range(50):
+            (cache_root / f"file_{i:03d}.mkv").write_bytes(b"x")
+
+        svc.exclude_file.write_text("", encoding="utf-8")
+
+        from unittest.mock import patch
+        real_exists = os.path.exists
+        call_paths = []
+
+        def tracking_exists(path):
+            call_paths.append(path)
+            return real_exists(path)
+
+        with patch("web.services.maintenance_service.os.path.exists",
+                   side_effect=tracking_exists):
+            results = svc.run_full_audit()
+
+        # All 50 should be flagged as unprotected
+        assert len(results.unprotected_files) == 50
+
+        # Any os.path.exists call against an individual cache FILE path would
+        # indicate the old per-file probe pattern. Probing the cache directory
+        # itself (done once by get_cache_files) is fine.
+        cache_file_probes = [
+            p for p in call_paths
+            if str(cache_root) in str(p) and str(p).endswith(".mkv")
+        ]
+        assert cache_file_probes == [], (
+            f"run_full_audit should not os.path.exists() individual cache "
+            f"files; found {len(cache_file_probes)} probes"
+        )

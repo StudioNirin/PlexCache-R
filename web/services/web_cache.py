@@ -151,9 +151,25 @@ class WebCacheService:
         return None
 
     def refresh_all(self):
-        """Refresh all registered cache keys"""
+        """Refresh all registered cache keys.
+
+        Logs a WARNING if a single refresh cycle exceeds ``REFRESH_INTERVAL_SECONDS``
+        — that means the background thread cannot keep up with its own interval
+        (e.g. a very large library pushing ``run_full_audit`` past 5 minutes) and
+        dashboard data will stall until the cycle finishes. See
+        https://github.com/StudioNirin/PlexCache-R/issues/136.
+        """
+        start = time.monotonic()
         for key in self._refresh_callbacks:
             self.refresh(key)
+        elapsed = time.monotonic() - start
+        if elapsed > self.REFRESH_INTERVAL_SECONDS:
+            logger.warning(
+                "Background refresh cycle took %.1fs — longer than the %ds "
+                "refresh interval. Dashboard data may be stale; consider "
+                "auditing path_mappings / cache_path values.",
+                elapsed, self.REFRESH_INTERVAL_SECONDS,
+            )
 
     def start_background_refresh(self, interval_seconds: Optional[int] = None):
         """
