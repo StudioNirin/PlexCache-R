@@ -218,6 +218,21 @@ class MaintenanceService:
         settings = self._load_settings()
         return translate_container_to_host_path(path, settings.get('path_mappings', []))
 
+    def _get_pinned_cache_paths(self) -> Set[str]:
+        """Return the current set of pinned cache-form paths.
+
+        Used as a safety net in the cleanup actions so a transiently-missing
+        pinned file is never dropped from the exclude list or timestamps.
+        Failure returns an empty set — the cleanups fall back to their
+        original (unprotected) behavior rather than aborting.
+        """
+        try:
+            from web.services import get_pinned_service
+            return get_pinned_service().resolve_all_to_cache_paths()
+        except Exception as e:
+            logging.debug(f"MaintenanceService: could not resolve pinned paths: {e}")
+            return set()
+
     def _should_skip_directory(self, dirname: str) -> bool:
         """Check if directory should be skipped during scanning.
 
@@ -1916,6 +1931,14 @@ class MaintenanceService:
         exclude_files = self.get_exclude_files()
         stale = exclude_files - cache_files
 
+        # Defense-in-depth: a pinned file whose physical copy temporarily
+        # disappears (mid-move race, mount hiccup) should NOT be dropped
+        # from the exclude list — the mover would then see it as cacheable
+        # and could move it back to array before the next pinned run.
+        pinned_cache_paths = self._get_pinned_cache_paths()
+        if pinned_cache_paths:
+            stale = stale - pinned_cache_paths
+
         if not stale:
             return ActionResult(success=True, message="No stale entries to clean")
 
@@ -1952,6 +1975,12 @@ class MaintenanceService:
         cache_files = self.get_cache_files()
         timestamp_files = self.get_timestamp_files()
         stale = timestamp_files - cache_files
+
+        # Same defense-in-depth as clean_exclude: pinned files keep their
+        # timestamp entries even if transiently missing on disk.
+        pinned_cache_paths = self._get_pinned_cache_paths()
+        if pinned_cache_paths:
+            stale = stale - pinned_cache_paths
 
         if not stale:
             return ActionResult(success=True, message="No stale entries to clean")

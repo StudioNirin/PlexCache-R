@@ -18,6 +18,7 @@ from web.services.maintenance_runner import (
     MaintenanceHistory, MaintenanceHistoryEntry, get_maintenance_history,
 )
 from web.services.import_service import ImportService, ImportSummary, get_import_service
+from web.services.pinned_service import PinnedService, get_pinned_service
 
 __all__ = [
     "CacheService",
@@ -47,4 +48,6 @@ __all__ = [
     "ImportService",
     "ImportSummary",
     "get_import_service",
+    "PinnedService",
+    "get_pinned_service",
 ]

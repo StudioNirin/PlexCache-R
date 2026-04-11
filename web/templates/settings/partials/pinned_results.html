@@ -1,0 +1,18 @@
+{#
+  Pin picker search results.
+  Phase 4 will polish markup/layout; this stub is the minimal shape
+  consumed by tests.
+#}
+<div class="pinned-search-results" id="pinned-search-results">
+    {% if not results %}
+        <p class="text-muted" style="font-size: 0.85rem; margin: 0.5rem 0;">
+            {% if query %}No results for "{{ query }}"{% else %}Type to search{% endif %}
+        </p>
+    {% else %}
+        <ul class="pinned-result-list" style="list-style: none; padding: 0; margin: 0;">
+            {% for item in results %}
+                {% include "settings/partials/pinned_result_row.html" %}
+            {% endfor %}
+        </ul>
+    {% endif %}
+</div>

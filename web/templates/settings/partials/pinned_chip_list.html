@@ -1,0 +1,42 @@
+{#
+  Currently pinned media — chip list + budget summary.
+  ``pins`` is from PinnedService.list_pins_with_metadata().
+  ``budget`` is from PinnedService.budget_check().
+#}
+<div class="pinned-chip-list" id="pinned-chip-list">
+    {% if pins %}
+    <div class="pinned-budget-summary text-muted" style="font-size: 0.85rem; margin-bottom: 0.5rem;">
+        {{ pins | length }} pin{% if pins | length != 1 %}s{% endif %},
+        {% if budget.effective_budget_bytes %}
+            using {{ (budget.total_pinned_bytes / budget.effective_budget_bytes * 100) | round(1) }}%
+            of pinned budget
+        {% else %}
+            no budget limit set
+        {% endif %}
+    </div>
+    <ul class="pinned-chips" style="list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">
+        {% for pin in pins %}
+        <li class="pinned-chip" data-rating-key="{{ pin.rating_key }}" data-type="{{ pin.type }}"
+            style="display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.6rem; background: var(--plex-bg-darker); border-radius: var(--plex-radius-sm); font-size: 0.85rem;">
+            <span class="pinned-chip-type badge badge-secondary" style="font-size: 0.7rem;">{{ pin.type }}</span>
+            <span class="pinned-chip-title">{{ pin.title }}</span>
+            <span class="pinned-chip-size text-muted">{{ pin.size_display }}</span>
+            <form hx-post="/api/pinned/toggle"
+                  hx-target="#pinned-chip-list"
+                  hx-swap="outerHTML"
+                  style="margin: 0;">
+                <input type="hidden" name="rating_key" value="{{ pin.rating_key }}">
+                <input type="hidden" name="pin_type" value="{{ pin.type }}">
+                <input type="hidden" name="title" value="{{ pin.title }}">
+                <button type="submit" class="btn-icon" title="Unpin" aria-label="Unpin"
+                        style="background: none; border: 0; cursor: pointer; color: inherit;">
+                    &times;
+                </button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted" style="font-size: 0.85rem; margin: 0;">No pinned media yet.</p>
+    {% endif %}
+</div>

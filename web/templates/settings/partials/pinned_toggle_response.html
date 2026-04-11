@@ -1,0 +1,27 @@
+{#
+  Response to POST /api/pinned/toggle.
+
+  Returns either the re-rendered action button (success) or an inline error
+  box (budget overrun). HTMX swaps this into the originating row.
+#}
+{% if error %}
+<div class="pinned-toggle-error alert alert-warning" role="alert"
+     data-rating-key="{{ rating_key }}"
+     style="margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-radius: var(--plex-radius-sm);">
+    <strong>Cannot pin:</strong> {{ error }}
+</div>
+{% else %}
+<form hx-post="/api/pinned/toggle"
+      hx-swap="outerHTML"
+      class="pinned-toggle-form"
+      data-rating-key="{{ rating_key }}"
+      data-is-pinned="{{ 'true' if is_pinned else 'false' }}"
+      style="margin: 0;">
+    <input type="hidden" name="rating_key" value="{{ rating_key }}">
+    <input type="hidden" name="pin_type" value="{{ pin_type }}">
+    <input type="hidden" name="title" value="{{ title }}">
+    <button type="submit" class="btn btn-sm {% if is_pinned %}btn-danger{% else %}btn-primary{% endif %}">
+        {% if is_pinned %}Unpin{% else %}Pin{% endif %}
+    </button>
+</form>
+{% endif %}

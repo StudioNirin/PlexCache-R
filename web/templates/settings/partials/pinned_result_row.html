@@ -1,0 +1,31 @@
+{#
+  A single search result row. ``item`` is a dict from PinnedService.search():
+  {rating_key, title, type, year, library, already_pinned}.
+#}
+<li class="pinned-result-row" data-rating-key="{{ item.rating_key }}" data-type="{{ item.type }}"
+    style="display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--plex-border);">
+    <span class="pinned-result-title" style="flex: 1;">
+        <strong>{{ item.title }}</strong>
+        {% if item.year %}<span class="text-muted">({{ item.year }})</span>{% endif %}
+        <span class="badge badge-secondary" style="font-size: 0.7rem;">{{ item.type }}</span>
+    </span>
+    {% if item.type == "show" %}
+        <button type="button" class="btn btn-sm btn-secondary"
+                hx-get="/api/pinned/expand?rating_key={{ item.rating_key }}&level=show"
+                hx-target="closest .pinned-result-row"
+                hx-swap="afterend">
+            Expand
+        </button>
+    {% endif %}
+    <form hx-post="/api/pinned/toggle"
+          hx-target="closest .pinned-result-row"
+          hx-swap="outerHTML"
+          style="margin: 0;">
+        <input type="hidden" name="rating_key" value="{{ item.rating_key }}">
+        <input type="hidden" name="pin_type" value="{{ item.type }}">
+        <input type="hidden" name="title" value="{{ item.title }}">
+        <button type="submit" class="btn btn-sm {% if item.already_pinned %}btn-danger{% else %}btn-primary{% endif %}">
+            {% if item.already_pinned %}Unpin{% else %}Pin{% endif %}
+        </button>
+    </form>
+</li>

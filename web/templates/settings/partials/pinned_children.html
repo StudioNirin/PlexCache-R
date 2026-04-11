@@ -1,0 +1,41 @@
+{#
+  Children rows for a lazy-expanded show (seasons) or season (episodes).
+  ``children`` is a list of dicts from PinnedService.expand().
+#}
+<ul class="pinned-children-list" data-parent="{{ parent_rating_key }}" data-level="{{ level }}"
+    style="list-style: none; padding-left: 1.5rem; margin: 0;">
+    {% if not children %}
+        <li class="text-muted" style="padding: 0.3rem 0; font-size: 0.85rem;">No children found.</li>
+    {% endif %}
+    {% for child in children %}
+        <li class="pinned-child-row" data-rating-key="{{ child.rating_key }}" data-type="{{ child.type }}"
+            style="display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0;">
+            <span style="flex: 1;">
+                {% if child.type == "episode" and child.season_number and child.index %}
+                    <span class="text-muted">S{{ '%02d' % child.season_number }}E{{ '%02d' % child.index }}</span>
+                {% endif %}
+                {{ child.title }}
+                {% if child.episode_count %}<span class="text-muted">({{ child.episode_count }} eps)</span>{% endif %}
+            </span>
+            {% if child.type == "season" %}
+                <button type="button" class="btn btn-sm btn-secondary"
+                        hx-get="/api/pinned/expand?rating_key={{ child.rating_key }}&level=season"
+                        hx-target="closest .pinned-child-row"
+                        hx-swap="afterend">
+                    Expand
+                </button>
+            {% endif %}
+            <form hx-post="/api/pinned/toggle"
+                  hx-target="closest .pinned-child-row"
+                  hx-swap="outerHTML"
+                  style="margin: 0;">
+                <input type="hidden" name="rating_key" value="{{ child.rating_key }}">
+                <input type="hidden" name="pin_type" value="{{ child.type }}">
+                <input type="hidden" name="title" value="{{ child.title }}">
+                <button type="submit" class="btn btn-sm {% if child.already_pinned %}btn-danger{% else %}btn-primary{% endif %}">
+                    {% if child.already_pinned %}Unpin{% else %}Pin{% endif %}
+                </button>
+            </form>
+        </li>
+    {% endfor %}
+</ul>

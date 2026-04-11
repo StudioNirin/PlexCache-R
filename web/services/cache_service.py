@@ -35,6 +35,7 @@ class CachedFile:
     sidecar_count: int = 0  # Number of non-subtitle associated files (artwork, NFO, etc.)
     sidecar_paths: Optional[List[str]] = None  # Paths to sidecar files
     associated_files: Optional[List[Dict[str, str]]] = None  # [{filename, size}] for template rendering
+    is_pinned: bool = False  # Set when this path (or its parent scope) is in PinnedMediaTracker
 
 
 class CacheService:
@@ -504,6 +505,12 @@ class CacheService:
         watchlist = self.get_watchlist_tracker()
         settings = self._load_settings()
 
+        # Resolve pinned cache paths once per request. Failure returns an
+        # empty set (no pin protection surfaced in UI) rather than erroring
+        # the whole cache list — matches the soft-fail pattern used for
+        # Plex connectivity throughout the web layer.
+        pinned_cache_paths = self._get_pinned_cache_paths()
+
         now = datetime.now()
 
         # Include associated files stored inside parent timestamp entries
@@ -643,10 +650,14 @@ class CacheService:
             if source_filter == "other" and (is_ondeck or is_watchlist):
                 continue
 
-            # Calculate priority
-            priority = self.calculate_priority(
-                cache_path, timestamps, ondeck, watchlist, settings
-            )
+            # Pinned files always score 100 (mirrors core priority manager)
+            is_pinned = cache_path in pinned_cache_paths
+            if is_pinned:
+                priority = 100
+            else:
+                priority = self.calculate_priority(
+                    cache_path, timestamps, ondeck, watchlist, settings
+                )
 
             # Get associated subtitles and sidecars
             subs = video_subtitles.get(cache_path, [])
@@ -684,7 +695,8 @@ class CacheService:
                 subtitle_paths=subs if subs else None,
                 sidecar_count=len(sidecars),
                 sidecar_paths=sidecars if sidecars else None,
-                associated_files=assoc_list
+                associated_files=assoc_list,
+                is_pinned=is_pinned,
             ))
 
         # Sort by specified column
@@ -1463,6 +1475,9 @@ class CacheService:
         for f in all_files:
             if freed_so_far >= bytes_to_free:
                 break
+            # Never surface pinned files as eviction candidates
+            if f.is_pinned:
+                continue
             would_evict.append({
                 "path": f.path,
                 "filename": f.filename,
@@ -1512,6 +1527,11 @@ class CacheService:
         cached_files = self.get_cached_files_list()
         if cache_path not in cached_files:
             result["message"] = "File not found in cache list"
+            return result
+
+        # Refuse eviction of pinned files — user must unpin first.
+        if cache_path in self._get_pinned_cache_paths():
+            result["message"] = "File is pinned — unpin first"
             return result
 
         settings = self._load_settings()
@@ -1962,6 +1982,19 @@ class CacheService:
     def _remove_from_timestamps(self, cache_path: str):
         """Remove a path from the timestamps file"""
         remove_from_timestamps_file(self.timestamps_file, cache_path)
+
+    def _get_pinned_cache_paths(self) -> set:
+        """Return the current set of pinned cache-form paths.
+
+        Thin wrapper so route handlers / tests can monkeypatch a fixed set
+        without standing up a real PinnedService. Failure → empty set.
+        """
+        try:
+            from web.services import get_pinned_service
+            return get_pinned_service().resolve_all_to_cache_paths()
+        except Exception as e:
+            logging.debug(f"CacheService: could not resolve pinned paths: {e}")
+            return set()
 
 
 # Singleton instance

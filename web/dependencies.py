@@ -81,6 +81,13 @@ def get_ondeck_tracker():
     return OnDeckTracker(str(tracker_file))
 
 
+def get_pinned_tracker():
+    """Get PinnedMediaTracker instance"""
+    from core.pinned_media import PinnedMediaTracker
+    tracker_file = DATA_DIR / "pinned_media.json"
+    return PinnedMediaTracker(str(tracker_file))
+
+
 def get_priority_manager():
     """Get CachePriorityManager instance"""
     from core.file_operations import CachePriorityManager
