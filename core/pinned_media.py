@@ -24,7 +24,7 @@ with an optional ``media_id`` field. The global rule remains the default.
 import logging
 import threading
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.file_operations import JSONTracker
 
@@ -141,6 +141,169 @@ def select_media_version(item: Any, preference: str = "highest") -> Any:
         f"Unknown pinned_preferred_resolution={preference!r}, using first media"
     )
     return medias[0]
+
+
+def _extract_paths(media: Any) -> List[str]:
+    """Return the part.file paths from a single Media object."""
+    return [p.file for p in (getattr(media, "parts", None) or []) if getattr(p, "file", None)]
+
+
+def _resolve_episodes(episodes: List[Any], preference: str) -> List[str]:
+    """Run select_media_version over a list of episodes and collect file paths.
+
+    Skips (with a warning) any episode that has no media attached.
+    """
+    paths: List[str] = []
+    for ep in episodes:
+        try:
+            media = select_media_version(ep, preference)
+        except ValueError as e:
+            logging.warning(
+                f"Skipping pinned episode '{getattr(ep, 'title', '?')}': {e}"
+            )
+            continue
+        paths.extend(_extract_paths(media))
+    return paths
+
+
+def _resolve_item_to_paths(item: Any, pin_type: str, preference: str) -> List[str]:
+    """Walk a Plex item of the given scope and return all file paths to cache.
+
+    Args:
+        item: plexapi object (Movie, Show, Season, or Episode).
+        pin_type: One of ``movie``, ``show``, ``season``, ``episode``.
+        preference: Value from ``pinned_preferred_resolution``.
+
+    Returns:
+        A list of plex-form file paths (strings). Empty list if nothing resolves.
+    """
+    if pin_type in ("movie", "episode"):
+        media = select_media_version(item, preference)
+        return _extract_paths(media)
+
+    if pin_type == "season":
+        try:
+            episodes = list(item.episodes())
+        except Exception as e:
+            logging.warning(
+                f"Failed to enumerate episodes for pinned season "
+                f"'{getattr(item, 'title', '?')}': {e}"
+            )
+            return []
+        return _resolve_episodes(episodes, preference)
+
+    if pin_type == "show":
+        paths: List[str] = []
+        try:
+            seasons = list(item.seasons())
+        except Exception as e:
+            logging.warning(
+                f"Failed to enumerate seasons for pinned show "
+                f"'{getattr(item, 'title', '?')}': {e}"
+            )
+            return []
+        for season in seasons:
+            try:
+                episodes = list(season.episodes())
+            except Exception as e:
+                logging.warning(
+                    f"Failed to enumerate episodes for season "
+                    f"'{getattr(season, 'title', '?')}': {e}"
+                )
+                continue
+            paths.extend(_resolve_episodes(episodes, preference))
+        return paths
+
+    raise ValueError(f"Unknown pin_type: {pin_type!r}")
+
+
+def resolve_pins_to_paths(
+    plex_server: Any,
+    tracker: "PinnedMediaTracker",
+    preference: str = "highest",
+) -> Tuple[List[Tuple[str, str, str]], List[str]]:
+    """Resolve every pin in the tracker to its file paths.
+
+    Orphan cleanup: pins whose ``rating_key`` is no longer reachable in Plex
+    (item deleted, library removed) are removed from the tracker and returned
+    in the ``orphaned`` list for caller-side logging/reporting.
+
+    Args:
+        plex_server: A connected plexapi ``PlexServer`` instance. Lazily
+            references plexapi so unit tests can pass a mock.
+        tracker: The ``PinnedMediaTracker`` instance.
+        preference: Value from ``pinned_preferred_resolution``.
+
+    Returns:
+        ``(resolved, orphaned)`` where:
+
+        - ``resolved`` is a list of ``(plex_file_path, rating_key, pin_type)``
+          tuples. Paths are still in Plex form — the caller is responsible for
+          running them through the path modifier to get real paths.
+        - ``orphaned`` is a list of rating_key strings that were removed.
+    """
+    # Lazy import so tests that don't need plexapi can still import this module.
+    # Fall back to Exception when plexapi is missing OR when it's been mocked
+    # as a MagicMock in test environments (where attribute access returns a
+    # MagicMock *instance*, which `except` cannot catch).
+    try:
+        from plexapi.exceptions import NotFound as _NotFound
+        if not (isinstance(_NotFound, type) and issubclass(_NotFound, BaseException)):
+            _NotFound = Exception
+    except ImportError:
+        _NotFound = Exception
+    NotFound = _NotFound
+
+    resolved: List[Tuple[str, str, str]] = []
+    orphaned: List[str] = []
+
+    for pin in tracker.list_pins():
+        rk = pin["rating_key"]
+        pin_type = pin["type"]
+        title = pin.get("title", rk)
+
+        try:
+            # plexapi.fetchItem accepts int or str rating_key
+            item = plex_server.fetchItem(int(rk))
+        except (NotFound, ValueError) as e:
+            logging.warning(
+                f"Pinned item no longer in Plex: '{title}' "
+                f"(rating_key={rk}) — removing pin. ({type(e).__name__}: {e})"
+            )
+            tracker.remove_pin(rk)
+            orphaned.append(rk)
+            continue
+        except Exception as e:
+            # Don't remove the pin on transient errors (connection loss, etc.)
+            logging.error(
+                f"Failed to fetch pinned item '{title}' (rating_key={rk}): "
+                f"{type(e).__name__}: {e}. Leaving pin in place."
+            )
+            continue
+
+        try:
+            paths = _resolve_item_to_paths(item, pin_type, preference)
+        except Exception as e:
+            logging.error(
+                f"Failed to resolve pinned {pin_type} '{title}' "
+                f"(rating_key={rk}): {type(e).__name__}: {e}"
+            )
+            continue
+
+        if not paths:
+            logging.warning(
+                f"Pinned {pin_type} '{title}' (rating_key={rk}) resolved to 0 files"
+            )
+            continue
+
+        for p in paths:
+            resolved.append((p, rk, pin_type))
+        logging.info(
+            f"Pinned {pin_type} '{title}': resolved to {len(paths)} file(s) "
+            f"per preferred_resolution={preference}"
+        )
+
+    return resolved, orphaned
 
 
 class PinnedMediaTracker(JSONTracker):
