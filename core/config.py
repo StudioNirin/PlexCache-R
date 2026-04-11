@@ -112,6 +112,11 @@ class PlexConfig:
     plex_db_path: str = ""  # Path to Plex SQLite DB (fallback for tokenless shared users)
     per_user_ondeck_days: Optional[Dict[str, int]] = None  # Per-user OnDeck days_to_monitor overrides
     per_user_watchlist_days: Optional[Dict[str, float]] = None  # Per-user watchlist retention overrides
+    # Pinned media version preference — which Media version to cache for a pinned
+    # item with multiple versions (1080p + 4K + remux). One of:
+    # "highest", "lowest", "1080p", "720p", "4k", "first".
+    # See core/pinned_media.select_media_version().
+    pinned_preferred_resolution: str = "highest"
 
     def __post_init__(self):
         if self.valid_sections is None:
@@ -436,6 +441,9 @@ class ConfigManager:
         self.plex.days_to_monitor = self.settings_data['days_to_monitor']
         self.plex.users_toggle = self.settings_data['users_toggle']
         self.plex.plex_db_path = self.settings_data.get('plex_db_path', '')
+        self.plex.pinned_preferred_resolution = self.settings_data.get(
+            'pinned_preferred_resolution', 'highest'
+        )
 
         # Load users list first (contains tokens and per-user skip settings)
         self.plex.users = self.settings_data.get('users', [])
@@ -988,6 +996,10 @@ class ConfigManager:
     def get_ondeck_tracker_file(self) -> Path:
         """Get the path for the OnDeck tracker file."""
         return self.get_data_folder() / "ondeck_tracker.json"
+
+    def get_pinned_media_file(self) -> Path:
+        """Get the path for the pinned media tracker file."""
+        return self.get_data_folder() / "pinned_media.json"
 
     def get_user_tokens_file(self) -> Path:
         """Get the path for the user tokens cache file."""

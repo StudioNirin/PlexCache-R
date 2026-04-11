@@ -564,6 +564,7 @@ class SettingsService:
             "cache_eviction_mode": raw.get("cache_eviction_mode", "none"),
             "cache_eviction_threshold_percent": raw.get("cache_eviction_threshold_percent", 95),
             "eviction_min_priority": raw.get("eviction_min_priority", 60),
+            "pinned_preferred_resolution": raw.get("pinned_preferred_resolution", "highest"),
             "remote_watchlist_toggle": raw.get("remote_watchlist_toggle", False),
             "remote_watchlist_rss_url": raw.get("remote_watchlist_rss_url", ""),
             # Upgrade tracking
@@ -607,6 +608,7 @@ class SettingsService:
             "cache_eviction_mode": ("cache_eviction_mode", str),
             "cache_eviction_threshold_percent": ("cache_eviction_threshold_percent", safe_int),
             "eviction_min_priority": ("eviction_min_priority", safe_int),
+            "pinned_preferred_resolution": ("pinned_preferred_resolution", str),
             "remote_watchlist_toggle": ("remote_watchlist_toggle", lambda x: x == "on" or x is True),
             "remote_watchlist_rss_url": ("remote_watchlist_rss_url", str),
             # Upgrade tracking
