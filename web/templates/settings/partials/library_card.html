@@ -108,18 +108,40 @@
 
                             <div class="grid grid-2 mb-1">
                                 <div class="form-group mb-1">
-                                    <label>Real Path</label>
+                                    <label>Real Path
+                                        <span class="path-validation"
+                                              hx-get="/api/validate-path?path={{ mapping.real_path | urlencode }}"
+                                              hx-trigger="load"
+                                              hx-swap="innerHTML"></span>
+                                    </label>
                                     <input type="text" name="real_path_{{ loop.index0 }}" value="{{ mapping.real_path }}"
-                                           class="path-browse-input" required>
+                                           class="path-browse-input" required
+                                           hx-get="/api/validate-path"
+                                           hx-trigger="input changed delay:500ms"
+                                           hx-target="previous .path-validation"
+                                           hx-swap="innerHTML"
+                                           hx-params="none"
+                                           hx-vals='js:{"path": event.target.value}'>
                                     <div class="form-hint">
                                         {% if is_docker %}Path as seen from <strong>inside</strong> the container. Must match a bind-mounted volume.
                                         {% else %}The path inside this container that corresponds to Plex's <code>{{ mapping.plex_path }}</code>.{% endif %}
                                     </div>
                                 </div>
                                 <div class="form-group mb-1">
-                                    <label>Cache Path</label>
+                                    <label>Cache Path
+                                        <span class="path-validation"
+                                              hx-get="/api/validate-path?path={{ mapping.cache_path | urlencode }}"
+                                              hx-trigger="load"
+                                              hx-swap="innerHTML"></span>
+                                    </label>
                                     <input type="text" name="cache_path_{{ loop.index0 }}" value="{{ mapping.cache_path or '' }}"
-                                           class="path-browse-input">
+                                           class="path-browse-input"
+                                           hx-get="/api/validate-path"
+                                           hx-trigger="input changed delay:500ms"
+                                           hx-target="previous .path-validation"
+                                           hx-swap="innerHTML"
+                                           hx-params="none"
+                                           hx-vals='js:{"path": event.target.value}'>
                                     <div class="form-hint">
                                         {% if is_docker %}Path as seen from <strong>inside</strong> the container, not the host. If your template maps <code>/mnt/cache_nvme</code> &rarr; <code>/mnt/cache</code>, use <code>/mnt/cache/...</code> here.
                                         {% elif is_unraid %}Fast drive path where cached copies are stored (e.g., <code>/mnt/cache/{{ mapping.plex_path.rstrip('/').rsplit('/', 1)[-1] }}/</code>).
