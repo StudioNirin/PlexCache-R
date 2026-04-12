@@ -19,7 +19,7 @@
                     <label for="number_episodes">Episodes to Prefetch</label>
                     <input type="number" id="number_episodes" name="number_episodes"
                            class="input-narrow"
-                           value="{{ settings.number_episodes | default(3) }}" min="0" max="10">
+                           value="{{ settings.number_episodes | default(3) }}" min="0">
                     <div class="form-hint">Number of upcoming episodes to cache for in-progress shows</div>
                 </div>
 
@@ -54,7 +54,7 @@
                         <label for="watchlist_episodes">Watchlist Episodes to Prefetch</label>
                         <input type="number" id="watchlist_episodes" name="watchlist_episodes"
                                class="input-narrow"
-                               value="{{ settings.watchlist_episodes | default(3) }}" min="0" max="10">
+                               value="{{ settings.watchlist_episodes | default(3) }}" min="0">
                     </div>
                 </div>
 
