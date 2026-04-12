@@ -1,6 +1,6 @@
 {#
   A single search result row. ``item`` is a dict from PinnedService.search():
-  {rating_key, title, type, year, library, already_pinned}.
+  {rating_key, title, type, year, library, size_bytes, size_display, already_pinned}.
 
   The pin/unpin form uses hx-target="this" so only the form (not the row)
   gets swapped when toggled — the title, expand button, and row metadata
@@ -21,8 +21,12 @@
     <span class="pinned-result-title" style="flex: 1; min-width: 0;">
         <strong style="color: var(--plex-text);">{{ item.title }}</strong>
         {% if item.year %}<span style="color: var(--plex-text-muted); font-size: 0.85rem; margin-left: 0.3rem;">({{ item.year }})</span>{% endif %}
-        {% if item.library %}
-            <div style="color: var(--plex-text-muted); font-size: 0.75rem; margin-top: 0.15rem;">{{ item.library }}</div>
+        {% if item.library or item.size_display %}
+            <div style="color: var(--plex-text-muted); font-size: 0.75rem; margin-top: 0.15rem;">
+                {%- if item.library %}{{ item.library }}{% endif -%}
+                {%- if item.library and item.size_display %} · {% endif -%}
+                {%- if item.size_display %}{{ item.size_display }}{% endif -%}
+            </div>
         {% endif %}
     </span>
     {% if item.type == "show" %}

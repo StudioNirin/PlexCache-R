@@ -17,16 +17,17 @@
             <strong style="color: var(--plex-text);">{{ pins | length }}</strong>
             pin{% if pins | length != 1 %}s{% endif %}
         </span>
+        <span>•</span>
+        <span>
+            <strong style="color: var(--plex-text);">{{ total_pinned_display }}</strong> total
+        </span>
         {% if budget.effective_budget_bytes %}
             <span>•</span>
             <span>
                 using
                 <strong style="color: var(--plex-text);">{{ (budget.total_pinned_bytes / budget.effective_budget_bytes * 100) | round(1) }}%</strong>
-                of pinned budget
+                of cache budget
             </span>
-        {% else %}
-            <span>•</span>
-            <span>no cache budget set</span>
         {% endif %}
         {% if budget.over_budget %}
             <span class="badge" style="background: var(--plex-error); color: white; padding: 0.1rem 0.5rem; border-radius: var(--plex-radius-sm); font-size: 0.7rem;">

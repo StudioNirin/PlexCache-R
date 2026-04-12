@@ -31,6 +31,9 @@
                     {% if child.episode_count %}
                         <span style="color: var(--plex-text-muted); font-size: 0.8rem; margin-left: 0.35rem;">({{ child.episode_count }} eps)</span>
                     {% endif %}
+                    {% if child.size_display %}
+                        <span style="color: var(--plex-text-muted); font-size: 0.8rem; margin-left: 0.35rem;">· {{ child.size_display }}</span>
+                    {% endif %}
                 </span>
                 {% if child.type == "season" %}
                     <button type="button" class="btn btn-sm btn-secondary pinned-expand-btn"

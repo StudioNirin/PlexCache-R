@@ -91,11 +91,13 @@ def pinned_toggle(
 @router.get("/list", response_class=HTMLResponse)
 def pinned_list(request: Request):
     """HTMX partial: currently-pinned chip list + budget summary."""
+    from core.system_utils import format_bytes
     service = get_pinned_service()
     pins = service.list_pins_with_metadata()
     budget = service.budget_check()
+    total_pinned_display = format_bytes(budget["total_pinned_bytes"])
     return templates.TemplateResponse(
         request,
         "settings/partials/pinned_chip_list.html",
-        {"pins": pins, "budget": budget},
+        {"pins": pins, "budget": budget, "total_pinned_display": total_pinned_display},
     )

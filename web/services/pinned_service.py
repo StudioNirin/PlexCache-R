@@ -85,6 +85,9 @@ class PinnedService:
         if plex is None:
             return []
 
+        from core.system_utils import format_bytes
+        preference = self._get_preference()
+
         results: List[Dict[str, Any]] = []
         try:
             for result_type in self._SEARCH_TYPES:
@@ -96,12 +99,17 @@ class PinnedService:
 
                 for item in hits:
                     try:
+                        size_bytes = self._estimate_item_size(
+                            item, result_type, preference
+                        )
                         results.append({
                             "rating_key": str(getattr(item, "ratingKey", "")),
                             "title": getattr(item, "title", ""),
                             "type": result_type,
                             "year": getattr(item, "year", None),
                             "library": getattr(item, "librarySectionTitle", ""),
+                            "size_bytes": size_bytes,
+                            "size_display": format_bytes(size_bytes) if size_bytes else "",
                             "already_pinned": self._tracker.is_pinned(
                                 str(getattr(item, "ratingKey", ""))
                             ),
@@ -114,6 +122,31 @@ class PinnedService:
             return []
 
         return results[:limit]
+
+    @staticmethod
+    def _estimate_item_size(item: Any, item_type: str, preference: str) -> int:
+        """Compute total byte size for an item from Plex metadata."""
+        def _single_size(it):
+            try:
+                media = select_media_version(it, preference)
+                return _media_total_size(media)
+            except Exception:
+                return 0
+
+        try:
+            if item_type in ("movie", "episode"):
+                return _single_size(item)
+            if item_type == "season":
+                return sum(_single_size(ep) for ep in item.episodes())
+            if item_type == "show":
+                total = 0
+                for season in item.seasons():
+                    for ep in season.episodes():
+                        total += _single_size(ep)
+                return total
+        except Exception:
+            pass
+        return 0
 
     def expand(self, rating_key: str, level: str) -> List[Dict[str, Any]]:
         """Return lazy children for a show/season.
@@ -135,17 +168,25 @@ class PinnedService:
             logger.warning(f"PinnedService.expand: fetchItem({rating_key}) failed: {e}")
             return []
 
+        from core.system_utils import format_bytes
+        preference = self._get_preference()
+
         children: List[Dict[str, Any]] = []
         try:
             if level == "show":
                 seasons = list(item.seasons())
                 for season in seasons:
+                    size_bytes = self._estimate_item_size(
+                        season, "season", preference
+                    )
                     children.append({
                         "rating_key": str(getattr(season, "ratingKey", "")),
                         "title": getattr(season, "title", ""),
                         "type": "season",
                         "parent_rating_key": str(rating_key),
                         "episode_count": getattr(season, "leafCount", None),
+                        "size_bytes": size_bytes,
+                        "size_display": format_bytes(size_bytes) if size_bytes else "",
                         "already_pinned": self._tracker.is_pinned(
                             str(getattr(season, "ratingKey", ""))
                         ),
@@ -153,6 +194,9 @@ class PinnedService:
             else:  # season
                 episodes = list(item.episodes())
                 for ep in episodes:
+                    size_bytes = self._estimate_item_size(
+                        ep, "episode", preference
+                    )
                     children.append({
                         "rating_key": str(getattr(ep, "ratingKey", "")),
                         "title": getattr(ep, "title", ""),
@@ -160,6 +204,8 @@ class PinnedService:
                         "parent_rating_key": str(rating_key),
                         "index": getattr(ep, "index", None),
                         "season_number": getattr(ep, "parentIndex", None),
+                        "size_bytes": size_bytes,
+                        "size_display": format_bytes(size_bytes) if size_bytes else "",
                         "already_pinned": self._tracker.is_pinned(
                             str(getattr(ep, "ratingKey", ""))
                         ),
@@ -236,31 +282,7 @@ class PinnedService:
             item = plex.fetchItem(int(rating_key))
         except Exception:
             return 0
-
-        preference = self._get_preference()
-
-        def _item_bytes(it) -> int:
-            try:
-                media = select_media_version(it, preference)
-            except Exception:
-                return 0
-            return _media_total_size(media)
-
-        try:
-            if pin_type in ("movie", "episode"):
-                return _item_bytes(item)
-            if pin_type == "season":
-                return sum(_item_bytes(ep) for ep in item.episodes())
-            if pin_type == "show":
-                total = 0
-                for season in item.seasons():
-                    for ep in season.episodes():
-                        total += _item_bytes(ep)
-                return total
-        except Exception as e:
-            logger.debug(f"PinnedService._estimate_item_bytes failed: {e}")
-            return 0
-        return 0
+        return self._estimate_item_size(item, pin_type, self._get_preference())
 
     def budget_check(
         self,
