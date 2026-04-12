@@ -108,13 +108,31 @@
 
 <script src="/static/js/path-browser.js"></script>
 <script>
+    function validatePathInput(input) {
+        var target = document.querySelector(input.dataset.validateTarget);
+        if (!target) return;
+        var val = input.value.trim();
+        if (!val) { target.innerHTML = ''; return; }
+        fetch('/api/validate-path?path=' + encodeURIComponent(val))
+            .then(function(r) { return r.text(); })
+            .then(function(html) { target.innerHTML = html; lucide.createIcons(); });
+    }
+
+    var _validateTimers = {};
+    document.addEventListener('input', function(e) {
+        if (!e.target.classList.contains('path-validate-input')) return;
+        var id = e.target.dataset.validateTarget;
+        clearTimeout(_validateTimers[id]);
+        _validateTimers[id] = setTimeout(function() { validatePathInput(e.target); }, 500);
+    });
+
     function toggleLibraryEdit(sectionId) {
         var editPanel = document.getElementById('library-edit-' + sectionId);
         if (!editPanel) return;
         if (editPanel.style.display === 'none') {
             editPanel.style.display = 'block';
+            editPanel.querySelectorAll('.path-validate-input').forEach(validatePathInput);
         } else {
-            // Reset all forms to original values before hiding
             editPanel.querySelectorAll('form').forEach(function(form) { form.reset(); });
             editPanel.style.display = 'none';
         }
