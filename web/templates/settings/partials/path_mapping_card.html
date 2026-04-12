@@ -80,7 +80,8 @@
                             <label>Real Path</label>
                             <input type="text" name="real_path" value="{{ mapping.real_path }}" required>
                             <div class="form-hint">
-                                {% if is_unraid %}Where files live on your Unraid share (e.g., <code>/mnt/user/Movies/</code>). Works with both array and ZFS pool shares.
+                                {% if is_docker %}Path as seen from <strong>inside</strong> the container. Must match a bind-mounted volume.
+                                {% elif is_unraid %}Where files live on your Unraid share (e.g., <code>/mnt/user/Movies/</code>). Works with both array and ZFS pool shares.
                                 {% else %}Actual filesystem path where your media files are stored.{% endif %}
                             </div>
                         </div>
@@ -88,7 +89,8 @@
                             <label>Cache Path</label>
                             <input type="text" name="cache_path" value="{{ mapping.cache_path or '' }}">
                             <div class="form-hint">
-                                {% if is_unraid %}Fast drive path to cache files to (e.g., <code>/mnt/cache/Movies/</code>).
+                                {% if is_docker %}Path as seen from <strong>inside</strong> the container, not the host. If your template maps <code>/mnt/cache_nvme</code> &rarr; <code>/mnt/cache</code>, use <code>/mnt/cache/...</code> here.
+                                {% elif is_unraid %}Fast drive path to cache files to (e.g., <code>/mnt/cache/Movies/</code>).
                                 {% else %}Fast drive path where cached copies are stored.{% endif %}
                             </div>
                         </div>

@@ -5,11 +5,12 @@ Handles OS detection, system-specific operations, and path conversions.
 
 import os
 import platform
+import posixpath
 import shutil
 import subprocess
 import atexit
 import fcntl
-from typing import Tuple, Optional, NamedTuple, Callable
+from typing import List, Tuple, Optional, NamedTuple, Callable, Set
 import logging
 
 
@@ -551,14 +552,74 @@ class SystemDetector:
         """Detect if running inside a Docker container."""
         return os.path.exists('/.dockerenv')
 
-    def validate_docker_mounts(self, paths: list) -> list:
-        """
-        Validate that paths are actual mount points in Docker.
+    def _parse_mountinfo(self) -> Set[str]:
+        """Parse /proc/self/mountinfo and return the set of mount points.
 
-        In Docker, if a volume mount fails (e.g., source doesn't exist,
-        trailing space in path), the path will exist as an empty directory
-        inside the container rather than a mount point. This can cause
-        massive data to be written inside the container.
+        Cached for the process lifetime — mounts don't change without a
+        container restart. Returns an empty set (permissive) if the file
+        is unreadable.
+        """
+        if hasattr(self, '_mountinfo_cache'):
+            return self._mountinfo_cache
+
+        mount_points: Set[str] = set()
+        try:
+            with open('/proc/self/mountinfo', 'r') as f:
+                for line in f:
+                    # Format: id parent_id major:minor root mount_point options ...
+                    # Field 5 (0-indexed: 4) is the mount point
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        mount_point = parts[4]
+                        # Decode octal escapes (e.g., \040 for space)
+                        mount_point = mount_point.encode('utf-8').decode('unicode_escape')
+                        mount_points.add(mount_point)
+        except (OSError, IOError):
+            logging.warning(
+                "Could not read /proc/self/mountinfo — Docker mount "
+                "validation will be permissive (all paths accepted)"
+            )
+
+        self._mountinfo_cache = mount_points
+        return mount_points
+
+    def is_path_bind_mounted(self, path: str) -> Tuple[bool, Optional[str]]:
+        """Check if a path falls under a real bind mount (not the overlay rootfs).
+
+        Returns (True, owning_mount) when the path is safe to write to,
+        or (False, None) when writes would go to docker.img.
+
+        Non-Docker callers always get (True, None).
+        """
+        if not self.is_docker:
+            return (True, None)
+
+        mount_points = self._parse_mountinfo()
+        if not mount_points:
+            return (True, None)
+
+        # Use posixpath since mountinfo is always Linux paths
+        normalized = posixpath.normpath(path)
+        best_match: Optional[str] = None
+        best_len = 0
+
+        for mp in mount_points:
+            norm_mp = posixpath.normpath(mp)
+            if normalized == norm_mp or normalized.startswith(norm_mp + '/'):
+                if len(norm_mp) > best_len:
+                    best_match = norm_mp
+                    best_len = len(norm_mp)
+
+        if best_match is None or best_match == '/':
+            return (False, None)
+
+        return (True, best_match)
+
+    def validate_docker_mounts(self, paths: list) -> list:
+        """Validate that paths are backed by real bind mounts in Docker.
+
+        Uses /proc/self/mountinfo to definitively determine if paths fall
+        under real bind mounts or the overlay rootfs (docker.img).
 
         Args:
             paths: List of paths to validate (e.g., ['/mnt/cache', '/mnt/user0'])
@@ -575,30 +636,15 @@ class SystemDetector:
             if not path:
                 continue
 
-            # Normalize path (remove trailing slashes for consistent checking)
             path = path.rstrip('/')
+            is_mounted, owning_mount = self.is_path_bind_mounted(path)
 
-            if not os.path.exists(path):
-                # Path doesn't exist - might be OK if not used
-                continue
-
-            # Check if it's a mount point
-            if not os.path.ismount(path):
-                # Not a mount point - could be a directory inside container
-                # Check if it's suspiciously small (container rootfs is typically small)
-                try:
-                    stat = os.statvfs(path)
-                    total_gb = (stat.f_blocks * stat.f_frsize) / (1024**3)
-
-                    # If the filesystem is very small (< 100GB), it's likely container rootfs
-                    if total_gb < 100:
-                        warnings.append(
-                            f"WARNING: {path} may not be properly mounted! "
-                            f"Filesystem is only {total_gb:.1f}GB. "
-                            f"Check your Docker volume configuration."
-                        )
-                except OSError:
-                    pass
+            if not is_mounted:
+                warnings.append(
+                    f"WARNING: {path} is not backed by a Docker bind mount — "
+                    f"writes will go to the container's overlay filesystem "
+                    f"(docker.img). Check your Docker volume configuration."
+                )
 
         return warnings
 

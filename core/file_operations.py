@@ -4084,6 +4084,9 @@ class FileMover:
         # Optional callback for recording per-file activity to shared activity feed
         # Signature: callback(action: str, filename: str, size_bytes: int)
         self._file_activity_callback = file_activity_callback
+        # Docker mount validation gate — set to False by PlexCacheApp when
+        # paths are not backed by real bind mounts (issue #139)
+        self.mount_paths_validated = True
 
     def move_media_files(self, files: List[str], destination: str,
                         max_concurrent_moves_array: int, max_concurrent_moves_cache: int,
@@ -4099,6 +4102,14 @@ class FileMover:
             source_map: Optional dict mapping file paths to their source ('ondeck' or 'watchlist').
             media_info_map: Optional dict mapping file paths to Plex media type info.
         """
+        if not self.mount_paths_validated:
+            logging.error(
+                "File moves blocked: one or more paths are not backed by "
+                "Docker bind mounts. Fix your container's volume configuration "
+                "to prevent data loss."
+            )
+            return
+
         # Store source map and media info map for use during moves
         self._source_map = source_map or {}
         self._media_info_map = media_info_map or {}

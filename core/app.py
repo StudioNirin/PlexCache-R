@@ -85,6 +85,8 @@ class PlexCacheApp:
 
         # Stop request flag (for web UI to abort operations)
         self._stop_requested = False
+        # Docker mount validation result (False = unsafe, blocks file moves)
+        self._mount_paths_safe = True
 
     def _record_file_activity(self, action: str, filename: str, size_bytes: int) -> None:
         """Record a file operation to the shared activity feed (CLI runs only).
@@ -201,6 +203,9 @@ class PlexCacheApp:
             # Check paths
             logging.debug("Validating paths...")
             self._check_paths()
+
+            if not self._mount_paths_safe and self.file_mover:
+                self.file_mover.mount_paths_validated = False
 
             # Connect to Plex
             self._connect_to_plex()
@@ -765,44 +770,37 @@ class PlexCacheApp:
 
     def _check_paths(self) -> None:
         """Check that required paths exist and are accessible."""
-        # In Docker, validate that mount points are properly configured
-        # This prevents writing massive amounts of data inside the container
+        # In Docker, validate that paths are backed by real bind mounts
+        # (issue #139) — prevents writing into the overlay filesystem
         if self.system_detector.is_docker:
-            paths_to_validate = set()
+            mount_issues = []
 
-            # Collect paths from path_mappings
             if self.config_manager.paths.path_mappings:
                 for mapping in self.config_manager.paths.path_mappings:
-                    if mapping.enabled:
-                        if mapping.real_path:
-                            # Extract base mount point (e.g., /mnt/user from /mnt/user/Movies/)
-                            parts = mapping.real_path.strip('/').split('/')
-                            if len(parts) >= 2:
-                                paths_to_validate.add('/' + '/'.join(parts[:2]))
-                        if mapping.cache_path:
-                            parts = mapping.cache_path.strip('/').split('/')
-                            if len(parts) >= 2:
-                                paths_to_validate.add('/' + '/'.join(parts[:2]))
+                    if not mapping.enabled:
+                        continue
+                    for path_val, label in [(mapping.real_path, "real_path"), (mapping.cache_path, "cache_path")]:
+                        if not path_val:
+                            continue
+                        is_mounted, _ = self.system_detector.is_path_bind_mounted(path_val)
+                        if not is_mounted:
+                            mount_issues.append(
+                                f"Mapping '{mapping.name}': {label} '{path_val}' is not "
+                                f"backed by a Docker bind mount — writes will go to "
+                                f"the overlay filesystem (docker.img)"
+                            )
 
-            # Also check common Unraid paths
-            paths_to_validate.update(['/mnt/cache', '/mnt/user', '/mnt/user0'])
-
-            # Validate mounts
-            mount_warnings = self.system_detector.validate_docker_mounts(list(paths_to_validate))
-            for warning in mount_warnings:
-                logging.warning(warning)
-
-            # If any critical mount is not properly mounted, abort
-            if mount_warnings:
-                raise RuntimeError(
-                    "Docker mount validation failed! One or more paths may not be properly mounted. "
-                    "This could cause data to be written inside the container instead of to mounted volumes. "
-                    "Check your Docker volume configuration and ensure source paths exist on the host."
+            if mount_issues:
+                self._mount_paths_safe = False
+                for issue in mount_issues:
+                    logging.error("Docker mount validation: %s", issue)
+                logging.error(
+                    "One or more paths are not backed by Docker bind mounts. "
+                    "File moves are blocked to prevent data loss. Check your "
+                    "container's volume configuration."
                 )
 
             # Validate /mnt/user0 mount when .plexcached backups are enabled
-            # Without this mount, .plexcached renames operate through FUSE (/mnt/user/)
-            # which targets the cache copy instead of the array original
             if self.config_manager.cache.create_plexcached_backups:
                 if not os.path.ismount('/mnt/user0'):
                     if not os.path.exists('/mnt/user0'):
@@ -819,20 +817,32 @@ class PlexCacheApp:
                         )
 
         if self.config_manager.paths.path_mappings:
-            # Multi-path mode: check paths from enabled mappings
             for mapping in self.config_manager.paths.path_mappings:
                 if mapping.enabled:
                     if mapping.real_path:
-                        self.file_utils.check_path_exists(mapping.real_path)
+                        try:
+                            self.file_utils.check_path_exists(mapping.real_path)
+                        except FileNotFoundError:
+                            logging.error(
+                                "Mapping '%s': real_path '%s' does not exist inside "
+                                "the container. Check your bind mounts — the path "
+                                "must be accessible from inside the container.",
+                                mapping.name, mapping.real_path
+                            )
+                            self._mount_paths_safe = False
                     if mapping.cacheable and mapping.cache_path:
-                        # Create cache directory if it doesn't exist
                         self._ensure_cache_path_exists(mapping.cache_path)
         else:
-            # Legacy single-path mode
             if self.config_manager.paths.real_source:
-                self.file_utils.check_path_exists(self.config_manager.paths.real_source)
+                try:
+                    self.file_utils.check_path_exists(self.config_manager.paths.real_source)
+                except FileNotFoundError:
+                    logging.error(
+                        "real_source '%s' does not exist. Check your path configuration.",
+                        self.config_manager.paths.real_source
+                    )
+                    self._mount_paths_safe = False
             if self.config_manager.paths.cache_dir:
-                # Create cache directory if it doesn't exist
                 self._ensure_cache_path_exists(self.config_manager.paths.cache_dir)
     
     def _connect_to_plex(self) -> None:

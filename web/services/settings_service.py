@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field, asdict
 
-from web.config import DATA_DIR, SETTINGS_FILE
+from web.config import DATA_DIR, SETTINGS_FILE, IS_DOCKER
+from web.dependencies import get_system_detector
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +287,10 @@ class SettingsService:
         - cache_path pointing at the Unraid FUSE merged view
           ('/mnt/user/...', but not /mnt/user0/). Audits go through shfs
           and the cache-vs-array logic can't distinguish the two layers.
+
+        Docker-specific check (issue #139):
+        - cache_path not backed by a real bind mount. Writes go to
+          the overlay filesystem (docker.img) instead of the host drive.
         """
         if not cache_path:
             return None
@@ -293,6 +298,20 @@ class SettingsService:
         normalized = cache_path.rstrip("/\\")
         if not normalized:
             return None
+
+        # Docker mount validation (issue #139) — highest priority check
+        if IS_DOCKER:
+            detector = get_system_detector()
+            is_mounted, _ = detector.is_path_bind_mounted(normalized)
+            if not is_mounted:
+                return (
+                    f"This path is not backed by a Docker bind mount — "
+                    f"files written here will go into the container's "
+                    f"overlay filesystem (docker.img), not your host drive. "
+                    f"Check your container's volume configuration and use "
+                    f"the path as seen inside the container (e.g., "
+                    f"/mnt/cache/...), not the host path."
+                )
 
         if normalized == "/mnt/cache":
             return (
@@ -331,6 +350,12 @@ class SettingsService:
            ("/mnt/cache/..."). FUSE reads are 3-5x slower than cache-direct
            and the audit's cache-vs-array logic can't distinguish the two.
 
+        Issue #139 added a third failure mode specific to Docker:
+
+        3. A mapping whose cache_path or real_path is not backed by a real
+           bind mount. Writes go to the overlay filesystem (docker.img)
+           instead of the host drive.
+
         Returns a list of dicts with keys: mapping_name, issue_type, message.
         Empty list means no issues detected. This is a read-only check —
         fixes must be performed by the user via Settings -> Libraries.
@@ -338,6 +363,33 @@ class SettingsService:
         raw = self._load_raw()
         mappings = raw.get("path_mappings", [])
         issues: List[Dict[str, str]] = []
+
+        # Docker mount validation (issue #139)
+        if IS_DOCKER:
+            detector = get_system_detector()
+            for m in mappings:
+                if not m.get("enabled", True):
+                    continue
+                name = m.get("name", "(unnamed)")
+                for field_name, label in [("cache_path", "cache_path"), ("real_path", "real_path")]:
+                    path_val = (m.get(field_name) or "").rstrip("/\\")
+                    if not path_val:
+                        continue
+                    # host_cache_path is intentionally a host path — do NOT validate it
+                    is_mounted, _ = detector.is_path_bind_mounted(path_val)
+                    if not is_mounted:
+                        issues.append({
+                            "mapping_name": name,
+                            "issue_type": "overlay_path",
+                            "message": (
+                                f"Mapping '{name}' has {label} set to "
+                                f"'{m.get(field_name)}' which is not backed by "
+                                f"a Docker bind mount. Writes to this path will "
+                                f"go into the container's overlay filesystem "
+                                f"(docker.img), not your host drive. Check your "
+                                f"container's volume configuration."
+                            ),
+                        })
 
         for m in mappings:
             if not m.get("enabled", True):

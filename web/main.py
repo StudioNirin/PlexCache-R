@@ -130,17 +130,25 @@ async def lifespan(app: FastAPI):
     settings_service = get_settings_service()
     settings_service.prefetch_plex_data()
 
-    # Scan path_mappings for known-bad configurations (issue #136).
-    # Read-only: just logs warnings and surfaces them in the dashboard
+    # Scan path_mappings for known-bad configurations (issues #136, #139).
+    # Read-only: just logs warnings/errors and surfaces them in the dashboard
     # via /api/config-health. Does not auto-modify user settings.
     try:
         health_issues = settings_service.detect_path_mapping_health_issues()
         for issue in health_issues:
-            logging.warning(
-                "path_mapping health check: %s — %s",
-                issue["issue_type"],
-                issue["message"],
-            )
+            # Docker overlay issues are ERROR-level (data loss risk)
+            if issue["issue_type"] == "overlay_path":
+                logging.error(
+                    "path_mapping health check: %s — %s",
+                    issue["issue_type"],
+                    issue["message"],
+                )
+            else:
+                logging.warning(
+                    "path_mapping health check: %s — %s",
+                    issue["issue_type"],
+                    issue["message"],
+                )
     except Exception as e:
         logging.warning("path_mapping health check failed (non-fatal): %s", e)
 

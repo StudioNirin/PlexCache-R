@@ -11,7 +11,7 @@ from starlette.datastructures import ImmutableMultiDict
 from typing import List
 from urllib.parse import unquote
 
-from web.config import templates, PLEXCACHE_PRODUCT_VERSION
+from web.config import templates, PLEXCACHE_PRODUCT_VERSION, IS_DOCKER
 from web.dependencies import parse_form
 from core.system_utils import format_bytes, format_duration, format_cache_age
 from web.services import get_cache_service, get_settings_service, get_operation_runner, get_scheduler_service, ScheduleConfig, get_maintenance_service
@@ -728,6 +728,17 @@ def validate_path(path: str = Query("")):
         if resolved_str != "/mnt" and not resolved_str.startswith("/mnt/"):
             return HTMLResponse("")
         if p.exists() and p.is_dir():
+            # Docker: verify path is backed by a real bind mount (issue #139)
+            if IS_DOCKER:
+                from web.dependencies import get_system_detector
+                detector = get_system_detector()
+                is_mounted, _ = detector.is_path_bind_mounted(path)
+                if not is_mounted:
+                    return HTMLResponse(
+                        '<i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--plex-error, #e74c3c); vertical-align: middle;" '
+                        'title="Path exists but is not backed by a bind mount — writes will go to docker.img"></i>'
+                        '<script>lucide.createIcons();</script>'
+                    )
             return HTMLResponse(
                 '<i data-lucide="check-circle" style="width: 14px; height: 14px; color: var(--plex-success); vertical-align: middle;"></i>'
                 '<script>lucide.createIcons();</script>'

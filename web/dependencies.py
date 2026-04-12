@@ -43,6 +43,17 @@ def get_logs_dir() -> Path:
     return LOGS_DIR
 
 
+_system_detector_instance = None
+
+def get_system_detector():
+    """Get SystemDetector singleton (caches mountinfo for process lifetime)."""
+    global _system_detector_instance
+    if _system_detector_instance is None:
+        from core.system_utils import SystemDetector
+        _system_detector_instance = SystemDetector()
+    return _system_detector_instance
+
+
 def get_config_manager():
     """Get ConfigManager instance (lazy loaded)"""
     from core.config import ConfigManager
