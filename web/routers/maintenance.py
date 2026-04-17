@@ -657,15 +657,40 @@ def cache_pinned(request: Request):
     resolves the pinned set internally, skips files already on cache, and
     copies the rest. Used by the Settings → Pinned Media "Run Now" button as
     a targeted alternative to the full PlexCache run.
+
+    We resolve + filter pins here (cheap, no disk walk) so the banner shows
+    the correct count and the overall progress bar can compute percent.
     """
+    import os
     service = get_maintenance_service()
+
+    try:
+        missing_count = 0
+        pinned_paths = service._get_pinned_cache_paths()
+        for cache_path in pinned_paths:
+            try:
+                if not os.path.exists(cache_path):
+                    missing_count += 1
+            except OSError:
+                continue
+    except Exception:
+        missing_count = 0
+
+    if missing_count == 0:
+        return HTMLResponse(
+            '<div class="alert alert-info" style="margin-bottom: 1rem;">'
+            '<i data-lucide="check-circle"></i>'
+            '<span>All pinned media is already on cache.</span>'
+            '</div><script>lucide.createIcons();</script>'
+        )
+
     max_workers = _get_max_workers()
     response = _start_async_action(
         "cache-pinned",
         service.cache_pinned,
         method_args=(),
         method_kwargs={"dry_run": False},
-        file_count=0,
+        file_count=missing_count,
         max_workers=max_workers,
     )
     return HTMLResponse(response)
