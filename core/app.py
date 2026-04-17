@@ -851,11 +851,11 @@ class PlexCacheApp:
 
         # Load user tokens once at startup (reduces plex.tv API calls)
         if self.config_manager.plex.users_toggle:
-            # Combine all skip lists for token loading
-            skip_users = list(set(
-                (self.config_manager.plex.skip_ondeck or []) +
-                (self.config_manager.plex.skip_watchlist or [])
-            ))
+            # Only exclude a token when the user is skipped for BOTH operations.
+            # A user skipped for only one still needs their token for the other.
+            ondeck_skip = set(self.config_manager.plex.skip_ondeck or [])
+            watchlist_skip = set(self.config_manager.plex.skip_watchlist or [])
+            skip_users = list(ondeck_skip & watchlist_skip)
             # Pass users from settings file (includes remote users with tokens)
             # Use "main" as fallback username if plex.tv unreachable
             self.plex_manager.load_user_tokens(

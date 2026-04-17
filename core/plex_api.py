@@ -383,13 +383,19 @@ class PlexManager:
                     self._newly_discovered_users.append(build_user_info(cached_token))
                     continue
 
-                # Fetch fresh token from plex.tv (may return None due to Plex API changes)
-                try:
-                    self._rate_limited_api_call()
-                    token = user.get_token(machine_id)
-                except Exception as e:
-                    _log_api_error(f"get token for {username}", e)
-                    token = None
+                # Fetch fresh token from plex.tv. Home/managed users from
+                # plexapi arrive as UserProxy-like objects without get_token;
+                # they authenticate via switchHomeUser at runtime instead.
+                token = None
+                if hasattr(user, 'get_token'):
+                    try:
+                        self._rate_limited_api_call()
+                        token = user.get_token(machine_id)
+                    except Exception as e:
+                        _log_api_error(f"get token for {username}", e)
+                        token = None
+                else:
+                    logging.debug(f"[USER:{username}] Home/managed user — no individual token, will use switchHomeUser at runtime")
 
                 if token:
                     if token in skip_users:
@@ -553,18 +559,21 @@ class PlexManager:
             with self._token_lock:
                 token = self._user_tokens.get(username)
             if not token:
-                # Fall back to fetching token (shouldn't happen if load_user_tokens was called)
-                logging.warning(f"[PLEX API] No cached token for {username}, fetching fresh...")
-                try:
-                    self._rate_limited_api_call()
-                    token = user.get_token(self.plex.machineIdentifier)
-                    if token:
-                        with self._token_lock:
-                            self._user_tokens[username] = token
-                        self._token_cache.set_token(username, token, self.plex.machineIdentifier)
-                except Exception as e:
-                    _log_api_error(f"get token for {username}", e)
-                    return None, None
+                # Our internal UserProxy wrapper and Home/managed users have no
+                # individual plex.tv token — skip get_token and let the
+                # switchHomeUser fallback below handle auth.
+                is_home = self._user_is_home.get(username, False)
+                if hasattr(user, 'get_token') and not is_home:
+                    logging.warning(f"[PLEX API] No cached token for {username}, fetching fresh...")
+                    try:
+                        self._rate_limited_api_call()
+                        token = user.get_token(self.plex.machineIdentifier)
+                        if token:
+                            with self._token_lock:
+                                self._user_tokens[username] = token
+                            self._token_cache.set_token(username, token, self.plex.machineIdentifier)
+                    except Exception as e:
+                        _log_api_error(f"get token for {username}", e)
 
             if not token:
                 # Try switchHomeUser for home/managed users (no individual token needed)
