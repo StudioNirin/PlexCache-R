@@ -51,26 +51,33 @@ RSS_TIMEOUT = 15  # seconds
 
 
 def _log_api_error(context: str, error: Exception) -> None:
-    """Log API errors with specific detection for common HTTP status codes."""
+    """Log API errors with specific detection for common HTTP status codes.
+
+    Strips HTML from error messages — plex.tv's nginx returns full HTML error
+    pages on 5xx responses that otherwise get dumped into logs and notifications.
+    Transient 5xx errors are logged at WARNING (not ERROR) because the caching
+    layer falls back to cached data and the outage isn't user-actionable.
+    """
     error_str = str(error)
+    clean_error = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", error_str)).strip()
 
     if "401" in error_str or "Unauthorized" in error_str:
-        logging.error(f"[PLEX API] Authentication failed ({context}): {error}")
+        logging.error(f"[PLEX API] Authentication failed ({context}): {clean_error}")
         logging.error(f"[PLEX API] Your Plex token is invalid or has been revoked.")
         logging.error(f"[PLEX API] To fix: Run 'python3 plexcache_setup.py' and select 'y' to re-authenticate.")
     elif "429" in error_str or "Too Many Requests" in error_str:
-        logging.warning(f"[PLEX API] Rate limited by Plex.tv ({context}): {error}")
+        logging.warning(f"[PLEX API] Rate limited by Plex.tv ({context}): {clean_error}")
         logging.warning(f"[PLEX API] Consider increasing delays between API calls")
     elif "403" in error_str or "Forbidden" in error_str:
-        logging.error(f"[PLEX API] Access forbidden ({context}): {error}")
+        logging.error(f"[PLEX API] Access forbidden ({context}): {clean_error}")
         logging.error(f"[PLEX API] User may not have permission for this resource")
     elif "404" in error_str or "Not Found" in error_str:
-        logging.warning(f"[PLEX API] Resource not found ({context}): {error}")
+        logging.warning(f"[PLEX API] Resource not found ({context}): {clean_error}")
     elif "500" in error_str or "502" in error_str or "503" in error_str:
-        logging.error(f"[PLEX API] Plex server error ({context}): {error}")
-        logging.error(f"[PLEX API] Plex.tv may be experiencing issues")
+        logging.warning(f"[PLEX API] Plex server error ({context}): {clean_error}")
+        logging.warning(f"[PLEX API] Plex.tv may be experiencing issues — using cached data when available")
     else:
-        logging.error(f"[PLEX API] Error ({context}): {error}")
+        logging.error(f"[PLEX API] Error ({context}): {clean_error}")
 
 
 class UserProxy:
