@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import List
 
 from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse
@@ -178,6 +179,39 @@ def _start_unpin_eviction(cache_paths: list) -> bool:
     except Exception as e:
         logger.warning("Unpin eviction could not start: %s", e)
         return False
+
+
+@router.post("/unpin-group", response_class=HTMLResponse)
+def pinned_unpin_group(
+    request: Request,
+    rating_keys: List[str] = Form(default=[]),
+):
+    """Unpin every rating_key in ``rating_keys`` in a single batch.
+
+    Used by the group header's "Unpin all" button. Reuses the same unpin
+    flow as a single toggle: emits ``pinned-updated`` so the chip list
+    refreshes, and starts one background eviction covering every cache
+    path that was uniquely held by the removed pins.
+    """
+    service = get_pinned_service()
+    result = service.unpin_many(rating_keys)
+
+    response = HTMLResponse(
+        '<div class="alert alert-info" style="margin-bottom: 1rem;">'
+        '<i data-lucide="check-circle"></i>'
+        f'<span>Unpinned {result["removed"]} item(s).</span>'
+        '</div><script>lucide.createIcons();</script>',
+        status_code=200,
+    )
+
+    triggers = {"pinned-updated": {}}
+    evict_paths = result.get("evict_paths") or []
+    if evict_paths:
+        started = _start_unpin_eviction(evict_paths)
+        if started:
+            triggers["pinned-eviction-started"] = {}
+    response.headers["HX-Trigger"] = json.dumps(triggers)
+    return response
 
 
 @router.get("/list", response_class=HTMLResponse)

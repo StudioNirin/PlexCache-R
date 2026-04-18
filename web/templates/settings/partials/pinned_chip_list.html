@@ -55,6 +55,23 @@
                 <span style="color: var(--plex-text-muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap;">
                     {{ group.pin_count }} pin{% if group.pin_count != 1 %}s{% endif %} · {{ group.group_size_display }}
                 </span>
+                {% if group.pin_count > 1 %}
+                <form hx-post="/api/pinned/unpin-group"
+                      hx-target="#settings-alert-container"
+                      hx-swap="innerHTML"
+                      onsubmit="return confirm('Unpin all {{ group.pin_count }} pins in this group?');"
+                      style="margin: 0; flex-shrink: 0;">
+                    {% for pin in group.pins %}
+                    <input type="hidden" name="rating_keys" value="{{ pin.rating_key }}">
+                    {% endfor %}
+                    <button type="submit" class="btn-icon" title="Unpin all items in {{ group.group_title }}"
+                            aria-label="Unpin all items in {{ group.group_title }}"
+                            style="background: none; border: 0; cursor: pointer; color: var(--plex-text-muted); padding: 0.15rem 0.35rem; display: inline-flex; align-items: center; gap: 0.25rem; border-radius: var(--plex-radius-sm); font-size: 0.75rem;">
+                        <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i>
+                        <span>Unpin all</span>
+                    </button>
+                </form>
+                {% endif %}
             </div>
             <ul style="list-style: none; padding: 0; margin: 0;">
             {% for pin in group.pins %}

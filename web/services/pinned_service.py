@@ -550,6 +550,40 @@ class PinnedService:
             })
         return out
 
+    def unpin_many(self, rating_keys: List[str]) -> Dict[str, Any]:
+        """Remove multiple pins in one pass.
+
+        Takes the before/after resolve-diff once (not per-key) so the caller
+        can start a single background eviction covering every freshly-released
+        cache path. Unknown rating_keys are silently skipped. Returns::
+
+            {removed: int, evict_paths: List[str], budget: dict}
+
+        Shape intentionally mirrors toggle_pin's unpin branch so the route can
+        reuse the same HX-Trigger + eviction-kickoff flow.
+        """
+        normalized = [str(rk) for rk in rating_keys if str(rk)]
+        if not normalized:
+            return {
+                "removed": 0,
+                "evict_paths": [],
+                "budget": self.budget_check(),
+            }
+
+        before_paths = self.resolve_all_to_cache_paths()
+        removed = 0
+        for rk in normalized:
+            if self._tracker.is_pinned(rk):
+                self._tracker.remove_pin(rk)
+                removed += 1
+        after_paths = self.resolve_all_to_cache_paths()
+        freshly_unpinned = sorted(before_paths - after_paths)
+        return {
+            "removed": removed,
+            "evict_paths": freshly_unpinned,
+            "budget": self.budget_check(),
+        }
+
     def _pin_group_and_scope(self, plex, pin_type: str, rating_key: str,
                               stored_title: str) -> Dict[str, Any]:
         """Return group metadata + scope text for a pin.
