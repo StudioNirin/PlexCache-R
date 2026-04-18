@@ -65,7 +65,7 @@
                     {% endfor %}
                     <button type="button" class="btn-icon" title="Unpin all items in {{ group.group_title }}"
                             aria-label="Unpin all items in {{ group.group_title }}"
-                            onclick="openUnpinGroupModal(this.form, {{ group.pin_count }}, {{ group.group_title | tojson }});"
+                            onclick='openUnpinGroupModal(this.form, {{ group.pin_count }}, {{ group.group_title | tojson }});'
                             style="background: none; border: 0; cursor: pointer; color: var(--plex-text-muted); padding: 0.15rem 0.35rem; display: inline-flex; align-items: center; gap: 0.25rem; border-radius: var(--plex-radius-sm); font-size: 0.75rem;">
                         <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i>
                         <span>Unpin all</span>
