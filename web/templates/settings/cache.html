@@ -460,6 +460,65 @@
 </div>
 
 <script>
+    // Pinned group unpin confirmation (styled modal — replaces native confirm()).
+    // Called from the "Unpin all" button inside each pinned group header.
+    var _pendingUnpinGroupForm = null;
+    function openUnpinGroupModal(form, count, title) {
+        _pendingUnpinGroupForm = form;
+        document.getElementById('unpin-group-count').textContent = count;
+        document.getElementById('unpin-group-title').textContent = title || 'this group';
+        var modal = document.getElementById('unpin-group-modal');
+        modal.style.display = 'flex';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+    function closeUnpinGroupModal() {
+        document.getElementById('unpin-group-modal').style.display = 'none';
+        _pendingUnpinGroupForm = null;
+    }
+    (function() {
+        var btn = document.getElementById('unpin-group-confirm');
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+            var form = _pendingUnpinGroupForm;
+            closeUnpinGroupModal();
+            if (form && typeof form.requestSubmit === 'function') {
+                form.requestSubmit();
+            } else if (form) {
+                form.submit();
+            }
+        });
+    })();
+</script>
+
+<div id="unpin-group-modal" class="modal" style="display: none;">
+    <div class="modal-backdrop" onclick="closeUnpinGroupModal()"></div>
+    <div class="modal-content" style="max-width: 440px;">
+        <div class="modal-header">
+            <h3>Unpin group</h3>
+            <button type="button" class="modal-close" onclick="closeUnpinGroupModal()" aria-label="Close">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <p style="margin: 0 0 0.75rem 0;">
+                Unpin all <strong id="unpin-group-count">0</strong> pins in
+                <strong id="unpin-group-title">this group</strong>?
+            </p>
+            <p style="margin: 0; color: var(--plex-text-muted); font-size: 0.85rem;">
+                Files uniquely held by these pins will move back to the array in the background.
+            </p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeUnpinGroupModal()">Cancel</button>
+            <button type="button" class="btn btn-danger" id="unpin-group-confirm">
+                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                Unpin all
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
 // Drive info from server (auto-detected)
 const autoDetectedBytes = {{ drive_info.total_bytes | default(0) }};
 const autoDetectedDisplay = "{{ drive_info.total_display | default('Unknown') }}";
