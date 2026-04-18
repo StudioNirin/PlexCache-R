@@ -511,3 +511,154 @@ class TestRunPinnedCommand:
         with patch.object(sys, "argv", ["prog", "--pin-by-title"]):
             self._run_with_mock_config(config_file)
         assert "requires a search query" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Budget enforcement (enhancement #11)
+# ---------------------------------------------------------------------------
+
+
+def _make_sized_movie(rating_key, title, size_bytes):
+    """Build a plex-item mock whose single Media reports size_bytes."""
+    item = _make_plex_item(rating_key, title, item_type="movie")
+    part = MagicMock()
+    part.size = size_bytes
+    media = MagicMock()
+    media.parts = [part]
+    # videoResolution drives select_media_version; 1080 matches "highest"
+    # with a single media (sort is stable, one element).
+    media.videoResolution = "1080"
+    item.media = [media]
+    return item
+
+
+class TestCliBudgetEnforcement:
+    """The CLI must apply the same cache-budget guard as the web UI.
+
+    Before #11 the CLI called ``tracker.add_pin`` without a preflight, so
+    ``--pin`` or ``--pin-by-title`` could silently push pinned bytes past
+    ``cache_limit``. These tests lock in the new behavior: over-budget pins
+    error out with a clear message and a non-zero exit code, while
+    under-budget and unconfigured-budget pins continue to succeed.
+    """
+
+    def _make_cm_with_budget(self, tmp_path, cache_limit):
+        cm = _make_config_manager(tmp_path)
+        cm.settings_data = {
+            "cache_limit": cache_limit,
+            "min_free_space": "",
+            "plexcache_quota": "",
+            "path_mappings": [],
+        }
+        return cm
+
+    def test_pin_rejected_when_item_would_exceed_budget(self, tmp_path, capsys):
+        from core.pinned_cli import handle_pin
+        cm = self._make_cm_with_budget(tmp_path, "500MB")
+
+        mock_plex = MagicMock()
+        # 1GB movie against a 500MB cache_limit → hard-block.
+        mock_plex.fetchItem.return_value = _make_sized_movie(
+            "777", "Oppenheimer", size_bytes=1024 * 1024 * 1024
+        )
+
+        with patch("core.pinned_cli._connect_plex", return_value=mock_plex):
+            with pytest.raises(SystemExit) as exc:
+                handle_pin(cm, "777")
+
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "exceed the cache budget" in out
+        # Tracker must not have been written.
+        tracker = _tracker_from_cm(cm)
+        assert not tracker.is_pinned("777")
+
+    def test_pin_succeeds_when_item_fits_budget(self, tmp_path, capsys):
+        from core.pinned_cli import handle_pin
+        cm = self._make_cm_with_budget(tmp_path, "10GB")
+
+        mock_plex = MagicMock()
+        mock_plex.fetchItem.return_value = _make_sized_movie(
+            "888", "Arrival", size_bytes=2 * 1024 * 1024 * 1024
+        )
+
+        with patch("core.pinned_cli._connect_plex", return_value=mock_plex):
+            handle_pin(cm, "888")
+
+        out = capsys.readouterr().out
+        assert "Pinned" in out
+        tracker = _tracker_from_cm(cm)
+        assert tracker.is_pinned("888")
+
+    def test_pin_allowed_when_budget_unconfigured(self, tmp_path, capsys):
+        """cache_limit empty / "0" / "none" → budget guard opt-out, matches the
+        web behavior. Even a huge item slides through."""
+        from core.pinned_cli import handle_pin
+        cm = self._make_cm_with_budget(tmp_path, "")  # budget disabled
+
+        mock_plex = MagicMock()
+        mock_plex.fetchItem.return_value = _make_sized_movie(
+            "999", "Dune Part Two", size_bytes=100 * 1024 * 1024 * 1024  # 100 GB
+        )
+
+        with patch("core.pinned_cli._connect_plex", return_value=mock_plex):
+            handle_pin(cm, "999")
+
+        tracker = _tracker_from_cm(cm)
+        assert tracker.is_pinned("999")
+
+    def test_pin_by_title_rejected_when_over_budget(self, tmp_path, capsys):
+        from core.pinned_cli import handle_pin_by_title
+        cm = self._make_cm_with_budget(tmp_path, "500MB")
+
+        mock_plex = MagicMock()
+        # search() is what handle_pin_by_title calls first for result listing.
+        search_item = _make_sized_movie("777", "Oppenheimer", size_bytes=1024 * 1024 * 1024)
+        mock_plex.search.return_value = [search_item]
+        # fetchItem is what estimate_item_bytes calls during preflight.
+        mock_plex.fetchItem.return_value = search_item
+
+        with patch("core.pinned_cli._connect_plex", return_value=mock_plex), \
+             patch("builtins.input", return_value="1"):
+            with pytest.raises(SystemExit) as exc:
+                handle_pin_by_title(cm, "Oppenheimer")
+
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "exceed the cache budget" in out
+        tracker = _tracker_from_cm(cm)
+        assert not tracker.is_pinned("777")
+
+    def test_percent_based_cache_limit_resolves_against_disk_total(self, tmp_path, capsys):
+        """A "50%" cache_limit must be resolved against the cache drive's
+        disk.total so CLI matches the web UI's percent handling."""
+        from core.pinned_cli import handle_pin
+
+        cm = _make_config_manager(tmp_path)
+        cm.settings_data = {
+            "cache_limit": "50%",
+            "min_free_space": "",
+            "plexcache_quota": "",
+            "path_mappings": [
+                {"enabled": True, "plex_path": "/data", "cache_path": str(tmp_path)},
+            ],
+        }
+
+        mock_plex = MagicMock()
+        # 2GB movie. 50% of a 1GB disk = 500MB → reject.
+        mock_plex.fetchItem.return_value = _make_sized_movie(
+            "123", "Interstellar", size_bytes=2 * 1024 * 1024 * 1024
+        )
+
+        # Stub get_disk_usage so "50%" resolves to 500MB.
+        fake_disk = MagicMock()
+        fake_disk.total = 1024 * 1024 * 1024  # 1 GB
+        fake_disk.used = 0
+
+        with patch("core.pinned_cli._connect_plex", return_value=mock_plex), \
+             patch("core.system_utils.get_disk_usage", return_value=fake_disk):
+            with pytest.raises(SystemExit) as exc:
+                handle_pin(cm, "123")
+
+        assert exc.value.code == 1
+        assert "exceed the cache budget" in capsys.readouterr().out

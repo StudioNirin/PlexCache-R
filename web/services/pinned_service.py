@@ -26,35 +26,22 @@ from core.pinned_media import (
     resolve_pins_to_paths,
     select_media_version,
     _media_total_size,
+    compute_budget_state,
+    estimate_item_bytes,
+    estimate_item_size,
+    get_active_cache_total_bytes,
+    parse_budget_from_settings,
+    plex_to_cache_path,
+    resolve_size_setting,
+    sum_pinned_bytes_on_disk,
 )
 
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_size_setting(value: Any, disk_total_bytes: int) -> int:
-    """Resolve a settings size value to bytes.
-
-    Accepts either a byte-quantity string ("10GB", "500MB") parsed via
-    ``parse_size_bytes`` or a percentage string ("50%") resolved against
-    ``disk_total_bytes``. Returns 0 on any parse failure, empty input,
-    or percent-without-disk-size.
-    """
-    from core.system_utils import parse_size_bytes
-    if value is None:
-        return 0
-    s = str(value).strip()
-    if not s or s in ("0", "N/A", "none", "None"):
-        return 0
-    if s.endswith("%"):
-        try:
-            percent = float(s.rstrip("%"))
-        except ValueError:
-            return 0
-        if disk_total_bytes <= 0 or percent <= 0:
-            return 0
-        return int(disk_total_bytes * percent / 100)
-    return parse_size_bytes(s) or 0
+# Backward-compat alias so any caller that used the private name keeps working.
+_resolve_size_setting = resolve_size_setting
 
 
 class PinnedService:
@@ -150,28 +137,11 @@ class PinnedService:
 
     @staticmethod
     def _estimate_item_size(item: Any, item_type: str, preference: str) -> int:
-        """Compute total byte size for an item from Plex metadata."""
-        def _single_size(it):
-            try:
-                media = select_media_version(it, preference)
-                return _media_total_size(media)
-            except Exception:
-                return 0
+        """Compute total byte size for an item from Plex metadata.
 
-        try:
-            if item_type in ("movie", "episode"):
-                return _single_size(item)
-            if item_type == "season":
-                return sum(_single_size(ep) for ep in item.episodes())
-            if item_type == "show":
-                total = 0
-                for season in item.seasons():
-                    for ep in season.episodes():
-                        total += _single_size(ep)
-                return total
-        except Exception:
-            pass
-        return 0
+        Thin wrapper around :func:`core.pinned_media.estimate_item_size`.
+        """
+        return estimate_item_size(item, item_type, preference)
 
     def expand(self, rating_key: str, level: str) -> List[Dict[str, Any]]:
         """Return lazy children for a show/season.
@@ -275,25 +245,14 @@ class PinnedService:
     def _load_parsed_settings(self) -> Dict[str, int]:
         """Return the parsed cache budget (bytes) from settings.
 
-        Handles both byte-quantity strings ("10GB", "500MB") and
-        percentage values ("50%"). Percent values are resolved against
-        the active cache drive's total size via ``get_disk_usage()`` on
-        the first enabled cache mapping. Falls back to 0 if the cache
-        drive cannot be probed — matches the soft-fail behavior used
-        elsewhere in this service.
+        Thin wrapper around :func:`core.pinned_media.parse_budget_from_settings`
+        that pulls the settings dict from the web service layer and soft-fails
+        to zeros on any unexpected error.
         """
         from web.services import get_settings_service
         try:
             settings = get_settings_service().get_all()
-            cache_limit = settings.get("cache_limit", "")
-            min_free_space = settings.get("min_free_space", "")
-            quota = settings.get("plexcache_quota", "")
-            disk_total = self._get_active_cache_total_bytes(settings)
-            return {
-                "cache_limit_bytes": _resolve_size_setting(cache_limit, disk_total),
-                "min_free_space_bytes": _resolve_size_setting(min_free_space, disk_total),
-                "plexcache_quota_bytes": _resolve_size_setting(quota, disk_total),
-            }
+            return parse_budget_from_settings(settings)
         except Exception as e:
             logger.warning(f"PinnedService: could not parse cache limits: {e}")
             return {
@@ -305,62 +264,29 @@ class PinnedService:
     def _get_active_cache_total_bytes(self, settings: Dict[str, Any]) -> int:
         """Return the total size in bytes of the first enabled cache mapping.
 
-        Only used to resolve percentage-based cache_limit / min_free_space
-        values. Returns 0 if no active cache mapping has a probeable size,
-        which degrades percent values to 0 (disabling the budget guard) —
-        matches the prior soft-fail behavior, just now for a narrower reason.
+        Kept as a thin wrapper around the core helper so existing tests that
+        monkey-patch this method on the service instance keep working.
         """
-        from core.system_utils import get_disk_usage
-        mappings = settings.get("path_mappings", [])
-        if not isinstance(mappings, list):
-            return 0
-        for m in mappings:
-            if not isinstance(m, dict):
-                continue
-            if m.get("enabled") is False:
-                continue
-            cache_path = m.get("cache_path")
-            if not cache_path:
-                continue
-            try:
-                disk = get_disk_usage(cache_path)
-                if disk and getattr(disk, "total", 0) > 0:
-                    return int(disk.total)
-            except Exception:
-                continue
-        return 0
+        return get_active_cache_total_bytes(settings)
 
     def _sum_pinned_bytes(self) -> int:
         """Return the total byte size of currently pinned cached video files.
 
-        Only counts video paths (sidecars are protected via their parent in
-        the CacheService grouping, but their bytes show up there too — we
-        sum them here only for files already on disk).
+        Wraps :func:`core.pinned_media.sum_pinned_bytes_on_disk` with the
+        service's resolver so subclasses/tests can override by swapping out
+        either end.
         """
-        total = 0
-        for cache_path in self.resolve_all_to_cache_paths():
-            try:
-                import os
-                if os.path.exists(cache_path):
-                    total += os.path.getsize(cache_path)
-            except OSError:
-                continue
-        return total
+        return sum_pinned_bytes_on_disk(self.resolve_all_to_cache_paths())
 
     def _estimate_item_bytes(self, rating_key: str, pin_type: str) -> int:
         """Best-effort size estimate for an item about to be pinned.
 
-        Walks the Plex metadata only — does not touch the filesystem. Used
-        by ``budget_check`` for the preflight when adding a new pin.
+        Wrapper around :func:`core.pinned_media.estimate_item_bytes` that
+        supplies the web layer's connected Plex instance + preference.
         """
-        plex = self._get_plex_server()
-        if plex is None:
-            return 0
-        try:
-            item = plex.fetchItem(int(rating_key))
-        except Exception:
-            return 0
-        return self._estimate_item_size(item, pin_type, self._get_preference())
+        return estimate_item_bytes(
+            self._get_plex_server(), rating_key, pin_type, self._get_preference()
+        )
 
     def budget_check(
         self,
@@ -379,8 +305,6 @@ class PinnedService:
             ``additional_bytes``.
         """
         parsed = self._load_parsed_settings()
-        budget = parsed["cache_limit_bytes"]
-        headroom = parsed["min_free_space_bytes"]
         current = self._sum_pinned_bytes()
 
         additional = 0
@@ -389,21 +313,12 @@ class PinnedService:
                 additional_rating_key, additional_pin_type or "movie"
             )
 
-        # Effective budget = cache_limit minus min_free_space safety floor.
-        # If cache_limit is 0 (disabled), no budget — never blocks.
-        effective_budget = max(0, budget - headroom) if budget > 0 else 0
-        over_budget = bool(effective_budget) and current > effective_budget
-        would_exceed = bool(effective_budget) and (current + additional) > effective_budget
-
-        return {
-            "total_pinned_bytes": current,
-            "budget_bytes": budget,
-            "effective_budget_bytes": effective_budget,
-            "headroom_bytes": headroom,
-            "additional_bytes": additional,
-            "over_budget": over_budget,
-            "would_exceed": would_exceed,
-        }
+        return compute_budget_state(
+            cache_limit_bytes=parsed["cache_limit_bytes"],
+            min_free_space_bytes=parsed["min_free_space_bytes"],
+            current_pinned_bytes=current,
+            additional_bytes=additional,
+        )
 
     # ------------------------------------------------------------------
     # Pin/unpin

@@ -2,15 +2,82 @@
 
 import logging
 import sys
-from typing import Optional
+from typing import Any, Optional
 
 from core.config import ConfigManager
-from core.pinned_media import PinnedMediaTracker
+from core.pinned_media import (
+    PinnedMediaTracker,
+    compute_budget_state,
+    estimate_item_bytes,
+    parse_budget_from_settings,
+    plex_to_cache_path,
+    resolve_pins_to_paths,
+    sum_pinned_bytes_on_disk,
+)
 
 
 def _get_tracker(config_manager: ConfigManager) -> PinnedMediaTracker:
     tracker_file = config_manager.get_pinned_media_file()
     return PinnedMediaTracker(str(tracker_file))
+
+
+def _preflight_budget(
+    config_manager: ConfigManager,
+    tracker: PinnedMediaTracker,
+    plex: Any,
+    rating_key: str,
+    pin_type: str,
+) -> Optional[str]:
+    """Run the same budget check the web UI does before adding a pin.
+
+    Returns an error string if adding ``rating_key`` would push pinned
+    bytes over ``cache_limit`` (minus any ``min_free_space`` headroom).
+    Returns ``None`` when the pin is allowed — including when the budget
+    is unconfigured (``cache_limit`` empty or zero), matching the web
+    behavior where the guard stays opt-in.
+    """
+    settings = config_manager.settings_data or {}
+    parsed = parse_budget_from_settings(settings)
+    if parsed["cache_limit_bytes"] <= 0:
+        # Budget not configured — never blocks.
+        return None
+
+    preference = getattr(config_manager.plex, "pinned_preferred_resolution", "highest")
+    path_mappings = settings.get("path_mappings", []) or []
+
+    # Sum bytes for pins already on disk.
+    try:
+        resolved, _orphaned = resolve_pins_to_paths(plex, tracker, preference)
+    except Exception as e:
+        logging.debug(f"Budget preflight: resolver failed, assuming zero current pinned bytes: {e}")
+        resolved = []
+    cache_paths = {
+        plex_to_cache_path(p, path_mappings)
+        for (p, _rk, _pt) in resolved
+    }
+    cache_paths.discard(None)
+    current = sum_pinned_bytes_on_disk(cache_paths)
+
+    additional = estimate_item_bytes(plex, rating_key, pin_type, preference)
+
+    state = compute_budget_state(
+        cache_limit_bytes=parsed["cache_limit_bytes"],
+        min_free_space_bytes=parsed["min_free_space_bytes"],
+        current_pinned_bytes=current,
+        additional_bytes=additional,
+    )
+
+    if not state["would_exceed"]:
+        return None
+
+    from core.system_utils import format_bytes
+    return (
+        f"Pinning this item would exceed the cache budget "
+        f"({format_bytes(state['total_pinned_bytes'])} + "
+        f"~{format_bytes(state['additional_bytes'])} > "
+        f"{format_bytes(state['effective_budget_bytes'])}). "
+        f"Unpin something first, or raise cache_limit in settings."
+    )
 
 
 def _connect_plex(config_manager: ConfigManager):
@@ -80,6 +147,11 @@ def handle_pin(config_manager: ConfigManager, rating_key: str) -> None:
 
     pin_type = _derive_pin_type(item)
     title = getattr(item, "title", "Unknown")
+
+    error = _preflight_budget(config_manager, tracker, plex, rating_key, pin_type)
+    if error:
+        print(f"Error: {error}")
+        sys.exit(1)
 
     tracker.add_pin(rating_key, pin_type, title, added_by="cli")
     print(f"Pinned: [{pin_type}] {title} (rating_key={rating_key})")
@@ -158,6 +230,14 @@ def handle_pin_by_title(config_manager: ConfigManager, query: str) -> None:
         return
 
     pin_type = selected["type"] if selected["type"] in ("movie", "show") else "movie"
+
+    error = _preflight_budget(
+        config_manager, tracker, plex, selected["rating_key"], pin_type
+    )
+    if error:
+        print(f"Error: {error}")
+        sys.exit(1)
+
     tracker.add_pin(selected["rating_key"], pin_type, selected["title"], added_by="cli")
     print(f"Pinned: [{pin_type}] {selected['title']} (rating_key={selected['rating_key']})")
 

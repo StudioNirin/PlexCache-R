@@ -22,9 +22,10 @@ with an optional ``media_id`` field. The global rule remains the default.
 """
 
 import logging
+import os
 import threading
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from core.file_operations import JSONTracker
 
@@ -453,3 +454,199 @@ class PinnedMediaTracker(JSONTracker):
             "resolvable in Plex), not time-based. Use remove_pin() from the "
             "gather-phase orphan check."
         )
+
+
+# ---------------------------------------------------------------------------
+# Budget math — shared by the web service and the CLI so the two can't drift
+# on what counts as "over budget". All functions below are pure (no web or
+# filesystem coupling beyond ``sum_pinned_bytes_on_disk``, which is the one
+# unavoidable stat-the-file operation).
+# ---------------------------------------------------------------------------
+
+
+def resolve_size_setting(value: Any, disk_total_bytes: int) -> int:
+    """Resolve a settings size value to bytes.
+
+    Accepts either a byte-quantity string ("10GB", "500MB") parsed via
+    ``core.system_utils.parse_size_bytes`` or a percentage string ("50%")
+    resolved against ``disk_total_bytes``. Returns 0 on any parse failure,
+    empty input, or percent-without-disk-size — matches the soft-fail
+    behavior the budget guard has always relied on.
+    """
+    from core.system_utils import parse_size_bytes
+    if value is None:
+        return 0
+    s = str(value).strip()
+    if not s or s in ("0", "N/A", "none", "None"):
+        return 0
+    if s.endswith("%"):
+        try:
+            percent = float(s.rstrip("%"))
+        except ValueError:
+            return 0
+        if disk_total_bytes <= 0 or percent <= 0:
+            return 0
+        return int(disk_total_bytes * percent / 100)
+    return parse_size_bytes(s) or 0
+
+
+def get_active_cache_total_bytes(settings: Dict[str, Any]) -> int:
+    """Return the total size in bytes of the first enabled cache mapping.
+
+    Used to resolve percent-based ``cache_limit`` / ``min_free_space`` values.
+    Returns 0 if no active cache mapping has a probeable size, which degrades
+    percent values to 0 (disabling the budget guard). Soft-fail by design —
+    the budget is an optional safety net, not a hard invariant.
+    """
+    from core.system_utils import get_disk_usage
+    mappings = settings.get("path_mappings", [])
+    if not isinstance(mappings, list):
+        return 0
+    for m in mappings:
+        if not isinstance(m, dict):
+            continue
+        if m.get("enabled") is False:
+            continue
+        cache_path = m.get("cache_path")
+        if not cache_path:
+            continue
+        try:
+            disk = get_disk_usage(cache_path)
+            if disk and getattr(disk, "total", 0) > 0:
+                return int(disk.total)
+        except Exception:
+            continue
+    return 0
+
+
+def parse_budget_from_settings(settings: Dict[str, Any]) -> Dict[str, int]:
+    """Return the parsed cache budget (all values in bytes).
+
+    Handles both byte-quantity strings and percentages. Percent values are
+    resolved against the active cache drive's total size.
+    """
+    cache_limit = settings.get("cache_limit", "")
+    min_free_space = settings.get("min_free_space", "")
+    quota = settings.get("plexcache_quota", "")
+    disk_total = get_active_cache_total_bytes(settings)
+    return {
+        "cache_limit_bytes": resolve_size_setting(cache_limit, disk_total),
+        "min_free_space_bytes": resolve_size_setting(min_free_space, disk_total),
+        "plexcache_quota_bytes": resolve_size_setting(quota, disk_total),
+    }
+
+
+def estimate_item_size(item: Any, pin_type: str, preference: str) -> int:
+    """Compute total byte size for a Plex item under the preferred resolution.
+
+    Walks Plex metadata only — no filesystem access. Used by
+    ``estimate_item_bytes`` and by the web search UI to label rows with sizes.
+    """
+    def _single_size(it):
+        try:
+            media = select_media_version(it, preference)
+            return _media_total_size(media)
+        except Exception:
+            return 0
+
+    try:
+        if pin_type in ("movie", "episode"):
+            return _single_size(item)
+        if pin_type == "season":
+            return sum(_single_size(ep) for ep in item.episodes())
+        if pin_type == "show":
+            total = 0
+            for season in item.seasons():
+                for ep in season.episodes():
+                    total += _single_size(ep)
+            return total
+    except Exception:
+        pass
+    return 0
+
+
+def estimate_item_bytes(
+    plex_server: Any,
+    rating_key: str,
+    pin_type: str,
+    preference: str,
+) -> int:
+    """Best-effort size estimate for an item about to be pinned.
+
+    Returns 0 on any Plex fetch failure so a missing item never hard-blocks
+    the budget check — callers treat 0 as "can't estimate, let it through".
+    """
+    if plex_server is None or not rating_key:
+        return 0
+    try:
+        item = plex_server.fetchItem(int(rating_key))
+    except Exception:
+        return 0
+    return estimate_item_size(item, pin_type or "movie", preference)
+
+
+def sum_pinned_bytes_on_disk(cache_paths: Iterable[str]) -> int:
+    """Sum the byte size of every cache_path that currently exists on disk.
+
+    Missing / unreachable paths are skipped silently. Kept here (rather than
+    inside ``PinnedService``) so the CLI can compute current pinned usage
+    without importing the web stack.
+    """
+    total = 0
+    for p in cache_paths:
+        if not p:
+            continue
+        try:
+            if os.path.exists(p):
+                total += os.path.getsize(p)
+        except OSError:
+            continue
+    return total
+
+
+def compute_budget_state(
+    cache_limit_bytes: int,
+    min_free_space_bytes: int,
+    current_pinned_bytes: int,
+    additional_bytes: int = 0,
+) -> Dict[str, Any]:
+    """Compute the pinned-bytes budget state — pure math, no side effects.
+
+    ``effective_budget = max(0, cache_limit - min_free_space)`` unless
+    ``cache_limit`` is 0 (budget disabled). When disabled, ``over_budget`` and
+    ``would_exceed`` are always False — the guard never hard-blocks without an
+    explicit limit.
+    """
+    effective_budget = max(0, cache_limit_bytes - min_free_space_bytes) if cache_limit_bytes > 0 else 0
+    over_budget = bool(effective_budget) and current_pinned_bytes > effective_budget
+    would_exceed = bool(effective_budget) and (current_pinned_bytes + additional_bytes) > effective_budget
+    return {
+        "total_pinned_bytes": current_pinned_bytes,
+        "budget_bytes": cache_limit_bytes,
+        "effective_budget_bytes": effective_budget,
+        "headroom_bytes": min_free_space_bytes,
+        "additional_bytes": additional_bytes,
+        "over_budget": over_budget,
+        "would_exceed": would_exceed,
+    }
+
+
+def plex_to_cache_path(plex_path: str, path_mappings: List[Dict[str, Any]]) -> Optional[str]:
+    """Translate a Plex-form path to its cache-form path via prefix swap.
+
+    Returns None if no enabled mapping matches. Mirrors the existing
+    ``PinnedService._plex_to_cache`` semantics so the CLI and web paths
+    produce identical results.
+    """
+    if not plex_path:
+        return None
+    for mapping in path_mappings or []:
+        if not isinstance(mapping, dict):
+            continue
+        if not mapping.get("enabled", True):
+            continue
+        plex_prefix = (mapping.get("plex_path") or "").rstrip("/")
+        cache_prefix = (mapping.get("cache_path") or "").rstrip("/")
+        if plex_prefix and cache_prefix and plex_path.startswith(plex_prefix):
+            return cache_prefix + plex_path[len(plex_prefix):]
+    return None
