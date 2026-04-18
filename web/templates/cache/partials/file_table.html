@@ -1,6 +1,5 @@
 <!-- Cache files table body - HTMX partial -->
 {% from "macros/associated_files.html" import af_popup, af_popup_init %}
-{% from "macros/pin_button.html" import pin_button %}
 {% if files %}
     {% for file in files %}
     {% set assoc_count = file.subtitle_count + file.sidecar_count %}
@@ -56,16 +55,11 @@
         </td>
         <td class="text-muted">{{ file.cache_age_hours|round(1) }}h</td>
         <td>
-            <div style="display: inline-flex; gap: 0.35rem; align-items: center;">
-                {% if file.rating_key and file.pin_type %}
-                {{ pin_button(file.rating_key, file.pin_type, file.filename, file.is_pinned) }}
-                {% endif %}
-                <button class="btn btn-sm btn-secondary"
-                        onclick="showEvictConfirm('{{ file.path|replace("'", "\\'") }}', '{{ file.filename|replace("'", "\\'") }}', '{{ file.size_display }}')"
-                        title="Evict from cache">
-                    <i data-lucide="x"></i>
-                </button>
-            </div>
+            <button class="btn btn-sm btn-secondary"
+                    onclick="showEvictConfirm('{{ file.path|replace("'", "\\'") }}', '{{ file.filename|replace("'", "\\'") }}', '{{ file.size_display }}')"
+                    title="Evict from cache">
+                <i data-lucide="x"></i>
+            </button>
         </td>
     </tr>
     {% endfor %}
