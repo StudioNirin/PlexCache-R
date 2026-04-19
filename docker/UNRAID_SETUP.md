@@ -51,12 +51,14 @@ PlexCache-D automatically caches your frequently-accessed Plex media (OnDeck and
 |---------------|-----------|------|-------------|
 | `/config` | `/mnt/user/appdata/plexcache` | rw | Config, data, logs, exclude file |
 | `/mnt/cache` | `/mnt/cache` | rw | Your cache drive (destination for cached files) |
-| `/mnt/user0` | `/mnt/user0` | rw | Array-only view (for .plexcached backups) |
-| `/mnt/user` | `/mnt/user` | rw | Merged share (source for caching operations) |
+| `/mnt/user0` | `/mnt/user0` | rw | Array-direct access (source/destination for array operations) |
 
 **Important**:
-- All media paths (`/mnt/cache`, `/mnt/user0`, `/mnt/user`) must be **read-write** for PlexCache-D to move files between cache and array
+- Both media paths (`/mnt/cache`, `/mnt/user0`) must be **read-write** for PlexCache-D to move files between cache and array
 - These paths **must match exactly** between container and host for Plex path resolution to work correctly
+- `/mnt/user/` (the FUSE merged share) is **not** mounted by default. PlexCache-D operates on `/mnt/user0/` directly to avoid the FUSE layer's cache/array ambiguity, which is the safer pattern for caching operations.
+
+> **ZFS pool-only shares:** If your media share lives on a ZFS pool with `shareUseCache=only`, files never appear under `/mnt/user0/` — they only exist on the pool. For these setups, mount your pool path instead (e.g., `/mnt/plex` → `/mnt/plex`) and use that as the **Array Path** in your path mappings. Hybrid ZFS shares (cache pool + array disks) work normally with `/mnt/user0/`.
 
 ### Docker Path Translation (Host Cache Path)
 

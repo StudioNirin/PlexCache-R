@@ -161,8 +161,9 @@ def prompt_library_path_mapping(library_name: str, plex_locations: list, cache_r
         else:
             mapping_name = library_name
 
-        # Suggest a real path based on common patterns
-        suggested_real = plex_path.replace('/data/', '/mnt/user/').replace('/media/', '/mnt/user/')
+        # Suggest a real path based on common patterns. Default to /mnt/user0/
+        # (array-direct) so the container only needs /mnt/user0 + /mnt/cache mounted.
+        suggested_real = plex_path.replace('/data/', '/mnt/user0/').replace('/media/', '/mnt/user0/')
 
         print(f"  Where is this located on your filesystem?")
         real_path = input(f"  Real path [{suggested_real}]: ").strip() or suggested_real
@@ -200,7 +201,7 @@ def prompt_library_path_mapping(library_name: str, plex_locations: list, cache_r
                 cache_path = cache_path + '/'
         elif cacheable and not cache_root:
             # No cache root set - shouldn't happen in new flow but handle gracefully
-            suggested_cache = real_path.replace('/mnt/user/', '/mnt/cache/')
+            suggested_cache = real_path.replace('/mnt/user0/', '/mnt/cache/').replace('/mnt/user/', '/mnt/cache/')
             print(f"\n  Where should cached files be stored?")
             cache_path = input(f"  Cache path [{suggested_cache}]: ").strip() or suggested_cache
             if cache_path and not cache_path.endswith('/'):

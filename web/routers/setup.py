@@ -279,10 +279,11 @@ def setup_step3_post(request: Request, form_data: ImmutableMultiDict = Depends(p
                 else:
                     mapping_name = lib_title
 
-                # Suggest real_path based on common Docker path patterns
-                # Common patterns: /data/ -> /mnt/user/, /media/ -> /mnt/user/
+                # Suggest real_path based on common Docker path patterns.
+                # Default to /mnt/user0/ (array-direct) so the container only
+                # needs /mnt/user0 + /mnt/cache mounted — no /mnt/user FUSE share.
                 real_path = plex_path_normalized
-                for docker_prefix, host_prefix in [('/data/', '/mnt/user/'), ('/media/', '/mnt/user/')]:
+                for docker_prefix, host_prefix in [('/data/', '/mnt/user0/'), ('/media/', '/mnt/user0/')]:
                     if plex_path_normalized.startswith(docker_prefix):
                         real_path = plex_path_normalized.replace(docker_prefix, host_prefix, 1)
                         break

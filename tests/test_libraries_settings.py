@@ -140,7 +140,7 @@ class TestAutoFillMapping:
     """Tests for auto_fill_mapping()."""
 
     def test_auto_fill_mapping_docker_pattern(self, settings_service):
-        """/data/tv/ → /mnt/user/tv/ real path translation."""
+        """/data/tv/ → /mnt/user0/tv/ real path translation (array-direct default)."""
         library = {"id": 2, "title": "TV Shows", "type": "show", "type_label": "TV Shows",
                    "locations": ["/data/tv/"]}
         settings = {"cache_dir": "/mnt/cache"}
@@ -148,7 +148,7 @@ class TestAutoFillMapping:
         result = settings_service.auto_fill_mapping(library, "/data/tv/", settings)
 
         assert result["plex_path"] == "/data/tv/"
-        assert result["real_path"] == "/mnt/user/tv/"
+        assert result["real_path"] == "/mnt/user0/tv/"
         assert result["section_id"] == 2
         assert result["enabled"] is True
         assert result["cacheable"] is True
@@ -165,14 +165,14 @@ class TestAutoFillMapping:
         assert result["name"] == "Movies"
 
     def test_auto_fill_mapping_media_prefix(self, settings_service):
-        """/media/ prefix also maps to /mnt/user/."""
+        """/media/ prefix also maps to /mnt/user0/ (array-direct default)."""
         library = {"id": 3, "title": "Music", "type": "artist", "type_label": "Music",
                    "locations": ["/media/music/"]}
         settings = {"cache_dir": "/mnt/cache"}
 
         result = settings_service.auto_fill_mapping(library, "/media/music/", settings)
 
-        assert result["real_path"] == "/mnt/user/music/"
+        assert result["real_path"] == "/mnt/user0/music/"
 
     def test_auto_fill_mapping_no_trailing_slash(self, settings_service):
         """Plex paths without trailing slash get one added."""

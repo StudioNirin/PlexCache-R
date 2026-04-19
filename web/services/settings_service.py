@@ -510,10 +510,12 @@ class SettingsService:
             if folder_name and folder_name.lower() != name.lower():
                 name = f"{name} ({folder_name})"
 
-        # Suggest real_path based on common Docker path patterns
+        # Suggest real_path based on common Docker path patterns. Default to
+        # /mnt/user0/ (array-direct) so the container only needs /mnt/user0 +
+        # /mnt/cache mounted — no /mnt/user FUSE share.
         real_path = plex_path
         path_recognized = False
-        for docker_prefix, host_prefix in [("/data/", "/mnt/user/"), ("/media/", "/mnt/user/")]:
+        for docker_prefix, host_prefix in [("/data/", "/mnt/user0/"), ("/media/", "/mnt/user0/")]:
             if plex_path.startswith(docker_prefix):
                 real_path = plex_path.replace(docker_prefix, host_prefix, 1)
                 path_recognized = True

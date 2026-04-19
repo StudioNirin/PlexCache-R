@@ -42,8 +42,7 @@ CA Mover Tuning plugin recommended (optional) for mover exclude list integration
     <!-- Paths -->
     <Config Name="Config" Target="/config" Default="/mnt/user/appdata/plexcache" Mode="rw" Description="Persistent storage for settings, logs, and tracking data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/plexcache</Config>
     <Config Name="Cache" Target="/mnt/cache" Default="/mnt/cache" Mode="rw" Description="Your Unraid cache drive where media files are cached for fast access" Type="Path" Display="always" Required="true" Mask="false">/mnt/cache</Config>
-    <Config Name="Array" Target="/mnt/user0" Default="/mnt/user0" Mode="rw" Description="Direct array access (user0) for creating .plexcached backups" Type="Path" Display="always" Required="true" Mask="false">/mnt/user0</Config>
-    <Config Name="User" Target="/mnt/user" Default="/mnt/user" Mode="rw" Description="User share for Plex library path resolution" Type="Path" Display="always" Required="true" Mask="false">/mnt/user</Config>
+    <Config Name="Array" Target="/mnt/user0" Default="/mnt/user0" Mode="rw" Description="Direct array access (user0) for reading and writing array files. ZFS pool-only shares: mount your pool path (e.g. /mnt/plex) instead." Type="Path" Display="always" Required="true" Mask="false">/mnt/user0</Config>
 
     <!-- Environment Variables -->
     <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions (99 = nobody on Unraid)" Type="Variable" Display="always" Required="false" Mask="false">99</Config>

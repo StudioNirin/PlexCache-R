@@ -141,7 +141,6 @@ docker run -d \
   -v /mnt/user/appdata/plexcache:/config \
   -v /mnt/cache:/mnt/cache \
   -v /mnt/user0:/mnt/user0 \
-  -v /mnt/user:/mnt/user \
   -e PUID=99 \
   -e PGID=100 \
   -e TZ=America/Los_Angeles \
@@ -156,12 +155,13 @@ docker run -d \
    - `/config` → `/mnt/user/appdata/plexcache`
    - `/mnt/cache` → `/mnt/cache` (read-write)
    - `/mnt/user0` → `/mnt/user0` (read-write)
-   - `/mnt/user` → `/mnt/user` (read-write)
 4. Set **WebUI**: `http://[IP]:[PORT:5757]`
 5. Set a port mapping: `5757:5757`
 6. Click **Apply**
 
-> **Important:** All media paths (`/mnt/cache`, `/mnt/user0`, `/mnt/user`) must be **read-write** for PlexCache-D to move files between cache and array.
+> **Important:** Both media paths (`/mnt/cache`, `/mnt/user0`) must be **read-write** for PlexCache-D to move files between cache and array.
+
+> **ZFS pool-only shares:** If your media share lives on a ZFS pool with `shareUseCache=only`, files never appear under `/mnt/user0/`. Mount your pool path instead (e.g., `-v /mnt/plex:/mnt/plex`) and use that as the **Array Path** in your path mappings.
 
 ### First Run
 
@@ -172,7 +172,7 @@ Open `http://[YOUR_IP]:5757` - the Setup Wizard will guide you through:
 - Caching behavior configuration
 - Security settings (optional Plex OAuth authentication)
 
-**Important:** Volume paths for `/mnt/cache`, `/mnt/user0`, and `/mnt/user` must match exactly between container and host for Plex path resolution.
+**Important:** Volume paths for `/mnt/cache` and `/mnt/user0` must match exactly between container and host for Plex path resolution.
 
 See `docker/UNRAID_SETUP.md` for detailed Unraid setup instructions including CA Mover Tuning integration.
 
