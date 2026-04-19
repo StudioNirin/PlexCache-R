@@ -367,6 +367,12 @@ class SettingsService:
         # Docker mount validation (issue #139)
         if IS_DOCKER:
             detector = get_system_detector()
+            # Container switched the default from /mnt/user/ to /mnt/user0/.
+            # If the user updated their Docker template but still has legacy
+            # /mnt/user/... paths in their mappings, point them at the exact
+            # replacement instead of the generic "check your mounts" message.
+            user0_mounted, _ = detector.is_path_bind_mounted("/mnt/user0")
+
             for m in mappings:
                 if not m.get("enabled", True):
                     continue
@@ -377,19 +383,44 @@ class SettingsService:
                         continue
                     # host_cache_path is intentionally a host path — do NOT validate it
                     is_mounted, _ = detector.is_path_bind_mounted(path_val)
-                    if not is_mounted:
+                    if is_mounted:
+                        continue
+
+                    # Specific case: legacy /mnt/user/... path while /mnt/user0
+                    # IS mounted. Recommend the array-direct replacement.
+                    if (
+                        user0_mounted
+                        and label == "real_path"
+                        and path_val.startswith("/mnt/user/")
+                        and not path_val.startswith("/mnt/user0/")
+                    ):
+                        suggestion = "/mnt/user0/" + path_val[len("/mnt/user/"):]
                         issues.append({
                             "mapping_name": name,
-                            "issue_type": "overlay_path",
+                            "issue_type": "legacy_user_real_path",
                             "message": (
-                                f"Mapping '{name}' has {label} set to "
-                                f"'{m.get(field_name)}' which is not backed by "
-                                f"a Docker bind mount. Writes to this path will "
-                                f"go into the container's overlay filesystem "
-                                f"(docker.img), not your host drive. Check your "
-                                f"container's volume configuration."
+                                f"Mapping '{name}' has real_path '{m.get(field_name)}' "
+                                f"but /mnt/user/ is no longer mounted in this container. "
+                                f"Update the Array Path to '{suggestion}/' in "
+                                f"Settings → Paths. /mnt/user0/ is the array-direct "
+                                f"path and the new default — it avoids the FUSE layer "
+                                f"entirely."
                             ),
                         })
+                        continue
+
+                    issues.append({
+                        "mapping_name": name,
+                        "issue_type": "overlay_path",
+                        "message": (
+                            f"Mapping '{name}' has {label} set to "
+                            f"'{m.get(field_name)}' which is not backed by "
+                            f"a Docker bind mount. Writes to this path will "
+                            f"go into the container's overlay filesystem "
+                            f"(docker.img), not your host drive. Check your "
+                            f"container's volume configuration."
+                        ),
+                    })
 
         for m in mappings:
             if not m.get("enabled", True):
