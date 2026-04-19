@@ -1,5 +1,6 @@
 <!-- Recent Activity component - HTMX partial (grouped by date) -->
 {% from "macros/associated_files.html" import af_expand_badge, af_expand_rows, af_expand_onclick %}
+{% from "macros/user_badge.html" import user_badge %}
 {% if activity %}
 {% for group in activity|groupby('date_key')|reverse %}
 <tr class="date-group-header" data-date-group="{{ group.grouper }}">
@@ -32,7 +33,7 @@
     <td class="user-badges">
         {% if item.users and item.users|length > 0 %}
             {% for user in item.users[:3] %}
-            <span class="badge badge-success badge-sm">{{ user }}</span>
+            {{ user_badge(user, user_types, classes='badge-sm') }}
             {% endfor %}
             {% if item.users|length > 3 %}
             <span class="badge badge-muted badge-sm">+{{ item.users|length - 3 }}</span>

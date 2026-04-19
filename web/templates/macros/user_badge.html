@@ -1,0 +1,17 @@
+{#
+  user_badge(user, user_types, classes='', style='')
+
+  Render a username as a color-coded badge. Color is derived from user_types
+  (a {username: 'admin'|'home'|'shared'} map built from _cached_users). Unknown
+  usernames fall back to 'shared' — current behavior for users not yet synced.
+
+  Args:
+    user:       The username string (as stored in CachedFile.users).
+    user_types: Dict mapping username -> type. Pass {} or None to skip typing.
+    classes:    Extra CSS classes to append (e.g. 'badge-sm').
+    style:      Inline style string (e.g. 'margin-right: 0.25rem;').
+#}
+{% macro user_badge(user, user_types, classes='', style='') -%}
+{%- set t = (user_types or {}).get(user, 'shared') -%}
+<span class="badge user-badge user-badge--{{ t }}{% if classes %} {{ classes }}{% endif %}"{% if style %} style="{{ style }}"{% endif %}>{{ user }}</span>
+{%- endmacro %}

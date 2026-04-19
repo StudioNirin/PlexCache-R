@@ -25,6 +25,9 @@ body {
     --plex-warning: #ff9800;
     --plex-error: #FF453A;
     --plex-info: #0A84FF;
+    --plex-user-admin: var(--plex-orange);
+    --plex-user-home: var(--plex-info);
+    --plex-user-shared: var(--plex-success);
     --sidebar-width: 200px;
     --sidebar-collapsed: 60px;
 
@@ -814,6 +817,21 @@ body {
 .badge-pinned {
     background: rgba(229, 160, 13, 0.18);
     color: var(--plex-orange);
+}
+
+.user-badge--admin {
+    background: rgba(229, 160, 13, 0.18);
+    color: var(--plex-user-admin);
+}
+
+.user-badge--home {
+    background: rgba(33, 150, 243, 0.15);
+    color: var(--plex-user-home);
+}
+
+.user-badge--shared {
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--plex-user-shared);
 }
 
 /* Source badges column - show multiple badges inline */

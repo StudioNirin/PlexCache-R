@@ -178,8 +178,10 @@ def get_recent_activity(request: Request):
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
+        from web.services import get_cache_service
         context = {
             "activity": activity,
+            "user_types": get_cache_service().get_user_types(),
         }
         # Pass extra context when activity is empty for contextual empty states
         if not activity:

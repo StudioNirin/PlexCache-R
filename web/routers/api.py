@@ -223,7 +223,8 @@ def cache_files_table(
             "sort_by": sort,
             "sort_dir": dir,
             "totals": totals,
-            "eviction_enabled": eviction_enabled
+            "eviction_enabled": eviction_enabled,
+            "user_types": cache_service.get_user_types(settings),
         }
     )
 
@@ -353,7 +354,8 @@ def cache_storage_stats(request: Request, expiring_within: int = 7):
         request,
         "cache/partials/storage_stats.html",
         {
-            "data": drive_details
+            "data": drive_details,
+            "user_types": cache_service.get_user_types(),
         }
     )
 
@@ -399,7 +401,8 @@ def cache_priorities_content(
             "data": report_data,
             "eviction_enabled": eviction_enabled,
             "sort_by": sort,
-            "sort_dir": dir
+            "sort_dir": dir,
+            "user_types": cache_service.get_user_types(settings),
         }
     )
 

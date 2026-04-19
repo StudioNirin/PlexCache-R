@@ -65,6 +65,33 @@ class CacheService:
         """Load settings file"""
         return self._load_json_file(self.settings_file)
 
+    def get_user_types(self, settings: Dict = None) -> Dict[str, str]:
+        """Build {username: 'admin'|'home'|'shared'} map from _cached_users.
+
+        The map is keyed by the `title` field because CachedFile.users stores
+        title strings (see core/plex_api.py: `username = user_entry.get("title")`).
+        `username` is also indexed as a fallback for entries where the two differ.
+        Admin wins when both is_admin and is_home are true.
+        """
+        if settings is None:
+            settings = self._load_settings()
+
+        user_types: Dict[str, str] = {}
+        for entry in settings.get("_cached_users", []):
+            if entry.get("is_admin"):
+                t = "admin"
+            elif entry.get("is_home"):
+                t = "home"
+            else:
+                t = "shared"
+            title = entry.get("title")
+            username = entry.get("username")
+            if title:
+                user_types[title] = t
+            if username and username != title:
+                user_types.setdefault(username, t)
+        return user_types
+
     def _get_cache_dir(self, settings: Dict = None) -> str:
         """Get the cache directory, preferring path_mappings over cache_dir setting.
 

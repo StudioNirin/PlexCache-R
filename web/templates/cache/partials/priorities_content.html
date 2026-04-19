@@ -1,4 +1,5 @@
 {% from "macros/associated_files.html" import af_badge %}
+{% from "macros/user_badge.html" import user_badge %}
 <!-- Priority Report Content - loaded via HTMX -->
 
 {% if data.files %}
@@ -196,7 +197,7 @@
                     <td>
                         {% if file.users %}
                             {% for user in file.users %}
-                            <span class="badge badge-success" style="margin-right: 0.25rem;">{{ user }}</span>
+                            {{ user_badge(user, user_types, style='margin-right: 0.25rem;') }}
                             {% endfor %}
                         {% else %}
                         <span class="text-muted">-</span>

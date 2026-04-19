@@ -85,7 +85,8 @@ def cache_list(
             "sort_by": sort,
             "sort_dir": dir,
             "totals": totals,
-            "eviction_enabled": eviction_enabled
+            "eviction_enabled": eviction_enabled,
+            "user_types": cache_service.get_user_types(settings),
         }
     )
 
@@ -108,7 +109,8 @@ def cache_drive(request: Request, expiring_within: int = 7):
         "cache/drive.html",
         {
             "page_title": "Storage",
-            "data": drive_details
+            "data": drive_details,
+            "user_types": cache_service.get_user_types(),
         }
     )
 
@@ -120,12 +122,14 @@ def cache_priorities(
     dir: str = Query("desc", description="Sort direction")
 ):
     """Priority report page with detailed analysis (lazy loaded)"""
+    cache_service = get_cache_service()
     return templates.TemplateResponse(
         request,
         "cache/priorities.html",
         {
             "page_title": "Priority Report",
             "sort_by": sort,
-            "sort_dir": dir
+            "sort_dir": dir,
+            "user_types": cache_service.get_user_types(),
         }
     )

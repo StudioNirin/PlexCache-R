@@ -1,4 +1,5 @@
 {% from "macros/associated_files.html" import af_popup, af_popup_init %}
+{% from "macros/user_badge.html" import user_badge %}
 <!-- ZFS Warning (only shown when ZFS detected without manual override) -->
 {% if data.storage.is_zfs and not data.storage.has_manual_drive_size %}
 <div class="alert alert-warning mb-2" style="display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem 1rem;">
@@ -343,7 +344,7 @@
                             <td class="user-badges">
                                 {% if file.users %}
                                     {% for user in file.users %}
-                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {{ user_badge(user, user_types, classes='badge-sm') }}
                                     {% endfor %}
                                 {% else %}
                                 <span class="text-muted">-</span>
@@ -409,7 +410,7 @@
                             <td class="user-badges">
                                 {% if file.users %}
                                     {% for user in file.users %}
-                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {{ user_badge(user, user_types, classes='badge-sm') }}
                                     {% endfor %}
                                 {% else %}
                                 <span class="text-muted">-</span>
@@ -485,7 +486,7 @@
                             <td class="user-badges">
                                 {% if file.users %}
                                     {% for user in file.users %}
-                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {{ user_badge(user, user_types, classes='badge-sm') }}
                                     {% endfor %}
                                 {% else %}
                                 <span class="text-muted">-</span>
@@ -564,7 +565,7 @@
                             <td class="user-badges">
                                 {% if item.file.users %}
                                     {% for user in item.file.users %}
-                                    <span class="badge badge-success badge-sm">{{ user }}</span>
+                                    {{ user_badge(user, user_types, classes='badge-sm') }}
                                     {% endfor %}
                                 {% else %}
                                 <span class="text-muted">-</span>

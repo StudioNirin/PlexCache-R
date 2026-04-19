@@ -1,5 +1,6 @@
 <!-- Cache files table body - HTMX partial -->
 {% from "macros/associated_files.html" import af_popup, af_popup_init %}
+{% from "macros/user_badge.html" import user_badge %}
 {% if files %}
     {% for file in files %}
     {% set assoc_count = file.subtitle_count + file.sidecar_count %}
@@ -47,7 +48,7 @@
         <td>
             {% if file.users %}
                 {% for user in file.users %}
-                <span class="badge badge-success" style="margin-right: 0.25rem;">{{ user }}</span>
+                {{ user_badge(user, user_types, style='margin-right: 0.25rem;') }}
                 {% endfor %}
             {% else %}
             <span class="text-muted">-</span>
