@@ -256,6 +256,39 @@ class TestDetectHealthIssuesDocker:
         overlay_issues = [i for i in issues if i["issue_type"] == "overlay_path"]
         assert len(overlay_issues) == 0
 
+    @patch('web.services.settings_service.IS_DOCKER', True)
+    @patch('web.services.settings_service.get_system_detector')
+    def test_suggests_user0_when_legacy_user_real_path_and_user0_mounted(self, mock_get_detector):
+        """After dropping /mnt/user mount, a legacy real_path should recommend /mnt/user0/."""
+        detector = MagicMock()
+
+        def is_mounted(path: str):
+            # /mnt/user0 IS mounted; cache is mounted; real_path (/mnt/user/...) is NOT.
+            return (path.startswith("/mnt/user0") or path.startswith("/mnt/cache"), None)
+
+        detector.is_path_bind_mounted.side_effect = is_mounted
+        mock_get_detector.return_value = detector
+
+        from web.services.settings_service import SettingsService
+        svc = SettingsService()
+        with patch.object(svc, '_load_raw', return_value={
+            "path_mappings": [{
+                "name": "TV Shows",
+                "enabled": True,
+                "cache_path": "/mnt/cache/TV Shows/",
+                "real_path": "/mnt/user/TV Shows/",
+            }]
+        }):
+            issues = svc.detect_path_mapping_health_issues()
+
+        legacy_issues = [i for i in issues if i["issue_type"] == "legacy_user_real_path"]
+        assert len(legacy_issues) == 1
+        assert "/mnt/user0/TV Shows/" in legacy_issues[0]["message"]
+        assert "Settings → Paths" in legacy_issues[0]["message"]
+        # Should NOT double-report as generic overlay_path
+        overlay_issues = [i for i in issues if i["issue_type"] == "overlay_path"]
+        assert all("real_path" not in i["message"] for i in overlay_issues)
+
 
 # ============================================================================
 # FileMover gate tests
