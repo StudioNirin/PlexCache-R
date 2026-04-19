@@ -1513,6 +1513,19 @@ class PlexCacheApp:
         if not pre_run_rk_index:
             return
 
+        def _canonicalize(p: str) -> str:
+            """Treat /mnt/user/X and /mnt/user0/X as the same logical file.
+
+            Users who switch their real_path default from /mnt/user/ → /mnt/user0/
+            (array-direct) end up with tracker entries keyed under the old prefix
+            while the current run reports the new prefix. Without this, the same
+            rating_key would show "disappeared" + "appeared" for every file and
+            misfire upgrade detection on the first run after the switch.
+            """
+            if p.startswith('/mnt/user/'):
+                return '/mnt/user0/' + p[len('/mnt/user/'):]
+            return p
+
         # Build current rating_key → set of real paths
         current_rk_paths = {}
         for item in ondeck_items_list:
@@ -1531,29 +1544,40 @@ class PlexCacheApp:
             if not new_paths:
                 continue
 
-            # Paths that appeared (not in old set) and paths that disappeared
-            appeared = new_paths - old_paths
-            disappeared = old_paths - new_paths
+            # Compare on canonical form so a /mnt/user/ → /mnt/user0/ prefix
+            # swap is not mistaken for a file upgrade.
+            canonical_old = {_canonicalize(p) for p in old_paths}
+            canonical_new = {_canonicalize(p) for p in new_paths}
+            appeared_canon = canonical_new - canonical_old
+            disappeared_canon = canonical_old - canonical_new
 
             # An upgrade is when a path disappears and a new one appears for the same key.
             # Multi-version additions (new path, nothing disappeared) are NOT upgrades.
-            if appeared and disappeared:
-                # Match disappeared→appeared 1:1 for transfer (handles single upgrade case)
-                for old_path, new_path in zip(sorted(disappeared), sorted(appeared)):
-                    if self.should_stop:
-                        logging.info("[UPGRADE] Stop requested — halting upgrade detection")
-                        break
-                    upgrades_detected += 1
-                    logging.info(f"[UPGRADE] Detected file upgrade for rating_key={rk}: "
-                                 f"{os.path.basename(old_path)} → {os.path.basename(new_path)}")
-                    # Find an OnDeckItem for the new path to pass metadata
-                    item_for_transfer = next(
-                        (i for i in ondeck_items_list if i.rating_key == rk
-                         and plex_to_real.get(i.file_path, i.file_path) == new_path),
-                        None
-                    )
-                    if item_for_transfer:
-                        self._transfer_upgrade_tracking(old_path, new_path, item_for_transfer)
+            if not (appeared_canon and disappeared_canon):
+                continue
+
+            # Map canonical back to original paths for the transfer call.
+            old_by_canon = {_canonicalize(p): p for p in old_paths}
+            new_by_canon = {_canonicalize(p): p for p in new_paths}
+
+            # Match disappeared→appeared 1:1 for transfer (handles single upgrade case)
+            for old_canon, new_canon in zip(sorted(disappeared_canon), sorted(appeared_canon)):
+                if self.should_stop:
+                    logging.info("[UPGRADE] Stop requested — halting upgrade detection")
+                    break
+                old_path = old_by_canon[old_canon]
+                new_path = new_by_canon[new_canon]
+                upgrades_detected += 1
+                logging.info(f"[UPGRADE] Detected file upgrade for rating_key={rk}: "
+                             f"{os.path.basename(old_path)} → {os.path.basename(new_path)}")
+                # Find an OnDeckItem for the new path to pass metadata
+                item_for_transfer = next(
+                    (i for i in ondeck_items_list if i.rating_key == rk
+                     and plex_to_real.get(i.file_path, i.file_path) == new_path),
+                    None
+                )
+                if item_for_transfer:
+                    self._transfer_upgrade_tracking(old_path, new_path, item_for_transfer)
 
         if upgrades_detected:
             logging.info(f"[UPGRADE] Processed {upgrades_detected} media file upgrade(s)")

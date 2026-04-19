@@ -378,6 +378,41 @@ class TestUpgradeDetection:
         # No exclude list changes
         mock_app.file_filter.remove_files_from_exclude_list.assert_not_called()
 
+    def test_user_to_user0_prefix_swap_is_not_upgrade(self, mock_app):
+        """Switching real_path from /mnt/user/ → /mnt/user0/ must not misfire as upgrade.
+
+        Regression: users who adopt the new array-direct default end up with
+        pre-run tracker keys at /mnt/user/X while the current run reports
+        /mnt/user0/X. Same rating_key, same basename — same file. Upgrade
+        detector should treat the two prefixes as equivalent.
+        """
+        from core.app import PlexCacheApp
+
+        pre_run_rk_index = {"100": {"/mnt/user/media/movie.mkv"}}
+
+        ondeck_items = [
+            OnDeckItem(
+                file_path="/plex/media/movie.mkv",
+                username="Alice",
+                rating_key="100"
+            )
+        ]
+        plex_to_real = {"/plex/media/movie.mkv": "/mnt/user0/media/movie.mkv"}
+
+        with patch.object(PlexCacheApp, '__init__', lambda self, *a, **kw: None):
+            app = PlexCacheApp.__new__(PlexCacheApp)
+            app.dry_run = False
+            app.ondeck_tracker = mock_app.ondeck_tracker
+            app.file_filter = mock_app.file_filter
+            app.file_path_modifier = mock_app.file_path_modifier
+            app.config_manager = mock_app.config_manager
+
+            app._detect_and_transfer_upgrades(ondeck_items, plex_to_real, pre_run_rk_index)
+
+        # No upgrade should have fired — this is the same logical file
+        mock_app.file_filter.remove_files_from_exclude_list.assert_not_called()
+        mock_app.file_filter._add_to_exclude_file.assert_not_called()
+
     def test_missing_rating_key_skipped(self, mock_app):
         """Items without rating_key are skipped."""
         from core.app import PlexCacheApp
