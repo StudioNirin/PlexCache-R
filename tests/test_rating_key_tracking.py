@@ -552,6 +552,46 @@ class TestUpgradeDetection:
         assert "Bob" in new_entry["users"]
         assert new_entry["rating_key"] == "100"
 
+    def test_stop_requested_halts_upgrade_loop(self, mock_app):
+        """When request_stop() fires mid-loop, no further upgrades are processed.
+
+        Regression: the upgrade loop ran to completion after Stop was pressed,
+        leading to 30+ seconds of continued .plexcached churn before finishing.
+        """
+        from core.app import PlexCacheApp
+
+        # Three rating_keys all with upgrades pending
+        pre_run_rk_index = {
+            "100": {"/mnt/user/media/old1.mkv"},
+            "200": {"/mnt/user/media/old2.mkv"},
+            "300": {"/mnt/user/media/old3.mkv"},
+        }
+        ondeck_items = [
+            OnDeckItem(file_path="/plex/media/new1.mkv", username="Alice", rating_key="100"),
+            OnDeckItem(file_path="/plex/media/new2.mkv", username="Alice", rating_key="200"),
+            OnDeckItem(file_path="/plex/media/new3.mkv", username="Alice", rating_key="300"),
+        ]
+        plex_to_real = {
+            "/plex/media/new1.mkv": "/mnt/user/media/new1.mkv",
+            "/plex/media/new2.mkv": "/mnt/user/media/new2.mkv",
+            "/plex/media/new3.mkv": "/mnt/user/media/new3.mkv",
+        }
+
+        with patch.object(PlexCacheApp, '__init__', lambda self, *a, **kw: None):
+            app = PlexCacheApp.__new__(PlexCacheApp)
+            app._stop_requested = True  # Stop before the loop even starts
+            app.dry_run = False
+            app.ondeck_tracker = mock_app.ondeck_tracker
+            app.file_filter = mock_app.file_filter
+            app.file_path_modifier = mock_app.file_path_modifier
+            app.config_manager = mock_app.config_manager
+
+            app._detect_and_transfer_upgrades(ondeck_items, plex_to_real, pre_run_rk_index)
+
+        # No transfers should have happened
+        mock_app.file_filter.remove_files_from_exclude_list.assert_not_called()
+        mock_app.file_filter._add_to_exclude_file.assert_not_called()
+
 
 # ============================================================================
 # Multi-version (4K) support tests

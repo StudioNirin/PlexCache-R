@@ -110,8 +110,14 @@ class PlexCacheApp:
 
     @property
     def should_stop(self) -> bool:
-        """Check if stop has been requested."""
-        return self._stop_requested
+        """Check if stop has been requested.
+
+        ``getattr`` guards against partially-initialized instances (mainly
+        test helpers that bypass ``__init__`` via ``__new__``). In production
+        ``_stop_requested`` is always set by ``__init__`` before any phase
+        that reads this property.
+        """
+        return getattr(self, '_stop_requested', False)
 
     def run(self) -> None:
         """Run the main application."""
@@ -1517,6 +1523,10 @@ class PlexCacheApp:
 
         upgrades_detected = 0
         for rk, old_paths in pre_run_rk_index.items():
+            if self.should_stop:
+                logging.info("[UPGRADE] Stop requested — halting upgrade detection")
+                break
+
             new_paths = current_rk_paths.get(rk)
             if not new_paths:
                 continue
@@ -1530,6 +1540,9 @@ class PlexCacheApp:
             if appeared and disappeared:
                 # Match disappeared→appeared 1:1 for transfer (handles single upgrade case)
                 for old_path, new_path in zip(sorted(disappeared), sorted(appeared)):
+                    if self.should_stop:
+                        logging.info("[UPGRADE] Stop requested — halting upgrade detection")
+                        break
                     upgrades_detected += 1
                     logging.info(f"[UPGRADE] Detected file upgrade for rating_key={rk}: "
                                  f"{os.path.basename(old_path)} → {os.path.basename(new_path)}")
