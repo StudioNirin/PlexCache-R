@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Callable
 from dataclasses import dataclass, field
 
 from web.config import PROJECT_ROOT, DATA_DIR, LOGS_DIR, SETTINGS_FILE as CONFIG_SETTINGS_FILE, get_time_format
-from core.system_utils import format_bytes, format_duration
+from core.system_utils import format_bytes, format_duration, get_log_time_datefmt
 from core.file_operations import save_json_atomically
 
 # Shared activity module — canonical implementations live in core/activity.py.
@@ -92,8 +92,7 @@ class WebLogHandler(logging.Handler):
     def __init__(self, callback: Callable[[str], None]):
         super().__init__()
         self.callback = callback
-        fmt = get_time_format()
-        datefmt = '%-I:%M:%S %p' if fmt == '12h' else '%H:%M:%S'
+        datefmt = get_log_time_datefmt(get_time_format())
         self.setFormatter(logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s',
             datefmt=datefmt

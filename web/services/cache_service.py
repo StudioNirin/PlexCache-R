@@ -15,6 +15,46 @@ from core.system_utils import get_disk_usage, detect_zfs, get_array_direct_path,
 from core.file_operations import get_media_identity, find_matching_plexcached, save_json_atomically, SUBTITLE_EXTENSIONS, is_video_file
 
 
+def cached_files_to_dicts(files: List["CachedFile"]) -> List[Dict[str, Any]]:
+    """Convert CachedFile dataclasses to plain dicts for template rendering."""
+    return [
+        {
+            "path": f.path,
+            "filename": f.filename,
+            "size": f.size,
+            "size_display": f.size_display,
+            "cache_age_hours": f.cache_age_hours,
+            "source": f.source,
+            "priority_score": f.priority_score,
+            "users": f.users,
+            "is_ondeck": f.is_ondeck,
+            "is_watchlist": f.is_watchlist,
+            "is_pinned": f.is_pinned,
+            "subtitle_count": f.subtitle_count,
+            "sidecar_count": f.sidecar_count,
+            "associated_files": f.associated_files,
+        }
+        for f in files
+    ]
+
+
+def calculate_file_totals(files_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate counts and total size for a filtered list of cached-file dicts."""
+    total_size = sum(f["size"] for f in files_data)
+    return {
+        "total_files": len(files_data),
+        "ondeck_count": sum(1 for f in files_data if f["is_ondeck"]),
+        "watchlist_count": sum(1 for f in files_data if f["is_watchlist"]),
+        "pinned_count": sum(1 for f in files_data if f["is_pinned"]),
+        "other_count": sum(
+            1 for f in files_data
+            if not f["is_ondeck"] and not f["is_watchlist"] and not f["is_pinned"]
+        ),
+        "total_size": total_size,
+        "total_size_display": format_bytes(total_size),
+    }
+
+
 @dataclass
 class CachedFile:
     """Represents a cached file with all its metadata"""

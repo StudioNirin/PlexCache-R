@@ -12,7 +12,7 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 from web.config import PROJECT_ROOT, DATA_DIR
-from core.system_utils import format_bytes, format_duration
+from core.system_utils import format_bytes, format_duration, format_cache_age
 
 
 @dataclass
@@ -258,6 +258,107 @@ CACHE_KEY_DASHBOARD_STATS = "dashboard_stats"
 CACHE_KEY_MAINTENANCE_AUDIT = "maintenance_audit"
 CACHE_KEY_MAINTENANCE_HEALTH = "maintenance_health"
 
+
+def _compute_dashboard_stats() -> dict:
+    """Build a fresh dashboard-stats dict from the service layer."""
+    # Imports deferred to avoid circular dependencies at module import time.
+    from core.activity import load_last_run_summary
+    from web.services import (
+        get_cache_service,
+        get_settings_service,
+        get_operation_runner,
+        get_scheduler_service,
+        get_maintenance_service,
+    )
+
+    cache_service = get_cache_service()
+    settings_service = get_settings_service()
+    operation_runner = get_operation_runner()
+    scheduler_service = get_scheduler_service()
+    maintenance_service = get_maintenance_service()
+
+    cache_stats = cache_service.get_cache_stats()
+    plex_connected = settings_service.check_plex_connection()
+    last_run = settings_service.get_last_run_time() or "Never"
+    schedule_status = scheduler_service.get_status()
+    health = maintenance_service.get_health_summary()
+
+    stats = {
+        "cache_files": cache_stats["cache_files"],
+        "cache_size": cache_stats["cache_size"],
+        "cache_limit": cache_stats["cache_limit"],
+        "usage_percent": cache_stats["usage_percent"],
+        "cached_files_size": cache_stats.get("cached_files_size"),
+        "associated_files_count": cache_stats.get("associated_files_count", 0),
+        "ondeck_count": cache_stats["ondeck_count"],
+        "ondeck_tracked_count": cache_stats.get("ondeck_tracked_count", 0),
+        "watchlist_count": cache_stats["watchlist_count"],
+        "watchlist_tracked_count": cache_stats.get("watchlist_tracked_count", 0),
+        "eviction_over_threshold": cache_stats.get("eviction_over_threshold", False),
+        "eviction_over_by_display": cache_stats.get("eviction_over_by_display"),
+        "cache_limit_exceeded": cache_stats.get("cache_limit_exceeded", False),
+        "cache_limit_approaching": cache_stats.get("cache_limit_approaching", False),
+        "configured_limit_display": cache_stats.get("configured_limit_display"),
+        "configured_limit_percent": cache_stats.get("configured_limit_percent", 0),
+        "eviction_threshold_display": cache_stats.get("eviction_threshold_display"),
+        "min_free_space_warning": cache_stats.get("min_free_space_warning", False),
+        "last_run": last_run,
+        "is_running": operation_runner.is_running,
+        "plex_connected": plex_connected,
+        "schedule_enabled": schedule_status.get("enabled", False),
+        "next_run": schedule_status.get("next_run_display", "Not scheduled"),
+        "next_run_relative": schedule_status.get("next_run_relative"),
+        "health_status": health["status"],
+        "health_issues": health["orphaned_count"],
+        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"] + health["duplicate_orphan_count"],
+        "health_orphaned_count": health["orphaned_count"],
+        "health_stale_exclude_count": health["stale_exclude_count"],
+        "health_stale_timestamp_count": health["stale_timestamp_count"],
+        "health_duplicate_count": health["duplicate_count"],
+        "health_duplicate_orphan_count": health["duplicate_orphan_count"],
+        "health_duplicate_orphan_bytes": health["duplicate_orphan_bytes_display"],
+        "last_run_summary": None,
+    }
+
+    summary = load_last_run_summary()
+    if summary:
+        stats["last_run_summary"] = {
+            "status": summary.get("status", "unknown"),
+            "bytes_cached_display": format_bytes(summary["bytes_cached"]) if summary.get("bytes_cached") else "",
+            "bytes_restored_display": format_bytes(summary["bytes_restored"]) if summary.get("bytes_restored") else "",
+            "duration_display": format_duration(summary.get("duration_seconds", 0)),
+            "error_count": summary.get("error_count", 0),
+            "dry_run": summary.get("dry_run", False),
+        }
+
+    return stats
+
+
+def get_dashboard_stats(use_cache: bool = True) -> tuple:
+    """Return (stats_dict, cache_age_display). Reads from cache when use_cache is True.
+
+    Cached entries missing recent fields are invalidated and recomputed.
+    """
+    web_cache = get_web_cache_service()
+
+    if use_cache:
+        cached_stats = web_cache.get(CACHE_KEY_DASHBOARD_STATS)
+        if cached_stats:
+            _, updated_at = web_cache.get_with_age(CACHE_KEY_DASHBOARD_STATS)
+            cache_age = format_cache_age(updated_at)
+            # Stale cache from older fieldset — recompute fresh
+            if "health_duplicate_count" not in cached_stats:
+                web_cache.invalidate(CACHE_KEY_DASHBOARD_STATS)
+            else:
+                # Override non-cacheable live flag
+                from web.services import get_operation_runner
+                cached_stats["is_running"] = get_operation_runner().is_running
+                return cached_stats, cache_age
+
+    stats = _compute_dashboard_stats()
+    web_cache.set(CACHE_KEY_DASHBOARD_STATS, stats)
+    return stats, "just now"
+
 # Singleton instance
 _web_cache_service: Optional[WebCacheService] = None
 _web_cache_service_lock = threading.Lock()
@@ -282,65 +383,8 @@ def init_web_cache():
 
     # Import here to avoid circular imports
     from web.services.maintenance_service import get_maintenance_service
-    from web.services.cache_service import get_cache_service
-    from web.services import get_settings_service, get_operation_runner, get_scheduler_service
 
-    # Register refresh callbacks
     maintenance_svc = get_maintenance_service()
-
-    def refresh_dashboard_stats():
-        """Refresh dashboard stats - mirrors _get_dashboard_stats in dashboard.py"""
-        from core.activity import load_last_run_summary
-        from web.services.operation_runner import OperationRunner as _OR
-
-        cache_svc = get_cache_service()
-        settings_svc = get_settings_service()
-        operation_runner = get_operation_runner()
-        scheduler_svc = get_scheduler_service()
-
-        cache_stats = cache_svc.get_cache_stats()
-        plex_connected = settings_svc.check_plex_connection()
-        last_run = settings_svc.get_last_run_time() or "Never"
-        op_status = operation_runner.get_status_dict()
-        schedule_status = scheduler_svc.get_status()
-        health = maintenance_svc.get_health_summary()
-
-        stats = {
-            "cache_files": cache_stats["cache_files"],
-            "cache_size": cache_stats["cache_size"],
-            "cache_limit": cache_stats["cache_limit"],
-            "usage_percent": cache_stats["usage_percent"],
-            "ondeck_count": cache_stats["ondeck_count"],
-            "ondeck_tracked_count": cache_stats.get("ondeck_tracked_count", 0),
-            "watchlist_count": cache_stats["watchlist_count"],
-            "watchlist_tracked_count": cache_stats.get("watchlist_tracked_count", 0),
-            "last_run": last_run,
-            "is_running": operation_runner.is_running,
-            "plex_connected": plex_connected,
-            "schedule_enabled": schedule_status.get("enabled", False),
-            "next_run": schedule_status.get("next_run_display", "Not scheduled"),
-            "next_run_relative": schedule_status.get("next_run_relative"),
-            "health_status": health["status"],
-            "health_issues": health["orphaned_count"],
-            "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"],
-            "health_orphaned_count": health["orphaned_count"],
-            "health_stale_exclude_count": health["stale_exclude_count"],
-            "health_stale_timestamp_count": health["stale_timestamp_count"],
-            "last_run_summary": None,
-        }
-
-        summary = load_last_run_summary()
-        if summary:
-            stats["last_run_summary"] = {
-                "status": summary.get("status", "unknown"),
-                "bytes_cached_display": format_bytes(summary["bytes_cached"]) if summary.get("bytes_cached") else "",
-                "bytes_restored_display": format_bytes(summary["bytes_restored"]) if summary.get("bytes_restored") else "",
-                "duration_display": format_duration(summary.get("duration_seconds", 0)),
-                "error_count": summary.get("error_count", 0),
-                "dry_run": summary.get("dry_run", False),
-            }
-
-        return stats
 
     def refresh_maintenance_audit():
         """Refresh maintenance audit - convert to dict for serialization"""
@@ -351,7 +395,7 @@ def init_web_cache():
         """Refresh maintenance health summary"""
         return maintenance_svc.get_health_summary()
 
-    service.register_refresh_callback(CACHE_KEY_DASHBOARD_STATS, refresh_dashboard_stats)
+    service.register_refresh_callback(CACHE_KEY_DASHBOARD_STATS, _compute_dashboard_stats)
     service.register_refresh_callback(CACHE_KEY_MAINTENANCE_AUDIT, refresh_maintenance_audit)
     service.register_refresh_callback(CACHE_KEY_MAINTENANCE_HEALTH, refresh_maintenance_health)
 

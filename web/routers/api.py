@@ -13,11 +13,10 @@ from urllib.parse import unquote
 
 from web.config import templates, PLEXCACHE_PRODUCT_VERSION, IS_DOCKER
 from web.dependencies import parse_form
-from core.system_utils import format_bytes, format_duration, format_cache_age
 from web.services import get_cache_service, get_settings_service, get_operation_runner, get_scheduler_service, ScheduleConfig, get_maintenance_service
-from core.activity import load_last_run_summary
+from web.services.cache_service import cached_files_to_dicts, calculate_file_totals
 from web.services.operation_runner import OperationRunner
-from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
+from web.services.web_cache import get_web_cache_service, get_dashboard_stats, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 logger = logging.getLogger(__name__)
 
@@ -40,97 +39,10 @@ def _safe_int(value, default: int) -> int:
         return default
 
 
-def _get_dashboard_stats_data(use_cache: bool = True) -> tuple[dict, str | None]:
-    """Get dashboard stats, optionally from cache. Returns (stats, cache_age)"""
-    web_cache = get_web_cache_service()
-    cache_service = get_cache_service()
-    settings_service = get_settings_service()
-    operation_runner = get_operation_runner()
-    scheduler_service = get_scheduler_service()
-    maintenance_service = get_maintenance_service()
-
-    # Try to get from cache first
-    if use_cache:
-        cached_stats = web_cache.get(CACHE_KEY_DASHBOARD_STATS)
-        if cached_stats:
-            # Calculate cache age
-            _, updated_at = web_cache.get_with_age(CACHE_KEY_DASHBOARD_STATS)
-            cache_age = format_cache_age(updated_at)
-
-            # Update dynamic fields that shouldn't be cached
-            cached_stats["is_running"] = operation_runner.is_running
-            # Stale cache from before duplicate support — recompute fresh
-            if "health_duplicate_count" not in cached_stats:
-                web_cache.invalidate(CACHE_KEY_DASHBOARD_STATS)
-            else:
-                return cached_stats, cache_age
-
-    # Compute fresh stats
-    cache_stats = cache_service.get_cache_stats()
-    plex_connected = settings_service.check_plex_connection()
-    last_run = settings_service.get_last_run_time() or "Never"
-    schedule_status = scheduler_service.get_status()
-    health = maintenance_service.get_health_summary()
-
-    stats = {
-        "cache_files": cache_stats["cache_files"],
-        "cache_size": cache_stats["cache_size"],
-        "cache_limit": cache_stats["cache_limit"],
-        "usage_percent": cache_stats["usage_percent"],
-        "cached_files_size": cache_stats.get("cached_files_size"),
-        "associated_files_count": cache_stats.get("associated_files_count", 0),
-        "ondeck_count": cache_stats["ondeck_count"],
-        "ondeck_tracked_count": cache_stats.get("ondeck_tracked_count", 0),
-        "watchlist_count": cache_stats["watchlist_count"],
-        "watchlist_tracked_count": cache_stats.get("watchlist_tracked_count", 0),
-        "eviction_over_threshold": cache_stats.get("eviction_over_threshold", False),
-        "eviction_over_by_display": cache_stats.get("eviction_over_by_display"),
-        "cache_limit_exceeded": cache_stats.get("cache_limit_exceeded", False),
-        "cache_limit_approaching": cache_stats.get("cache_limit_approaching", False),
-        "configured_limit_display": cache_stats.get("configured_limit_display"),
-        "configured_limit_percent": cache_stats.get("configured_limit_percent", 0),
-        "eviction_threshold_display": cache_stats.get("eviction_threshold_display"),
-        "min_free_space_warning": cache_stats.get("min_free_space_warning", False),
-        "last_run": last_run,
-        "is_running": operation_runner.is_running,
-        "plex_connected": plex_connected,
-        "schedule_enabled": schedule_status.get("enabled", False),
-        "next_run": schedule_status.get("next_run_display", "Not scheduled"),
-        "next_run_relative": schedule_status.get("next_run_relative"),
-        "health_status": health["status"],
-        "health_issues": health["orphaned_count"],
-        "health_warnings": health["stale_exclude_count"] + health["stale_timestamp_count"] + health["duplicate_orphan_count"],
-        "health_orphaned_count": health["orphaned_count"],
-        "health_stale_exclude_count": health["stale_exclude_count"],
-        "health_stale_timestamp_count": health["stale_timestamp_count"],
-        "health_duplicate_count": health["duplicate_count"],
-        "health_duplicate_orphan_count": health["duplicate_orphan_count"],
-        "health_duplicate_orphan_bytes": health["duplicate_orphan_bytes_display"],
-        "last_run_summary": None,
-    }
-
-    # Load last run summary
-    summary = load_last_run_summary()
-    if summary:
-        stats["last_run_summary"] = {
-            "status": summary.get("status", "unknown"),
-            "bytes_cached_display": format_bytes(summary["bytes_cached"]) if summary.get("bytes_cached") else "",
-            "bytes_restored_display": format_bytes(summary["bytes_restored"]) if summary.get("bytes_restored") else "",
-            "duration_display": format_duration(summary.get("duration_seconds", 0)),
-            "error_count": summary.get("error_count", 0),
-            "dry_run": summary.get("dry_run", False),
-        }
-
-    # Cache the results
-    web_cache.set(CACHE_KEY_DASHBOARD_STATS, stats)
-
-    return stats, "just now"
-
-
 @router.get("/dashboard/stats-content", response_class=HTMLResponse)
 def dashboard_stats_content(request: Request):
     """Full dashboard stats container for lazy loading"""
-    stats, cache_age = _get_dashboard_stats_data(use_cache=True)
+    stats, cache_age = get_dashboard_stats(use_cache=True)
 
     return templates.TemplateResponse(
         request,
@@ -145,7 +57,7 @@ def dashboard_stats_content(request: Request):
 @router.get("/dashboard/stats", response_class=HTMLResponse)
 def dashboard_stats(request: Request):
     """Dashboard stats partial for HTMX polling"""
-    stats, _ = _get_dashboard_stats_data(use_cache=True)
+    stats, _ = get_dashboard_stats(use_cache=True)
 
     return templates.TemplateResponse(
         request,
@@ -170,43 +82,8 @@ def cache_files_table(
         source_filter=source, search=search, sort_by=sort, sort_dir=dir
     )
 
-    # Convert dataclass to dict for template
-    files_data = [
-        {
-            "path": f.path,
-            "filename": f.filename,
-            "size": f.size,
-            "size_display": f.size_display,
-            "cache_age_hours": f.cache_age_hours,
-            "source": f.source,
-            "priority_score": f.priority_score,
-            "users": f.users,
-            "is_ondeck": f.is_ondeck,
-            "is_watchlist": f.is_watchlist,
-            "is_pinned": f.is_pinned,
-            "subtitle_count": f.subtitle_count,
-            "sidecar_count": f.sidecar_count,
-            "associated_files": f.associated_files
-        }
-        for f in files
-    ]
-
-    # Calculate totals for the current filtered view
-    totals = {
-        "total_files": len(files_data),
-        "ondeck_count": sum(1 for f in files_data if f["is_ondeck"]),
-        "watchlist_count": sum(1 for f in files_data if f["is_watchlist"]),
-        "pinned_count": sum(1 for f in files_data if f["is_pinned"]),
-        "other_count": sum(1 for f in files_data if not f["is_ondeck"] and not f["is_watchlist"] and not f["is_pinned"]),
-        "total_size": sum(f["size"] for f in files_data)
-    }
-    # Format total size
-    if totals["total_size"] >= 1024 ** 3:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 3):.2f} GB"
-    elif totals["total_size"] >= 1024 ** 2:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.2f} MB"
-    else:
-        totals["total_size_display"] = f"{totals['total_size'] / 1024:.2f} KB"
+    files_data = cached_files_to_dicts(files)
+    totals = calculate_file_totals(files_data)
 
     # Get eviction mode setting
     settings_service = get_settings_service()

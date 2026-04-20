@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 
 from web.config import templates
 from web.services import get_cache_service, get_settings_service
+from web.services.cache_service import cached_files_to_dicts, calculate_file_totals
 
 logger = logging.getLogger(__name__)
 
@@ -36,43 +37,8 @@ def cache_list(
         source_filter=source, search=search, sort_by=sort, sort_dir=dir
     )
 
-    # Convert dataclass to dict for template
-    files_data = [
-        {
-            "path": f.path,
-            "filename": f.filename,
-            "size": f.size,
-            "size_display": f.size_display,
-            "cache_age_hours": f.cache_age_hours,
-            "source": f.source,
-            "priority_score": f.priority_score,
-            "users": f.users,
-            "is_ondeck": f.is_ondeck,
-            "is_watchlist": f.is_watchlist,
-            "is_pinned": f.is_pinned,
-            "subtitle_count": f.subtitle_count,
-            "sidecar_count": f.sidecar_count,
-            "associated_files": f.associated_files
-        }
-        for f in files
-    ]
-
-    # Calculate totals for the current filtered view
-    totals = {
-        "total_files": len(files_data),
-        "ondeck_count": sum(1 for f in files_data if f["is_ondeck"]),
-        "watchlist_count": sum(1 for f in files_data if f["is_watchlist"]),
-        "pinned_count": sum(1 for f in files_data if f["is_pinned"]),
-        "other_count": sum(1 for f in files_data if not f["is_ondeck"] and not f["is_watchlist"] and not f["is_pinned"]),
-        "total_size": sum(f["size"] for f in files_data)
-    }
-    # Format total size
-    if totals["total_size"] >= 1024 ** 3:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 3):.2f} GB"
-    elif totals["total_size"] >= 1024 ** 2:
-        totals["total_size_display"] = f"{totals['total_size'] / (1024 ** 2):.2f} MB"
-    else:
-        totals["total_size_display"] = f"{totals['total_size'] / 1024:.2f} KB"
+    files_data = cached_files_to_dicts(files)
+    totals = calculate_file_totals(files_data)
 
     return templates.TemplateResponse(
         request,
