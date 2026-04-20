@@ -1038,7 +1038,7 @@ class OperationRunner:
             if hasattr(app, 'sibling_map') and app.sibling_map:
                 try:
                     self._merge_sibling_activities(app.sibling_map)
-                except Exception as e:
+                except (OSError, AttributeError, KeyError, TypeError) as e:
                     logging.debug(f"Failed to merge sibling activities: {e}")
 
             # Check if we were stopped early
@@ -1064,7 +1064,7 @@ class OperationRunner:
             if app and hasattr(app, 'instance_lock') and app.instance_lock:
                 try:
                     app.instance_lock.release()
-                except Exception:
+                except (OSError, RuntimeError):
                     pass  # Ignore errors during cleanup
 
             # Remove our custom handler
@@ -1093,14 +1093,14 @@ class OperationRunner:
             try:
                 from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS
                 get_web_cache_service().invalidate(CACHE_KEY_DASHBOARD_STATS)
-            except Exception:
+            except (ImportError, AttributeError):
                 pass
 
             # After operation completes, check if maintenance actions are queued
             try:
                 from web.services.maintenance_runner import get_maintenance_runner
                 get_maintenance_runner()._try_dequeue()
-            except Exception:
+            except (ImportError, AttributeError):
                 pass
 
     def _merge_sibling_activities(self, sibling_map: Dict[str, list]) -> None:
@@ -1414,7 +1414,7 @@ class OperationRunner:
                     if lock and af:
                         with lock:
                             active_files = [(name, size) for name, size in af.values()]
-            except Exception:
+            except (AttributeError, KeyError, TypeError):
                 pass
             status["active_files"] = active_files
 
