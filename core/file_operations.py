@@ -3835,9 +3835,18 @@ class FileFilter:
     def _extract_media_name(self, file_path: str) -> Optional[str]:
         """
         Extract a comparable media identifier from a file path.
-        - For movies: returns cleaned file title
-        - For TV shows: returns show name (but episode comparison is handled separately)
-        - For non-video files (artwork, NFOs, etc.): derives name from parent directory
+        - For TV shows: returns show name (episode comparison handled separately).
+        - For movies in a per-movie folder: returns the parent directory name.
+          Detected by the filename stem starting with the parent directory's
+          name — the Plex convention for both '/MOVIE/MOVIE.mkv' and
+          '/MOVIE (2025)/MOVIE (2025) - [WEBDL]-GROUP.mkv'. Works with or
+          without year markers in the folder name.
+        - For movies at library root (e.g. '/Movies/SomeFilm.mkv'): falls back
+          to cleaning the filename.
+        The per-movie-folder case keeps the main video file and its
+        artwork/NFO/subtitle siblings in lockstep so they share an identifier
+        and the 'still needed in OnDeck' lookup matches for all of them, not
+        just the primary video.
         """
         try:
             normalized_path = os.path.normpath(file_path)
@@ -3854,9 +3863,16 @@ class FileFilter:
                         return path_parts[i - 1]
                     break
 
-            # For movies: return cleaned filename
             filename = os.path.basename(file_path)
             name, ext = os.path.splitext(filename)
+            parent_dir = os.path.basename(os.path.dirname(file_path))
+
+            # For movies in a per-movie folder: parent_dir is the canonical
+            # identifier. The "filename stem begins with parent_dir name" check
+            # distinguishes per-movie folders from library roots — a library
+            # root like "Movies" won't appear as a prefix in typical filenames.
+            if parent_dir and name.lower().startswith(parent_dir.lower()):
+                return parent_dir
 
             # Handle subtitle files - strip language code suffixes (e.g., ".en", ".eng", ".en.hi", ".forced")
             if ext.lower() in SUBTITLE_EXTENSIONS:
@@ -3867,9 +3883,9 @@ class FileFilter:
                     prev_name = name
                     name = re.sub(pattern, '', name, flags=re.IGNORECASE)
             elif not is_video_file(file_path):
-                # Non-video, non-subtitle file (artwork, NFO, etc.)
-                # Use parent directory name as the media identifier
-                parent_dir = os.path.basename(os.path.dirname(file_path))
+                # Non-video, non-subtitle file (artwork, NFO, etc.) whose filename
+                # doesn't begin with the parent dir name (e.g. bare "poster.jpg").
+                # Use parent directory name as the media identifier.
                 if parent_dir:
                     return parent_dir
 
