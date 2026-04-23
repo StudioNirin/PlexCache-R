@@ -282,7 +282,9 @@ function bannerToggleShow(evt, el) {
 // During running ops the banner polls every 2s with innerHTML swaps; if the
 // user had focus or selection inside the banner, the destroyed element can
 // cause the browser to reset scroll to top. Snapshot before, restore after.
-var _diSavedScrollY = null;
+// Stored on window because this script re-runs on every innerHTML swap and
+// would otherwise wipe the saved value between beforeSwap and afterSwap.
+if (typeof window.__diSavedScrollY === 'undefined') window.__diSavedScrollY = null;
 
 // Skip the swap if the banner state hasn't meaningfully changed.
 // Prevents the pill from flashing on every idle/completed poll cycle.
@@ -292,7 +294,7 @@ var _diSavedScrollY = null;
 // Running/maintenance polls always swap (they show live progress).
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (evt.detail.target && evt.detail.target.id === 'global-operation-banner') {
-        _diSavedScrollY = window.scrollY;
+        window.__diSavedScrollY = window.scrollY;
         var banner = evt.detail.target;
         var oldPill = banner.querySelector('.di-pill');
         if (!oldPill) return;  // No pill yet — allow first swap
@@ -386,9 +388,9 @@ document.addEventListener('htmx:responseError', function(evt) {
 document.addEventListener('htmx:afterSwap', function(evt) {
     if (evt.detail.target && evt.detail.target.id === 'global-operation-banner') {
         // Restore scroll position snapshotted in beforeSwap.
-        if (_diSavedScrollY !== null) {
-            window.scrollTo(0, _diSavedScrollY);
-            _diSavedScrollY = null;
+        if (window.__diSavedScrollY !== null) {
+            window.scrollTo(0, window.__diSavedScrollY);
+            window.__diSavedScrollY = null;
         }
 
         // Successful swap — reset connection failure tracking
