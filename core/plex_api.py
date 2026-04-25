@@ -49,6 +49,45 @@ PLEX_API_DELAY = 1.0
 RSS_MAX_RETRIES = 3
 RSS_TIMEOUT = 15  # seconds
 
+# plex.tv API retry settings for transient network errors
+PLEXTV_MAX_RETRIES = 3
+PLEXTV_RETRY_BASE_WAIT = 2  # seconds (exponential: 2s, 4s)
+
+
+def _retry_plextv_call(func, label: str, max_attempts: int = PLEXTV_MAX_RETRIES):
+    """Call a plex.tv function, retrying on transient network errors.
+
+    Retries only `requests.Timeout` and `requests.ConnectionError` — other
+    exceptions (auth failures, parse errors, logic bugs) are raised immediately
+    so callers can distinguish retry-worthy failures from permanent ones.
+
+    Args:
+        func: Zero-argument callable to invoke (wrap args via lambda).
+        label: Short description for log messages (e.g. "watchlist for Brandon").
+        max_attempts: Total attempts including the first try.
+
+    Returns:
+        The return value of func() on success.
+
+    Raises:
+        The underlying exception if all attempts fail, or any non-retriable
+        exception on the first hit.
+    """
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            return func()
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_error = e
+            if attempt < max_attempts - 1:
+                wait_time = PLEXTV_RETRY_BASE_WAIT ** (attempt + 1)  # 2s, 4s
+                logging.warning(
+                    f"plex.tv {label} attempt {attempt + 1}/{max_attempts} "
+                    f"timed out: {e}. Retrying in {wait_time}s..."
+                )
+                time.sleep(wait_time)
+    raise last_error
+
 
 def _log_api_error(context: str, error: Exception) -> None:
     """Log API errors with specific detection for common HTTP status codes.
@@ -1163,12 +1202,18 @@ class PlexManager:
         # --- Local Plex watchlist processing ---
         try:
             self._rate_limited_api_call()
-            watchlist = account.watchlist(filter='released', sort='watchlistedAt:desc')
+            watchlist = _retry_plextv_call(
+                lambda: account.watchlist(filter='released', sort='watchlistedAt:desc'),
+                label=f"watchlist for {current_username}",
+            )
             logging.debug(f"[USER:{current_username}] Found {len(watchlist)} watchlist items")
             for item in watchlist:
                 watchlisted_at = None
                 try:
-                    user_state = account.userState(item)
+                    user_state = _retry_plextv_call(
+                        lambda: account.userState(item),
+                        label=f"userState for '{item.title}'",
+                    )
                     watchlisted_at = getattr(user_state, 'watchlistedAt', None)
                 except Exception as e:
                     logging.debug(f"Could not get userState for {item.title}: {e}")
