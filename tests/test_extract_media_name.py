@@ -72,6 +72,72 @@ class TestMovieFolderConsistency:
         assert file_filter._extract_media_name(path) == "The Matrix"
 
 
+class TestSortableArticleSuffixFolders:
+    """Sonarr/Radarr "Use Sortable Title" puts the article at the end of the
+    folder name ("SpongeBob Movie ..., The (2015)") while the files inside still
+    start with the article ("The SpongeBob Movie ..."). Both shapes must produce
+    the same identifier so the eviction needed-set lookup matches all siblings.
+    """
+
+    def test_article_the_suffix_mkv_and_sidecars_share_identifier(self, file_filter):
+        folder = "/mnt/cache/Movies/SpongeBob Movie Sponge Out of Water, The (2015)"
+        mkv = f"{folder}/The SpongeBob Movie Sponge Out of Water (2015) - [BLURAY-1080P][AC3 5.1][X264][8Bit].mkv"
+        nfo = f"{folder}/The SpongeBob Movie Sponge Out of Water (2015) - [BLURAY-1080P][AC3 5.1][X264][8Bit].nfo"
+        poster = f"{folder}/The SpongeBob Movie Sponge Out of Water (2015) - [BLURAY-1080P][AC3 5.1][X264][8Bit]-poster.jpg"
+        fanart = f"{folder}/The SpongeBob Movie Sponge Out of Water (2015) - [BLURAY-1080P][AC3 5.1][X264][8Bit]-fanart.jpg"
+        clearlogo = f"{folder}/The SpongeBob Movie Sponge Out of Water (2015) - [BLURAY-1080P][AC3 5.1][X264][8Bit]-clearlogo.png"
+
+        mkv_id = file_filter._extract_media_name(mkv)
+        assert mkv_id == "SpongeBob Movie Sponge Out of Water, The (2015)"
+        assert mkv_id == file_filter._extract_media_name(nfo)
+        assert mkv_id == file_filter._extract_media_name(poster)
+        assert mkv_id == file_filter._extract_media_name(fanart)
+        assert mkv_id == file_filter._extract_media_name(clearlogo)
+
+    def test_article_a_suffix_consistent(self, file_filter):
+        folder = "/mnt/cache/Movies/Christmas Story, A (1983)"
+        mkv = f"{folder}/A Christmas Story (1983) - [BLURAY-1080P][DTS 5.1][X264][8Bit]-GROUP.mkv"
+        poster = f"{folder}/A Christmas Story (1983) - [BLURAY-1080P][DTS 5.1][X264][8Bit]-GROUP-poster.jpg"
+
+        mkv_id = file_filter._extract_media_name(mkv)
+        assert mkv_id == "Christmas Story, A (1983)"
+        assert mkv_id == file_filter._extract_media_name(poster)
+
+    def test_article_an_suffix_consistent(self, file_filter):
+        folder = "/mnt/cache/Movies/Inconvenient Truth, An (2006)"
+        mkv = f"{folder}/An Inconvenient Truth (2006) - [WEBDL-1080P][AAC 2.0][H264][8Bit]-GROUP.mkv"
+        nfo = f"{folder}/An Inconvenient Truth (2006) - [WEBDL-1080P][AAC 2.0][H264][8Bit]-GROUP.nfo"
+
+        mkv_id = file_filter._extract_media_name(mkv)
+        assert mkv_id == "Inconvenient Truth, An (2006)"
+        assert mkv_id == file_filter._extract_media_name(nfo)
+
+    def test_article_suffix_yearless_folder_consistent(self, file_filter):
+        folder = "/mnt/cache/Movies/Matrix, The"
+        mkv = f"{folder}/The Matrix - [BLURAY-1080P][DTS 5.1][X264][8Bit]-GROUP.mkv"
+        poster = f"{folder}/The Matrix - [BLURAY-1080P][DTS 5.1][X264][8Bit]-GROUP-poster.jpg"
+
+        mkv_id = file_filter._extract_media_name(mkv)
+        assert mkv_id == "Matrix, The"
+        assert mkv_id == file_filter._extract_media_name(poster)
+
+    def test_article_suffix_lowercase_filename_still_matches(self, file_filter):
+        """Case-insensitive match — filename article casing shouldn't matter."""
+        folder = "/mnt/cache/Movies/Big Lebowski, The (1998)"
+        mkv = f"{folder}/the big lebowski (1998) - [BLURAY-1080P]-GROUP.mkv"
+
+        assert file_filter._extract_media_name(mkv) == "Big Lebowski, The (1998)"
+
+    def test_non_article_comma_in_folder_not_treated_as_article(self, file_filter):
+        """Folder ending in a comma + non-article word must not be rotated."""
+        folder = "/mnt/cache/Movies/Kill Bill, Vol. 1 (2003)"
+        mkv = f"{folder}/Kill Bill, Vol. 1 (2003) - [BLURAY-1080P]-GROUP.mkv"
+
+        # Filename starts with the literal folder name → original path matches,
+        # rotation is never attempted.
+        assert file_filter._extract_media_name(mkv) == "Kill Bill, Vol. 1 (2003)"
+
+
 class TestTvShowPathsUnchanged:
     """TV-show-in-Season-folder behavior must keep working unchanged."""
 
