@@ -118,7 +118,7 @@ python3 plexcache.py --web --port 8080     # Custom port
 - **Logs** - Real-time log viewer with search, filters, and live streaming
 - **Stop Button** - Abort running operations gracefully (stops after current file completes)
 - **Operations** - Run Now with real-time progress banner, ETA, and stop button
-- **Activity Feed** - Recent file operations with persistent history
+- **Activity Feed** - Recent file operations grouped by run, with TV episodes collapsed by show and persistent history
 - **Maintenance History** - Persistent log of past maintenance actions
 - **Authentication** - Optional Plex OAuth login with password fallback and session management
 
