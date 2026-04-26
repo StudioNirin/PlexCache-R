@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional, Callable, Any, List
+from typing import Optional, Callable, Any, Dict, List
 from dataclasses import dataclass, field
 
 from web.services.maintenance_service import ActionResult
@@ -307,6 +307,11 @@ class MaintenanceRunner:
         # Run grouping: minted at start_action(), attached to every FileActivity
         # so the dashboard's run-grouped Recent Activity view can bucket entries.
         self._run_id: Optional[str] = None
+        # Pre-action size snapshot: many maintenance actions delete/move the
+        # affected files, so post-action `os.path.getsize` returns 0. Capture
+        # sizes up front (input paths always exist at start) so the activity
+        # feed shows real sizes for "Restored", "Moved to Array", etc.
+        self._path_sizes: Dict[str, int] = {}
 
     @property
     def state(self) -> MaintenanceState:
@@ -370,6 +375,7 @@ class MaintenanceRunner:
             self._state = MaintenanceState.RUNNING
             self._stop_requested = False
             self._run_id = uuid.uuid4().hex
+            self._path_sizes = self._snapshot_path_sizes(method_args, method_kwargs)
 
             display = ACTION_DISPLAY.get(action_name, "Running maintenance action...")
             display = display.format(count=file_count)
@@ -639,6 +645,51 @@ class MaintenanceRunner:
         "cache-pinned": "Cached",
     }
 
+    @staticmethod
+    def _snapshot_path_sizes(method_args: tuple, method_kwargs: dict) -> Dict[str, int]:
+        """Record sizes of input file paths before the action runs.
+
+        Most maintenance actions take the path list as the first positional
+        arg or a `paths`/`cache_paths` kwarg; the files always exist at
+        start (else the action couldn't operate on them). Sampling here
+        gives us authoritative sizes for the activity feed even after the
+        files are deleted, renamed, or moved by the action.
+        """
+        candidates = []
+        if method_args and isinstance(method_args[0], list):
+            candidates = method_args[0]
+        else:
+            for key in ("paths", "cache_paths"):
+                value = (method_kwargs or {}).get(key)
+                if isinstance(value, list):
+                    candidates = value
+                    break
+
+        sizes: Dict[str, int] = {}
+        for path in candidates:
+            if not isinstance(path, str):
+                continue
+            try:
+                sizes[path] = os.path.getsize(path)
+            except OSError:
+                pass
+        return sizes
+
+    def _resolve_size_for_activity(self, path: str) -> int:
+        """Look up the file's size, preferring the pre-action snapshot.
+
+        Falls back to a live `os.path.getsize` for actions that don't pass
+        the path list as an arg (e.g. `cache-pinned` resolves its own
+        targets internally — the cache file exists post-action there).
+        """
+        size = self._path_sizes.get(path, 0)
+        if size:
+            return size
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return 0
+
     def _record_maintenance_activity(self, action_name: str, action_result: ActionResult):
         """Record maintenance file operations to the shared activity feed."""
         if not action_result or not action_result.affected_paths:
@@ -652,11 +703,7 @@ class MaintenanceRunner:
 
         for path in action_result.affected_paths:
             filename = os.path.basename(path)
-            # Try to get file size (file may be gone after delete/move)
-            try:
-                size_bytes = os.path.getsize(path)
-            except OSError:
-                size_bytes = 0
+            size_bytes = self._resolve_size_for_activity(path)
 
             record_file_activity(
                 action=label,
