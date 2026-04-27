@@ -923,10 +923,43 @@ footer {
     font-size: 0.65rem;
     opacity: 0.55;
 }
+.di-file-row--sub .di-file-row__size {
+    color: rgba(255,255,255,0.55);
+}
 .di-sub-arrow {
     color: rgba(255,255,255,0.25);
     flex-shrink: 0;
     font-size: 0.7rem;
+}
+.di-expand-chev {
+    color: rgba(255,255,255,0.4);
+    flex-shrink: 0;
+    font-size: 0.85rem;
+    transition: transform 0.18s ease;
+    margin-left: 0.25rem;
+}
+.di-expand-chev.open {
+    transform: rotate(90deg);
+}
+.di-file-row--group:hover {
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+}
+.di-more-link {
+    display: block;
+    text-align: center;
+    color: rgba(229, 160, 13, 0.85);
+    font-size: 0.72rem;
+    padding: 0.45rem;
+    margin-top: 0.25rem;
+    text-decoration: none;
+    border-top: 1px dashed rgba(255,255,255,0.08);
+    transition: background 0.15s, color 0.15s;
+}
+.di-more-link:hover {
+    color: var(--plex-accent, #e5a00d);
+    background: rgba(229, 160, 13, 0.06);
+    text-decoration: none;
 }
 
 /* ── Buttons ─────────────────────────────────────────── */

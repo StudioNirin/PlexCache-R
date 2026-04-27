@@ -383,6 +383,7 @@ class OperationRunner:
                         "action": action,
                         "filename": filename,
                         "size": format_bytes(size_bytes) if size_bytes else "",
+                        "size_bytes": size_bytes,
                         "users": users,
                     })
 
@@ -393,8 +394,10 @@ class OperationRunner:
                 if fname not in completed_files
             ]
 
-            # Trim recent files to last 8
-            result["recent_files"] = result["recent_files"][:8]
+            # Keep up to 50 raw entries so the grouping pass has enough data
+            # to collapse same-show episodes meaningfully. Downstream consumers
+            # (running vs completed) apply their own caps.
+            result["recent_files"] = result["recent_files"][:50]
             # Last 5 log lines
             result["recent_logs"] = all_logs[-5:]
 
@@ -481,7 +484,7 @@ class OperationRunner:
             "eta_display": eta_display,
             "bytes_display": self._format_bytes(total_bytes) if total_bytes > 0 else "",
             "recent_logs": log_state["recent_logs"],
-            "recent_files": log_state["recent_files"],
+            "recent_files": log_state["recent_files"][:8],
             "active_files": log_state["active_files"],
             "message": log_state["current_phase_display"],
         }
@@ -526,7 +529,7 @@ class OperationRunner:
             "error_count": log_state["error_count"],
             "error_messages": log_state["error_messages"][:5],
             "was_stopped": False,
-            "recent_files": log_state["recent_files"],
+            "recent_files": self._group_episodes_by_show(log_state["recent_files"])[:15],
             "message": message,
         }
 
@@ -827,6 +830,7 @@ class OperationRunner:
                     "action": action,
                     "filename": filename,
                     "size": activity._format_size(size_bytes),
+                    "size_bytes": size_bytes,
                 })
                 # Increment real-time progress counters
                 if self._current_result:
@@ -1215,6 +1219,73 @@ class OperationRunner:
         if merged_indices:
             self._current_run_files = [f for i, f in enumerate(self._current_run_files) if i not in merged_indices]
 
+    # Matches "<show> - S##E##" — the Sonarr/Plex TV naming convention.
+    # Non-TV files (movies, specials without episode numbering) don't match
+    # and pass through as singletons.
+    _SHOW_EPISODE_PATTERN = re.compile(r'^(.+?) - S\d+E\d+', re.IGNORECASE)
+
+    def _group_episodes_by_show(self, files: List[dict]) -> List[dict]:
+        """Collapse multi-episode TV runs into a single parent row per show.
+
+        Movies and shows with only one episode in the payload stay as
+        individual rows (grouping a single entry offers no compression).
+        Preserves first-seen order so the banner doesn't reshuffle on re-render.
+        """
+        groups: Dict[tuple, dict] = {}
+        order: List[tuple] = []
+
+        for idx, f in enumerate(files):
+            match = self._SHOW_EPISODE_PATTERN.match(f.get("filename", ""))
+            if match:
+                show_name = match.group(1).strip()
+                key = (f.get("action", ""), show_name)
+                if key not in groups:
+                    groups[key] = {
+                        "action": f.get("action", ""),
+                        "show_name": show_name,
+                        "episodes": [],
+                        "total_bytes": 0,
+                    }
+                    order.append(key)
+                groups[key]["episodes"].append({
+                    "filename": f.get("filename", ""),
+                    "size": f.get("size", ""),
+                    "size_bytes": f.get("size_bytes", 0),
+                    "associated_files": f.get("associated_files", []),
+                })
+                groups[key]["total_bytes"] += f.get("size_bytes", 0)
+            else:
+                key = ("__singleton__", idx)
+                groups[key] = f
+                order.append(key)
+
+        result: List[dict] = []
+        for key in order:
+            entry = groups[key]
+            if key[0] == "__singleton__":
+                result.append(entry)
+            elif len(entry["episodes"]) == 1:
+                ep = entry["episodes"][0]
+                result.append({
+                    "action": entry["action"],
+                    "filename": ep["filename"],
+                    "size": ep.get("size", ""),
+                    "size_bytes": ep.get("size_bytes", 0),
+                    "associated_files": ep.get("associated_files", []),
+                })
+            else:
+                result.append({
+                    "action": entry["action"],
+                    "is_group": True,
+                    "show_name": entry["show_name"],
+                    "episode_count": len(entry["episodes"]),
+                    "episodes": entry["episodes"],
+                    "size_bytes": entry["total_bytes"],
+                    "size": self._format_bytes(entry["total_bytes"]) if entry["total_bytes"] > 0 else "",
+                })
+
+        return result
+
     def get_status_dict(self) -> dict:
         """Get status as a dictionary for API responses"""
         result = self.current_result
@@ -1359,9 +1430,11 @@ class OperationRunner:
             status["error_messages"] = result.error_messages[:5]
             status["was_stopped"] = self._stop_requested
 
-            # Files processed in this run for hover detail
+            # Files processed in this run, grouped by show to compress TV runs.
+            # Cap at 15 groups so long runs stay readable; overflow links to Recent Activity.
             with self._lock:
-                status["recent_files"] = list(self._current_run_files[:8])
+                grouped = self._group_episodes_by_show(list(self._current_run_files))
+                status["recent_files"] = grouped[:15]
 
             if self._stop_requested:
                 status["message"] = f"Stopped by user after {self._format_duration(result.duration_seconds)}"

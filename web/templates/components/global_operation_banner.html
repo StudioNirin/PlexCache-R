@@ -261,6 +261,31 @@ function diPillClick() {
     else diSmoothSetState('false');  /* tier3 → collapse back to compact */
 }
 
+// Toggle a grouped show row in the completed-state detail view.
+// Hides/shows the adjacent .di-file-row--ep sub-rows without re-rendering
+// (which would require replaying the IIFE that built detailHtml).
+function bannerToggleShow(evt, el) {
+    if (evt && evt.stopPropagation) evt.stopPropagation();
+    var show = el.getAttribute('data-show');
+    var chev = el.querySelector('.di-expand-chev');
+    var expand = !chev.classList.contains('open');
+    chev.classList.toggle('open');
+
+    var subs = document.querySelectorAll('.di-file-row--ep[data-parent-show="' + (show || '').replace(/"/g, '\\"') + '"]');
+    subs.forEach(function(s) { s.style.display = expand ? 'flex' : 'none'; });
+
+    if (!window.__bannerExpandedShows) window.__bannerExpandedShows = {};
+    window.__bannerExpandedShows[show] = expand;
+}
+
+// Preserve window scroll position across banner swaps.
+// During running ops the banner polls every 2s with innerHTML swaps; if the
+// user had focus or selection inside the banner, the destroyed element can
+// cause the browser to reset scroll to top. Snapshot before, restore after.
+// Stored on window because this script re-runs on every innerHTML swap and
+// would otherwise wipe the saved value between beforeSwap and afterSwap.
+if (typeof window.__diSavedScrollY === 'undefined') window.__diSavedScrollY = null;
+
 // Skip the swap if the banner state hasn't meaningfully changed.
 // Prevents the pill from flashing on every idle/completed poll cycle.
 // innerHTML comparison doesn't work because script tags differ between
@@ -269,6 +294,7 @@ function diPillClick() {
 // Running/maintenance polls always swap (they show live progress).
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (evt.detail.target && evt.detail.target.id === 'global-operation-banner') {
+        window.__diSavedScrollY = window.scrollY;
         var banner = evt.detail.target;
         var oldPill = banner.querySelector('.di-pill');
         if (!oldPill) return;  // No pill yet — allow first swap
@@ -361,6 +387,12 @@ document.addEventListener('htmx:responseError', function(evt) {
 // After every HTMX swap: re-render icons, sync animations, one-shot entrance
 document.addEventListener('htmx:afterSwap', function(evt) {
     if (evt.detail.target && evt.detail.target.id === 'global-operation-banner') {
+        // Restore scroll position snapshotted in beforeSwap.
+        if (window.__diSavedScrollY !== null) {
+            window.scrollTo(0, window.__diSavedScrollY);
+            window.__diSavedScrollY = null;
+        }
+
         // Successful swap — reset connection failure tracking
         _diBannerFailCount = 0;
         _diBannerDisconnected = false;
@@ -964,12 +996,24 @@ function dismissMaintCompletionBanner() {
     }
     statsHtml += '</div>';
 
-    // File detail rows
+    // File detail rows — each entry is either a single file or a grouped show
+    // (is_group=true with episodes[]). Grouping collapses e.g. 5 eps of one
+    // show into one expandable parent row.
     var recentFiles = [
         {% for f in status.recent_files|default([]) %}
+        {%- if f.is_group is defined and f.is_group %}
+        { action: '{{ f.action }}', isGroup: true, showName: {{ f.show_name|tojson }}, episodeCount: {{ f.episode_count }}, size: '{{ f.size }}', episodes: [
+            {%- for ep in f.episodes %}
+            { filename: '{{ ep.filename|truncate_filename(45)|e }}', fullFilename: '{{ ep.filename|e }}', size: '{{ ep.size }}', associatedFiles: [
+                {%- if ep.associated_files %}{% for af in ep.associated_files %}{ filename: '{{ af.filename|truncate_filename(45)|e }}', fullFilename: '{{ af.filename|e }}', size: '{{ af.size }}' },{% endfor %}{% endif -%}
+            ] },
+            {%- endfor %}
+        ] },
+        {%- else %}
         { action: '{{ f.action }}', filename: '{{ f.filename|truncate_filename(45)|e }}', fullFilename: '{{ f.filename|e }}', size: '{{ f.size }}', associatedFiles: [
             {%- if f.associated_files is defined and f.associated_files %}{% for af in f.associated_files %}{ filename: '{{ af.filename|truncate_filename(45)|e }}', fullFilename: '{{ af.filename|e }}', size: '{{ af.size }}' },{% endfor %}{% endif -%}
         ] },
+        {%- endif %}
         {% endfor %}
     ];
     var errorMessages = [
@@ -983,26 +1027,60 @@ function dismissMaintCompletionBanner() {
     if (hasDetails) {
         hintHtml = '<div class="di-expand-hint"><span>Click for details</span><i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i></div>';
         detailHtml = '<div class="di-pill__detail"><div class="di-divider"></div>';
+        // Persist expand state across 10s polls so the user's drill-down
+        // survives HTMX re-renders of the banner.
+        var expandedShows = window.__bannerExpandedShows || (window.__bannerExpandedShows = {});
+
+        // Count files actually shown (grouped entries contribute their episode count)
+        var shownFiles = 0;
+        recentFiles.forEach(function(f) {
+            shownFiles += f.isGroup ? f.episodeCount : 1;
+        });
+
         recentFiles.forEach(function(f) {
             var tagClass = f.action === 'Cached' ? 'di-action-tag--cached' : 'di-action-tag--restored';
-            var assocBadge = f.associatedFiles.length > 0 ? '<span class="di-file-row__assoc-badge">+' + f.associatedFiles.length + '</span>' : '';
-            detailHtml += '<div class="di-file-row">' +
-                '<span class="di-action-tag ' + tagClass + '">' + f.action.toUpperCase() + '</span>' +
-                '<span class="di-file-row__name" title="' + f.fullFilename + '">' + f.filename + '</span>' +
-                (f.size !== '-' ? '<span class="di-file-row__size">' + f.size + '</span>' : '') +
-                assocBadge +
-                '</div>';
-            f.associatedFiles.forEach(function(af) {
-                detailHtml += '<div class="di-file-row di-file-row--sub">' +
-                    '<span class="di-sub-arrow">&#8627;</span>' +
-                    '<span class="di-file-row__name" title="' + af.fullFilename + '">' + af.filename + '</span>' +
-                    (af.size ? '<span class="di-file-row__size">' + af.size + '</span>' : '') +
+
+            if (f.isGroup) {
+                var isExpanded = expandedShows[f.showName] === true;
+                var chevClass = isExpanded ? 'di-expand-chev open' : 'di-expand-chev';
+                var epLabel = f.episodeCount + ' ep' + (f.episodeCount !== 1 ? 's' : '');
+                detailHtml += '<div class="di-file-row di-file-row--group" data-show="' + f.showName + '" onclick="bannerToggleShow(event, this)" style="cursor:pointer">' +
+                    '<span class="di-action-tag ' + tagClass + '">' + f.action.toUpperCase() + '</span>' +
+                    '<span class="di-file-row__name">' + f.showName + '</span>' +
+                    '<span class="di-file-row__assoc-badge">' + epLabel + '</span>' +
+                    (f.size ? '<span class="di-file-row__size">' + f.size + '</span>' : '') +
+                    '<span class="' + chevClass + '">&#8250;</span>' +
                     '</div>';
-            });
+                f.episodes.forEach(function(ep) {
+                    var epAssoc = ep.associatedFiles.length > 0 ? '<span class="di-file-row__assoc-badge">+' + ep.associatedFiles.length + '</span>' : '';
+                    detailHtml += '<div class="di-file-row di-file-row--sub di-file-row--ep" data-parent-show="' + f.showName + '" style="display:' + (isExpanded ? 'flex' : 'none') + '">' +
+                        '<span class="di-sub-arrow">&#8627;</span>' +
+                        '<span class="di-file-row__name" title="' + ep.fullFilename + '">' + ep.filename + '</span>' +
+                        epAssoc +
+                        (ep.size ? '<span class="di-file-row__size">' + ep.size + '</span>' : '') +
+                        '</div>';
+                });
+            } else {
+                var assocBadge = f.associatedFiles.length > 0 ? '<span class="di-file-row__assoc-badge">+' + f.associatedFiles.length + '</span>' : '';
+                detailHtml += '<div class="di-file-row">' +
+                    '<span class="di-action-tag ' + tagClass + '">' + f.action.toUpperCase() + '</span>' +
+                    '<span class="di-file-row__name" title="' + f.fullFilename + '">' + f.filename + '</span>' +
+                    (f.size !== '-' ? '<span class="di-file-row__size">' + f.size + '</span>' : '') +
+                    assocBadge +
+                    '</div>';
+                f.associatedFiles.forEach(function(af) {
+                    detailHtml += '<div class="di-file-row di-file-row--sub">' +
+                        '<span class="di-sub-arrow">&#8627;</span>' +
+                        '<span class="di-file-row__name" title="' + af.fullFilename + '">' + af.filename + '</span>' +
+                        (af.size ? '<span class="di-file-row__size">' + af.size + '</span>' : '') +
+                        '</div>';
+                });
+            }
         });
         var totalFiles = filesCached + filesRestored;
-        if (totalFiles > recentFiles.length) {
-            detailHtml += '<div class="di-more-files">+ ' + (totalFiles - recentFiles.length) + ' more files</div>';
+        if (totalFiles > shownFiles) {
+            detailHtml += '<a class="di-more-link" href="/#recent-activity" onclick="event.stopPropagation()">' +
+                'View all ' + (totalFiles - shownFiles) + ' more in Recent Activity &rarr;</a>';
         }
         if (errorMessages.length > 0) {
             if (recentFiles.length > 0) detailHtml += '<div class="di-divider"></div>';
