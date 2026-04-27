@@ -32,6 +32,14 @@
                 </div>
             </div>
 
+            <div class="form-group">
+                <label for="prefetch_minimum_minutes">Minimum Prefetch Runtime (minutes)</label>
+                <input type="number" id="prefetch_minimum_minutes" name="prefetch_minimum_minutes"
+                       class="input-narrow"
+                       value="{{ settings.prefetch_minimum_minutes | default(0) }}" min="0">
+                <div class="form-hint">Ensures prefetched OnDeck episodes cover at least this many minutes of runtime. Episode count above is treated as a minimum. Set to 0 to disable.</div>
+            </div>
+
             <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 
             <h3 style="font-size: 1rem; color: var(--plex-orange); margin-bottom: 1rem;">
