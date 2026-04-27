@@ -302,7 +302,10 @@ def _find_next_episodes(
     duration_count = 0
     FALLBACK_MINUTES = 45.0
 
-    def _row_minutes(d_ms) -> float:
+    def _minutes_from_ms(d_ms) -> float:
+        # Plex stores duration in milliseconds. Fall back to the running
+        # average when the column is NULL, or to FALLBACK_MINUTES when no
+        # real duration has been seen yet.
         if d_ms and d_ms > 0:
             return d_ms / 60000.0
         if duration_count > 0:
@@ -313,28 +316,19 @@ def _find_next_episodes(
         if (len(selected) - 1) >= number_episodes and total_minutes >= prefetch_minimum_minutes:
             break
         d_ms = row[5]
-        ep_minutes = _row_minutes(d_ms)
+        ep_minutes = _minutes_from_ms(d_ms)
         selected.append(row)
         total_minutes += ep_minutes
         if d_ms and d_ms > 0:
             duration_sum += d_ms / 60000.0
             duration_count += 1
 
-        if prefetch_minimum_minutes > 0:
-            logging.debug(
-                f"[DB FALLBACK] prefetch {show_title} S{row[2]:02d}E{row[3]:02d}: "
-                f"raw duration_ms={d_ms!r} (type={type(d_ms).__name__}), "
-                f"counted={ep_minutes:.1f} min, "
-                f"buffer_total={total_minutes:.1f}/{prefetch_minimum_minutes} min, "
-                f"buffer_count={len(selected) - 1}/{number_episodes}"
-            )
-
     if prefetch_minimum_minutes > 0:
         logging.debug(
-            f"[DB FALLBACK] prefetch {show_title} done: "
-            f"selected={len(selected)} (1 current + {len(selected) - 1} buffer), "
-            f"buffer_total={total_minutes:.1f} min, "
-            f"real durations seen={duration_count}/{len(selected) - 1}"
+            f"[DB FALLBACK] Prefetch buffer for {show_title!r}: "
+            f"{len(selected) - 1} eps, total {total_minutes:.1f} min "
+            f"(min count={number_episodes}, min runtime={prefetch_minimum_minutes} min, "
+            f"real durations seen={duration_count})"
         )
 
     return selected

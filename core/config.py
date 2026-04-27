@@ -136,11 +136,12 @@ class CacheConfig:
     watchlist_episodes: int = 5
     watched_move: bool = True
 
-    # Minimum pre-fetch runtime (minutes): How much runtime should be moved on the cache
-    # When > 0, additional next episodes are fetched until their summed duration
-    # meets or exceeds this value. The episode count (`number_episodes`) is treated
-    # as a minimum — at least that many episodes are always fetched.
-    # 0 disables the feature (count-only behavior, fully backward compatible).
+    # OnDeck prefetch minimum runtime (minutes): minimum total playback time the
+    # prefetched next episodes must cover. When > 0, additional episodes are
+    # appended until their summed duration meets or exceeds this value. The
+    # episode count (`number_episodes`) is treated as a minimum — at least that
+    # many episodes are always fetched.
+    # 0 disables the runtime check (count-only behavior, fully backward compatible).
     prefetch_minimum_minutes: int = 0
 
     # Remote watchlist via RSS

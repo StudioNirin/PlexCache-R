@@ -970,11 +970,12 @@ class PlexManager:
         # Used when no prior episode has duration metadata yet.
         FALLBACK_MINUTES = 45.0
 
-        def _episode_minutes(ep) -> float:
-            d = getattr(ep, 'duration', None)
-            if d and d > 0:
-                # Plex stores duration in milliseconds.
-                return d / 60000.0
+        def _minutes_from_ms(d_ms) -> float:
+            # Plex stores duration in milliseconds. Fall back to the running
+            # average when the metadata is missing, or to FALLBACK_MINUTES when
+            # no real duration has been seen yet.
+            if d_ms and d_ms > 0:
+                return d_ms / 60000.0
             if duration_count > 0:
                 return duration_sum / duration_count
             return FALLBACK_MINUTES
@@ -993,25 +994,19 @@ class PlexManager:
                 continue
             if _target_met():
                 break
-            ep_minutes = _episode_minutes(episode)
+            d_ms = getattr(episode, 'duration', None)
+            ep_minutes = _minutes_from_ms(d_ms)
             next_episodes.append(episode)
             total_minutes += ep_minutes
-            real = getattr(episode, 'duration', None)
-            if prefetch_minimum_minutes > 0:
-                logging.debug(
-                    f"  prefetch S{episode.parentIndex:02d}E{episode.index:02d}: "
-                    f"raw_duration={real!r} (type={type(real).__name__}), "
-                    f"counted={ep_minutes:.1f} min, total={total_minutes:.1f}/{prefetch_minimum_minutes} min, "
-                    f"count={len(next_episodes)}/{number_episodes}"
-                )
-            if real and real > 0:
-                duration_sum += real / 60000.0
+            if d_ms and d_ms > 0:
+                duration_sum += d_ms / 60000.0
                 duration_count += 1
             if _target_met():
                 break
         if prefetch_minimum_minutes > 0:
+            show_name = getattr(next_episodes[0], 'grandparentTitle', '?') if next_episodes else '?'
             logging.debug(
-                f"Prefetch buffer for show: {len(next_episodes)} eps, "
+                f"Prefetch buffer for {show_name!r}: {len(next_episodes)} eps, "
                 f"total {total_minutes:.1f} min "
                 f"(min count={number_episodes}, min runtime={prefetch_minimum_minutes} min, "
                 f"real durations seen={duration_count})"
