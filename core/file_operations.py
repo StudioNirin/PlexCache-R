@@ -16,7 +16,7 @@ from typing import List, Set, Optional, Tuple, Dict, TYPE_CHECKING, Callable
 import re
 
 from core.logging_config import get_console_lock
-from core.system_utils import resolve_user0_to_disk, get_disk_free_space_bytes, get_disk_number_from_path, get_array_direct_path
+from core.system_utils import resolve_user0_to_disk, get_disk_free_space_bytes, get_disk_number_from_path, get_array_direct_path, format_bytes
 
 if TYPE_CHECKING:
     from core.config import PathMapping
@@ -122,26 +122,6 @@ def is_season_like_folder(folder_name: str) -> bool:
         or re.match(r'^\d+$', folder_name)
         or re.match(r'^Specials$', folder_name, re.IGNORECASE)
     )
-
-
-def format_bytes(bytes_value: int) -> str:
-    """Format bytes into human-readable string (e.g., '1.5 GB').
-
-    Canonical implementation — import from core.system_utils.
-    Re-exported here for convenience.
-    """
-    from core.system_utils import format_bytes as _fb
-    return _fb(bytes_value)
-
-
-def format_duration(seconds: float) -> str:
-    """Format seconds into human-readable duration like '1m 23s' or '45s'.
-
-    Canonical implementation — import from core.system_utils.
-    Re-exported here for convenience.
-    """
-    from core.system_utils import format_duration as _fd
-    return _fd(seconds)
 
 
 def get_media_identity(filepath: str) -> str:

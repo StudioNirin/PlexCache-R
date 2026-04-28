@@ -94,7 +94,7 @@
             <!-- Visual Bar with Markers - Stacked Bar Design -->
             <div class="drive-usage-bar-container" style="position: relative; margin-bottom: 0.5rem;">
                 <!-- The bar background represents total drive capacity -->
-                <div class="drive-usage-bar" style="height: 24px; background: var(--plex-bg-card); border-radius: 4px; position: relative; overflow: visible; border: 1px solid var(--plex-border);">
+                <div class="drive-usage-bar" style="height: 24px; background: var(--plex-bg-card); border-radius: var(--plex-radius-xs); position: relative; overflow: visible; border: 1px solid var(--plex-border);">
                     <!-- Stacked bar: Other files (gray) + PlexCache (context-aware color) -->
                     <div style="display: flex; height: 100%; border-radius: 3px; overflow: hidden;">
                         <!-- Other files segment (gray) -->
@@ -208,7 +208,7 @@
 
             <!-- Simple progress bar: tracked_size / quota -->
             <div style="position: relative; margin-bottom: 0.5rem;">
-                <div style="height: 24px; background: var(--plex-bg-card); border-radius: 4px; overflow: hidden; border: 1px solid var(--plex-border);">
+                <div style="height: 24px; background: var(--plex-bg-card); border-radius: var(--plex-radius-xs); overflow: hidden; border: 1px solid var(--plex-border);">
                     <div style="width: {{ [data.storage.plexcache_quota_used_percent, 100] | min }}%; height: 100%; transition: width 0.3s ease;
                         {% if data.storage.plexcache_quota_used_percent >= 100 %}
                         background: var(--plex-error);

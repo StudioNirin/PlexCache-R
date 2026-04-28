@@ -1,4 +1,4 @@
-<div class="validation-results" style="margin: 1rem 0; padding: 1rem; border-radius: 6px; background: var(--plex-surface);">
+<div class="validation-results" style="margin: 1rem 0; padding: 1rem; border-radius: var(--plex-radius-sm); background: var(--plex-surface);">
     <h4 style="margin: 0 0 0.75rem 0; font-size: 0.95rem; color: var(--plex-text-bright);">
         <i data-lucide="{% if valid %}check-circle{% else %}x-circle{% endif %}"
            style="width: 16px; height: 16px; vertical-align: middle; color: {% if valid %}var(--success){% else %}var(--danger){% endif %};"></i>
@@ -8,7 +8,7 @@
     {% if errors %}
     <div class="validation-errors" style="margin-bottom: 0.75rem;">
         {% for error in errors %}
-        <div style="display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem; background: rgba(244, 67, 54, 0.1); border-radius: 4px; margin-bottom: 0.25rem;">
+        <div style="display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem; background: rgba(244, 67, 54, 0.1); border-radius: var(--plex-radius-xs); margin-bottom: 0.25rem;">
             <i data-lucide="x-circle" style="width: 14px; height: 14px; color: var(--danger); flex-shrink: 0; margin-top: 2px;"></i>
             <span style="color: var(--plex-text);">{{ error }}</span>
         </div>
@@ -19,7 +19,7 @@
     {% if warnings %}
     <div class="validation-warnings">
         {% for warning in warnings %}
-        <div style="display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem; background: rgba(255, 152, 0, 0.1); border-radius: 4px; margin-bottom: 0.25rem;">
+        <div style="display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem; background: rgba(255, 152, 0, 0.1); border-radius: var(--plex-radius-xs); margin-bottom: 0.25rem;">
             <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--warning); flex-shrink: 0; margin-top: 2px;"></i>
             <span style="color: var(--plex-text);">{{ warning }}</span>
         </div>

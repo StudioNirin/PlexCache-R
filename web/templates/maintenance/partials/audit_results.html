@@ -186,7 +186,7 @@
                             <input type="checkbox" class="untracked-checkbox untracked-child-cb" value="{{ child.cache_path }}" onchange="toggleUntrackedFile(this)" data-has-backup="{{ child.has_plexcached_backup|lower }}" data-has-dup="{{ child.has_array_duplicate|lower }}">
                         </td>
                         <td title="{{ child.cache_path }}" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 2rem;">
-                            <span style="color: rgba(255,255,255,0.35); margin-right: 4px;">&#8627;</span>{{ child.filename }}
+                            <span class="text-muted" style="margin-right: 4px;">&#8627;</span>{{ child.filename }}
                         </td>
                         <td class="text-muted">{{ child.size_display }}</td>
                         <td class="text-muted">
@@ -644,7 +644,7 @@
     align-items: flex-start;
     padding: 1rem;
     background: var(--plex-bg-card);
-    border-radius: 6px;
+    border-radius: var(--plex-radius-sm);
     border: 1px solid var(--plex-border);
 }
 
@@ -659,7 +659,7 @@
 
 .stale-entries-list {
     background: var(--plex-bg);
-    border-radius: 4px;
+    border-radius: var(--plex-radius-xs);
     border: 1px solid var(--plex-border);
 }
 
@@ -854,7 +854,7 @@ function keepOnCacheSelected() {
             <p style="margin: 0 0 1rem 0;">These files will remain on your fast cache drive with full protection.</p>
         </div>
 
-        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: var(--plex-radius-sm); margin-bottom: 1rem;">
             <strong style="color: var(--success);">What will happen:</strong>
             <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
                 <li>Copy each file to the array as a <code>.plexcached</code> backup</li>
@@ -940,7 +940,7 @@ function moveToArraySelected() {
             <p style="margin: 0 0 1rem 0;">These files will be moved off the cache drive to the main array.</p>
         </div>
 
-        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: var(--plex-radius-sm); margin-bottom: 1rem;">
             ${whatWillHappen}
         </div>
 

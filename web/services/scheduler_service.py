@@ -12,6 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from core.system_utils import format_relative_time, format_time_of_day
 from web.config import PROJECT_ROOT, DATA_DIR, SETTINGS_FILE, get_time_format
 
 logger = logging.getLogger(__name__)
@@ -296,49 +297,11 @@ class SchedulerService:
             "next_run": self._next_run.isoformat() if self._next_run else None,
         }
 
-    def _format_time_display(self, time_str: str) -> str:
-        """Convert HH:MM to display format based on user's time_format setting."""
-        try:
-            hour, minute = map(int, time_str.split(":"))
-            if get_time_format() == "12h":
-                period = "AM" if hour < 12 else "PM"
-                hour_12 = hour % 12
-                if hour_12 == 0:
-                    hour_12 = 12
-                if minute == 0:
-                    return f"{hour_12} {period}"
-                return f"{hour_12}:{minute:02d} {period}"
-            else:
-                return f"{hour}:{minute:02d}"
-        except (ValueError, AttributeError):
-            return time_str
-
     def _datetime_display_fmt(self) -> str:
         """Return strftime format string for date+time based on user's time_format setting."""
         if get_time_format() == "12h":
             return "%Y-%m-%d %-I:%M %p"
         return "%Y-%m-%d %H:%M"
-
-    def _format_relative_time(self, target: datetime) -> str:
-        """Format a future datetime as relative time (e.g., 'in 12m', 'in 2h 30m')"""
-        now = datetime.now()
-        if target <= now:
-            return "now"
-
-        diff = target - now
-        total_seconds = int(diff.total_seconds())
-        total_minutes = total_seconds // 60
-
-        if total_minutes < 1:
-            return "<1m"
-        elif total_minutes < 60:
-            return f"{total_minutes}m"
-        else:
-            hours = total_minutes // 60
-            minutes = total_minutes % 60
-            if minutes == 0:
-                return f"{hours}h"
-            return f"{hours}h {minutes}m"
 
     def get_status(self) -> Dict[str, Any]:
         """Get scheduler status"""
@@ -349,7 +312,7 @@ class SchedulerService:
         # Format schedule description
         if config.schedule_type == "interval":
             start_time = config.interval_start_time or "00:00"
-            start_time_display = self._format_time_display(start_time)
+            start_time_display = format_time_of_day(start_time, get_time_format())
             schedule_desc = f"Every {config.interval_hours}h from {start_time_display}"
         else:
             schedule_desc = f"Cron: {config.cron_expression}"
@@ -361,7 +324,7 @@ class SchedulerService:
             next_time = job.next_run_time
             if next_time.tzinfo is not None:
                 next_time = next_time.replace(tzinfo=None)
-            next_run_relative = self._format_relative_time(next_time)
+            next_run_relative = format_relative_time(next_time)
 
         # Read fresh last run time from file
         last_run_dt = None

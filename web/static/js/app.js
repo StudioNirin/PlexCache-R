@@ -73,3 +73,20 @@ document.addEventListener('showAlert', function(event) {
         }, 5000);
     }
 });
+
+// Path-mapping view/edit toggle. Shared by settings/libraries, settings/paths,
+// and the path_mapping_card partial (which is HTMX-swapped — relying on the
+// globally-loaded function avoids redefining it per card render).
+function toggleEditMode(index) {
+    var view = document.getElementById('mapping-view-' + index);
+    var edit = document.getElementById('mapping-edit-' + index);
+    if (!view || !edit) return;
+    if (view.style.display === 'none') {
+        view.style.display = 'block';
+        edit.style.display = 'none';
+    } else {
+        view.style.display = 'none';
+        edit.style.display = 'block';
+    }
+    lucide.createIcons();
+}

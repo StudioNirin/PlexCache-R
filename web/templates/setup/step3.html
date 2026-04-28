@@ -99,7 +99,7 @@
             <div id="path-mappings-container">
                 {% if path_mappings %}
                     {% for mapping in path_mappings %}
-                    <div class="path-mapping-row" style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px; margin-bottom: 0.75rem;">
+                    <div class="path-mapping-row" style="background: var(--surface-secondary); padding: 1rem; border-radius: var(--plex-radius-sm); margin-bottom: 0.75rem;">
                         <input type="hidden" name="mapping_name_{{ loop.index0 }}" value="{{ mapping.name }}">
 
                         <div style="display: grid; gap: 0.5rem;">
@@ -201,7 +201,7 @@
         ` : '';
 
         const html = `
-            <div class="path-mapping-row" style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px; margin-bottom: 0.75rem;">
+            <div class="path-mapping-row" style="background: var(--surface-secondary); padding: 1rem; border-radius: var(--plex-radius-sm); margin-bottom: 0.75rem;">
                 <div style="display: grid; gap: 0.5rem;">
                     <div style="display: flex; gap: 0.5rem; align-items: center;">
                         <strong style="width: 110px; font-size: 0.85rem; color: var(--text-secondary);">Name:</strong>

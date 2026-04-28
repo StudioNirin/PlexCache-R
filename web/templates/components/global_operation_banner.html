@@ -18,7 +18,7 @@ function showBannerWarning(message) {
         warning.style.opacity = '1';
         warning.style.paddingTop = '0.6rem';
         warning.style.marginTop = '0.6rem';
-        warning.style.borderColor = 'rgba(230, 126, 34, 0.3)';
+        warning.style.borderColor = 'color-mix(in srgb, var(--plex-warning) 30%, transparent)';
     }); });
     setTimeout(function() {
         if (!warning) return;
@@ -542,8 +542,8 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         {% endif %}
         <!-- Warning row -->
         <div id="di-warning" class="di-warning">
-            <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
-            <span id="di-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
+            <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--plex-warning); flex-shrink: 0;"></i>
+            <span id="di-warning-text" style="font-size: 0.8rem; color: var(--plex-warning); white-space: nowrap;"></span>
         </div>
     </div>
 
@@ -908,8 +908,8 @@ function dismissMaintCompletionBanner() {
         </div>
         <!-- Warning row -->
         <div id="di-warning" class="di-warning">
-            <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: #e67e22; flex-shrink: 0;"></i>
-            <span id="di-warning-text" style="font-size: 0.8rem; color: #e67e22; white-space: nowrap;"></span>
+            <i data-lucide="alert-triangle" style="width: 14px; height: 14px; color: var(--plex-warning); flex-shrink: 0;"></i>
+            <span id="di-warning-text" style="font-size: 0.8rem; color: var(--plex-warning); white-space: nowrap;"></span>
         </div>
     </div>
 
@@ -1087,7 +1087,7 @@ function dismissMaintCompletionBanner() {
             errorMessages.forEach(function(msg) {
                 detailHtml += '<div class="di-file-row">' +
                     '<span class="di-action-tag di-action-tag--error">ERROR</span>' +
-                    '<span class="di-file-row__name" style="color: var(--plex-error, #e5a00d);">' + msg + '</span>' +
+                    '<span class="di-file-row__name" style="color: var(--plex-error);">' + msg + '</span>' +
                     '</div>';
             });
             if (errorCount > errorMessages.length) {
@@ -1258,7 +1258,7 @@ function dismissCompletionBanner() {
             <span class="di-countdown__timer" data-countdown-start="{{ maint_status.queue_countdown_started }}" data-countdown-duration="{{ maint_status.queue_countdown_seconds }}"></span>
         </div>
         <div class="di-countdown__actions">
-            <button class="di-btn di-btn--primary" style="background: #5AC8FA; color: #000;"
+            <button class="di-btn di-btn--primary" style="background: var(--plex-info); color: #000;"
                     onclick="event.stopPropagation(); fetch('/maintenance/queue/start-now',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
                 <i data-lucide="play" style="width: 14px; height: 14px;"></i>
                 Start Now
@@ -1326,9 +1326,9 @@ function dismissCompletionBanner() {
      onmouseenter="diHoverIn()" onmouseleave="diHoverOut()" onclick="diPillClick()">
     <div class="di-pill__compact">
         <div class="di-pill__left">
-            <div class="di-icon" style="background: rgba(255,149,0,0.15); color: #FF9500;"><i data-lucide="pause" style="width: 14px; height: 14px;"></i></div>
+            <div class="di-icon" style="background: color-mix(in srgb, var(--plex-warning) 15%, transparent); color: var(--plex-warning);"><i data-lucide="pause" style="width: 14px; height: 14px;"></i></div>
             <span class="di-label" style="color: rgba(255,255,255,0.6);">Queue paused</span>
-            <span class="di-queue-badge" style="background: rgba(255,149,0,0.2); color: #FF9500;">{{ maint_status.queue_count }}</span>
+            <span class="di-queue-badge" style="background: color-mix(in srgb, var(--plex-warning) 20%, transparent); color: var(--plex-warning);">{{ maint_status.queue_count }}</span>
         </div>
         <div class="di-pill__right">
             <button class="di-btn di-btn--secondary" style="height: 26px; font-size: 0.72rem; padding: 0 0.6rem;"
@@ -1340,12 +1340,12 @@ function dismissCompletionBanner() {
     <div class="di-pill__expanded">
         <div class="di-expanded__header">
             <div class="di-expanded__header-left">
-                <div class="di-icon" style="background: rgba(255,149,0,0.15); color: #FF9500;"><i data-lucide="pause" style="width: 14px; height: 14px;"></i></div>
+                <div class="di-icon" style="background: color-mix(in srgb, var(--plex-warning) 15%, transparent); color: var(--plex-warning);"><i data-lucide="pause" style="width: 14px; height: 14px;"></i></div>
                 <span class="di-label">Queue Paused</span>
                 <span style="font-size: 0.78rem; color: rgba(255,255,255,0.4);">({{ maint_status.queue_count }} action{{ 's' if maint_status.queue_count != 1 }})</span>
             </div>
             <div class="di-expanded__header-right">
-                <button class="di-btn di-btn--primary" style="background: #FF9500; color: #000; height: 28px;"
+                <button class="di-btn di-btn--primary" style="background: var(--plex-warning); color: #000; height: 28px;"
                         onclick="event.stopPropagation(); fetch('/maintenance/queue/resume',{method:'POST'}).then(()=>htmx.ajax('GET','/api/operation-banner',{target:'#global-operation-banner',swap:'innerHTML'}));">
                     <i data-lucide="play" style="width: 14px; height: 14px;"></i>
                     Resume
@@ -1390,11 +1390,11 @@ function dismissCompletionBanner() {
     <!-- Compact view -->
     <div class="di-pill__compact">
         <div class="di-pill__left">
-            <i data-lucide="clock" style="width: 13px; height: 13px; color: #e5a00d; opacity: 0.6;"></i>
+            <i data-lucide="clock" style="width: 13px; height: 13px; color: var(--plex-orange); opacity: 0.6;"></i>
             <span style="font-size: 0.78rem; color: rgba(255,255,255,0.5);">Next run</span>
         </div>
         <div class="di-pill__right">
-            <span class="di-metric" style="color: rgba(229,160,13,0.7); font-weight: 400; font-size: 0.8rem;">{{ scheduler_status.next_run_relative }}</span>
+            <span class="di-metric" style="color: color-mix(in srgb, var(--plex-orange) 70%, transparent); font-weight: 400; font-size: 0.8rem;">{{ scheduler_status.next_run_relative }}</span>
         </div>
     </div>
 
@@ -1402,7 +1402,7 @@ function dismissCompletionBanner() {
     <div class="di-pill__expanded">
         <div class="di-expanded__header">
             <div class="di-expanded__header-left">
-                <div class="di-icon" style="background: rgba(229,160,13,0.15); color: #e5a00d;"><i data-lucide="clock" style="width: 14px; height: 14px;"></i></div>
+                <div class="di-icon" style="background: color-mix(in srgb, var(--plex-orange) 15%, transparent); color: var(--plex-orange);"><i data-lucide="clock" style="width: 14px; height: 14px;"></i></div>
                 <span class="di-label">Next run in {{ scheduler_status.next_run_relative }}</span>
             </div>
         </div>
@@ -1458,7 +1458,7 @@ function diTriggerRun(dryRun) {
     <!-- Compact view -->
     <div class="di-pill__compact">
         <div class="di-pill__left">
-            <i data-lucide="play" style="width: 13px; height: 13px; color: #e5a00d; opacity: 0.6;"></i>
+            <i data-lucide="play" style="width: 13px; height: 13px; color: var(--plex-orange); opacity: 0.6;"></i>
             <span style="font-size: 0.78rem; color: rgba(255,255,255,0.5);">PlexCache</span>
         </div>
     </div>
@@ -1467,7 +1467,7 @@ function diTriggerRun(dryRun) {
     <div class="di-pill__expanded">
         <div class="di-expanded__header">
             <div class="di-expanded__header-left">
-                <div class="di-icon" style="background: rgba(229,160,13,0.15); color: #e5a00d;"><i data-lucide="play" style="width: 14px; height: 14px;"></i></div>
+                <div class="di-icon" style="background: color-mix(in srgb, var(--plex-orange) 15%, transparent); color: var(--plex-orange);"><i data-lucide="play" style="width: 14px; height: 14px;"></i></div>
                 <span class="di-label">PlexCache Ready</span>
             </div>
         </div>

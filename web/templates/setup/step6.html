@@ -8,7 +8,7 @@
         justify-content: space-between;
         padding: 1rem;
         background: var(--surface-secondary);
-        border-radius: 6px;
+        border-radius: var(--plex-radius-sm);
         margin-bottom: 1.25rem;
     }
 
@@ -28,7 +28,7 @@
         padding: 0.75rem 1rem;
         background: rgba(76, 175, 80, 0.08);
         border: 1px solid rgba(76, 175, 80, 0.2);
-        border-radius: 6px;
+        border-radius: var(--plex-radius-sm);
     }
 
     .admin-identity-box i {
@@ -117,7 +117,7 @@
             </div>
 
             <!-- Password fallback -->
-            <div style="background: var(--surface-secondary); padding: 1rem; border-radius: 6px;">
+            <div style="background: var(--surface-secondary); padding: 1rem; border-radius: var(--plex-radius-sm);">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
                     <div>
                         <strong style="color: var(--plex-text); font-size: 0.95rem;">
@@ -129,7 +129,7 @@
                     <label class="toggle-switch">
                         <input type="checkbox" id="auth_password_enabled" name="auth_password_enabled" value="on"
                                {% if auth_password_enabled %}checked{% endif %}
-                               onchange="togglePasswordSection()">
+                               onchange="togglePasswordSectionSetup()">
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
@@ -180,7 +180,10 @@ function toggleAuthDetails() {
     document.getElementById('auth-details').style.display = enabled ? '' : 'none';
 }
 
-function togglePasswordSection() {
+// Setup-only: clears the fields on disable so the wizard doesn't submit stale
+// values. The settings page (settings/security.html) has a same-named toggle
+// that preserves the fields, so keep these two functions distinct.
+function togglePasswordSectionSetup() {
     var enabled = document.getElementById('auth_password_enabled').checked;
     document.getElementById('password-section').style.display = enabled ? '' : 'none';
     if (!enabled) {

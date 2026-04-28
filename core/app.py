@@ -252,7 +252,7 @@ class PlexCacheApp:
             try:
                 self._update_unraid_mover_exclusions()
                 logging.debug("Unraid mover exclusions updated.")
-            except Exception as e:
+            except OSError as e:
                 logging.error(f"Failed to update Unraid mover exclusions: {e}")
 
 
@@ -400,7 +400,7 @@ class PlexCacheApp:
                 gid = os.getgid()
                 username = pwd.getpwuid(uid).pw_name
                 logging.debug(f"Running as: {username} (uid={uid}, gid={gid})")
-            except Exception as e:
+            except (AttributeError, KeyError, OSError) as e:
                 logging.debug(f"Could not get user info: {e}")
         else:
             logging.debug(f"Running as: {os.getlogin() if hasattr(os, 'getlogin') else 'unknown'}")
@@ -922,7 +922,7 @@ class PlexCacheApp:
             try:
                 self.config_manager._save_updated_config()
                 logging.debug(f"Saved {added_count} new user(s) to settings")
-            except Exception as e:
+            except OSError as e:
                 logging.error(f"Failed to save new users to settings: {e}")
 
     def _check_active_sessions(self) -> None:
@@ -949,7 +949,7 @@ class PlexCacheApp:
                         converted_path = converted_paths[0]
                         logging.debug(f"Skipping active session file: {converted_path}")
                         self.files_to_skip.append(converted_path)
-            except Exception as e:
+            except (AttributeError, KeyError, TypeError, OSError) as e:
                 logging.error(f"Error processing session {session}: {type(e).__name__}: {e}")
 
     def _get_media_path_from_session(self, session) -> Optional[str]:
@@ -1493,7 +1493,7 @@ class PlexCacheApp:
             # Clean up trailing dashes
             name = name.rstrip(' -').rstrip('-').strip()
             return name if name else filename
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return os.path.basename(file_path)
 
     def _detect_and_transfer_upgrades(self, ondeck_items_list: list,
@@ -1759,7 +1759,7 @@ class PlexCacheApp:
                 return False  # Already on cache
 
             return True  # Needs caching
-        except Exception:
+        except (OSError, AttributeError, ValueError):
             return True  # Assume it needs caching if we can't determine
 
     def _separate_restore_and_move(self, files_to_array: List[str]) -> Tuple[List[str], List[str]]:
@@ -2078,7 +2078,7 @@ class PlexCacheApp:
                 resolved = int(total_drive_size * percent / 100)
                 readable = f"{percent}% of {total_drive_size / (1024**3):.2f}GB = {resolved / (1024**3):.2f}GB"
                 return (resolved, readable)
-            except Exception as e:
+            except (OSError, AttributeError, ZeroDivisionError) as e:
                 logging.warning(f"Could not calculate cache drive size for {label} percentage: {e}")
                 return (0, None)
         else:
@@ -2134,7 +2134,7 @@ class PlexCacheApp:
                         cached_files.append(container_path)  # Return container paths for eviction
                 except (OSError, FileNotFoundError):
                     pass
-        except Exception as e:
+        except OSError as e:
             logging.warning(f"Error reading exclude file: {e}")
             return (0, [])
 
@@ -2160,7 +2160,7 @@ class PlexCacheApp:
             disk_usage = get_disk_usage(cache_dir, drive_size_override)
             drive_usage_bytes = disk_usage.used
             drive_usage_gb = drive_usage_bytes / (1024**3)
-        except Exception as e:
+        except OSError as e:
             logging.warning(f"Could not determine cache drive usage: {e}, skipping limit check")
             return media_files
 
@@ -2373,7 +2373,7 @@ class PlexCacheApp:
             drive_size_override = self.config_manager.cache.cache_drive_size_bytes
             disk_usage = get_disk_usage(cache_dir, drive_size_override)
             total_drive_usage = disk_usage.used
-        except Exception:
+        except OSError:
             total_drive_usage = 0  # Can't check drive usage, but still filter by priority
 
         is_over_threshold = total_drive_usage >= threshold_bytes
@@ -2457,7 +2457,7 @@ class PlexCacheApp:
             drive_size_override = self.config_manager.cache.cache_drive_size_bytes
             disk_usage = get_disk_usage(cache_dir, drive_size_override)
             total_drive_usage = disk_usage.used
-        except Exception:
+        except OSError:
             total_drive_usage = plexcache_tracked  # Fallback if can't get disk usage
 
         if total_drive_usage < threshold_bytes and needed_space_bytes == 0:
@@ -2681,7 +2681,7 @@ class PlexCacheApp:
                 files_evicted += 1
                 bytes_freed += file_size
 
-            except Exception as e:
+            except OSError as e:
                 logging.warning(f"Failed to evict {cache_path}: {e}")
 
         logging.info(f"[EVICTION] Smart eviction complete: freed {bytes_freed/1e9:.2f}GB from {files_evicted} files")

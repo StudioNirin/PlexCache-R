@@ -903,7 +903,7 @@ class SettingsService:
                 timeout=5
             )
             return response.status_code == 200
-        except Exception:
+        except (requests.RequestException, OSError):
             return False
 
     def _is_plex_cache_valid(self) -> bool:
@@ -951,7 +951,7 @@ class SettingsService:
                 locations = []
                 try:
                     locations = list(section.locations) if hasattr(section, 'locations') else []
-                except Exception:
+                except (AttributeError, TypeError):
                     pass
 
                 libraries.append({
@@ -1009,7 +1009,7 @@ class SettingsService:
                         "is_admin": True,
                         "is_home": True
                     })
-                except Exception:
+                except AttributeError:
                     pass
 
             # Add prefetched users (all users from account.users() have server access)
@@ -1444,7 +1444,7 @@ class SettingsService:
             pinned_data = self._read_pinned_tracker_file()
             if pinned_data:
                 settings["pinned_media"] = pinned_data
-        except Exception as e:
+        except (OSError, ValueError, json.JSONDecodeError) as e:
             # Non-fatal: settings export still works, pins just won't round-trip
             import logging
             logging.warning(f"export_settings: could not read pinned tracker: {e}")
@@ -1648,7 +1648,7 @@ class SettingsService:
                 if pinned_payload is not None:
                     try:
                         self._restore_pinned_tracker_file(pinned_payload, merge=merge)
-                    except Exception as e:
+                    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
                         import logging
                         logging.warning(f"import_settings: pinned tracker restore failed: {e}")
                 # Invalidate caches since settings changed
@@ -1707,7 +1707,7 @@ class SettingsService:
         try:
             import web.services.pinned_service as ps_mod
             ps_mod._pinned_service = None
-        except Exception:
+        except (ImportError, AttributeError):
             pass
 
 

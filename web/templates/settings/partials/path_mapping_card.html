@@ -127,17 +127,6 @@
     </div>
 </div>
 <script>
+    // Re-render icons after HTMX swap. toggleEditMode(index) is defined in /static/js/app.js.
     lucide.createIcons();
-    function toggleEditMode(index) {
-        const view = document.getElementById('mapping-view-' + index);
-        const edit = document.getElementById('mapping-edit-' + index);
-        if (view.style.display === 'none') {
-            view.style.display = 'block';
-            edit.style.display = 'none';
-        } else {
-            view.style.display = 'none';
-            edit.style.display = 'block';
-        }
-        lucide.createIcons();
-    }
 </script>
