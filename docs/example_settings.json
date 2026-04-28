@@ -49,6 +49,7 @@
 
     "number_episodes": 5,
     "days_to_monitor": 183,
+    "prefetch_minimum_minutes": 0,
 
     "watchlist_toggle": true,
     "watchlist_episodes": 3,

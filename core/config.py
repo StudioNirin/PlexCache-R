@@ -136,6 +136,14 @@ class CacheConfig:
     watchlist_episodes: int = 5
     watched_move: bool = True
 
+    # OnDeck prefetch minimum runtime (minutes): minimum total playback time the
+    # prefetched next episodes must cover. When > 0, additional episodes are
+    # appended until their summed duration meets or exceeds this value. The
+    # episode count (`number_episodes`) is treated as a minimum — at least that
+    # many episodes are always fetched.
+    # 0 disables the runtime check (count-only behavior, fully backward compatible).
+    prefetch_minimum_minutes: int = 0
+
     # Remote watchlist via RSS
     remote_watchlist_toggle: bool = False
     remote_watchlist_rss_url: str = ""
@@ -488,6 +496,9 @@ class ConfigManager:
         self.cache.watchlist_episodes = self.settings_data['watchlist_episodes']
         self.cache.watched_move = self.settings_data['watched_move']
 
+        # Load OnDeck prefetch minimum runtime (default 0 = disabled, backward compat)
+        self.cache.prefetch_minimum_minutes = self.settings_data.get('prefetch_minimum_minutes', 0)
+
         # Load remote watchlist settings
         self.cache.remote_watchlist_toggle = self.settings_data.get('remote_watchlist_toggle', False)
         self.cache.remote_watchlist_rss_url = self.settings_data.get('remote_watchlist_rss_url', "")
@@ -781,6 +792,7 @@ class ConfigManager:
             'users_toggle': bool,
             'watchlist_toggle': bool,
             'watchlist_episodes': int,
+            'prefetch_minimum_minutes': int,
             'watched_move': bool,
             'cache_dir': str,
             'max_concurrent_moves_array': int,
@@ -832,6 +844,7 @@ class ConfigManager:
         # Validate positive integers
         positive_int_fields = [
             'number_episodes', 'days_to_monitor', 'watchlist_episodes',
+            'prefetch_minimum_minutes',
             'max_concurrent_moves_array', 'max_concurrent_moves_cache'
         ]
         for field in positive_int_fields:

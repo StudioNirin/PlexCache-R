@@ -702,7 +702,8 @@ class PlexManager:
     
     def get_on_deck_media(self, valid_sections: List[int], days_to_monitor: int,
                         number_episodes: int, users_toggle: bool, skip_ondeck: List[str],
-                        per_user_days: Optional[Dict[str, int]] = None) -> List[OnDeckItem]:
+                        per_user_days: Optional[Dict[str, int]] = None,
+                        prefetch_minimum_minutes: int = 0) -> List[OnDeckItem]:
         """Get OnDeck media files using cached tokens (no plex.tv API calls).
 
         Returns:
@@ -747,7 +748,8 @@ class PlexManager:
                 user_days = (per_user_days or {}).get(username, days_to_monitor)
                 futures[executor.submit(
                     self._fetch_user_on_deck_media,
-                    valid_sections, user_days, number_episodes, user
+                    valid_sections, user_days, number_episodes, user,
+                    prefetch_minimum_minutes
                 )] = username
 
             for future in as_completed(futures):
@@ -779,7 +781,8 @@ class PlexManager:
                         days_to_monitor=days_to_monitor,
                         number_episodes=number_episodes,
                         user_id_map=self._user_account_ids,
-                        per_user_days=per_user_days
+                        per_user_days=per_user_days,
+                        prefetch_minimum_minutes=prefetch_minimum_minutes
                     )
                     on_deck_files.extend(db_items)
                 except Exception as e:
@@ -803,7 +806,8 @@ class PlexManager:
 
     
     def _fetch_user_on_deck_media(self, valid_sections: List[int], days_to_monitor: int,
-                                number_episodes: int, user=None) -> List[OnDeckItem]:
+                                number_episodes: int, user=None,
+                                prefetch_minimum_minutes: int = 0) -> List[OnDeckItem]:
         """Fetch onDeck media for a specific user using cached tokens.
 
         Returns:
@@ -836,7 +840,8 @@ class PlexManager:
                         if delta.days > days_to_monitor:
                             continue
                         if isinstance(video, Episode):
-                            self._process_episode_ondeck(video, number_episodes, on_deck_files, username)
+                            self._process_episode_ondeck(video, number_episodes, on_deck_files, username,
+                                                         prefetch_minimum_minutes=prefetch_minimum_minutes)
                         elif isinstance(video, Movie):
                             self._process_movie_ondeck(video, on_deck_files, username)
                         else:
@@ -860,7 +865,8 @@ class PlexManager:
                 logging.warning("OnDeck data incomplete — main account fetch failed")
             return []
     
-    def _process_episode_ondeck(self, video: Episode, number_episodes: int, on_deck_files: List[OnDeckItem], username: str = "unknown") -> None:
+    def _process_episode_ondeck(self, video: Episode, number_episodes: int, on_deck_files: List[OnDeckItem],
+                                 username: str = "unknown", prefetch_minimum_minutes: int = 0) -> None:
         """Process an episode from onDeck.
 
         Args:
@@ -868,6 +874,8 @@ class PlexManager:
             number_episodes: Number of next episodes to fetch.
             on_deck_files: List to append OnDeckItem objects to.
             username: The user who has this OnDeck.
+            prefetch_minimum_minutes: Minimum total runtime (minutes) the prefetched
+                next episodes must cover. 0 disables the runtime check.
         """
         show = video.grandparentTitle
         current_season = video.parentIndex
@@ -901,7 +909,10 @@ class PlexManager:
 
         parent_show = video.show()
         episodes = list(parent_show.episodes())
-        next_episodes = self._get_next_episodes(episodes, current_season, current_episode, number_episodes)
+        next_episodes = self._get_next_episodes(
+            episodes, current_season, current_episode, number_episodes,
+            prefetch_minimum_minutes=prefetch_minimum_minutes
+        )
 
         # Add the prefetched next episodes
         for episode in next_episodes:
@@ -941,19 +952,65 @@ class PlexManager:
                 ))
     
     def _get_next_episodes(self, episodes: List[Episode], current_season: int,
-                          current_episode_index: int, number_episodes: int) -> List[Episode]:
-        """Get the next episodes after the current one."""
-        next_episodes = []
+                          current_episode_index: int, number_episodes: int,
+                          prefetch_minimum_minutes: int = 0) -> List[Episode]:
+        """Get the next episodes after the current one.
+
+        `number_episodes` is the minimum number of episodes to return. When
+        `prefetch_minimum_minutes` > 0, additional episodes are appended until
+        their summed runtime meets or exceeds that target. Episodes missing
+        duration metadata are weighted with the running average of episodes
+        already collected (or a 45-minute fallback when no data is available
+        yet) — biased toward fetching one too many rather than too few.
+        """
+        next_episodes: List[Episode] = []
+        total_minutes = 0.0
+        duration_sum = 0.0
+        duration_count = 0
+        # Used when no prior episode has duration metadata yet.
+        FALLBACK_MINUTES = 45.0
+
+        def _minutes_from_ms(d_ms) -> float:
+            # Plex stores duration in milliseconds. Fall back to the running
+            # average when the metadata is missing, or to FALLBACK_MINUTES when
+            # no real duration has been seen yet.
+            if d_ms and d_ms > 0:
+                return d_ms / 60000.0
+            if duration_count > 0:
+                return duration_sum / duration_count
+            return FALLBACK_MINUTES
+
+        def _target_met() -> bool:
+            return (len(next_episodes) >= number_episodes
+                    and total_minutes >= prefetch_minimum_minutes)
+
         for episode in episodes:
             # Skip episodes with missing index data
             if episode.parentIndex is None or episode.index is None:
                 logging.debug(f"Skipping episode '{episode.title}' from '{episode.grandparentTitle}' - missing index data (parentIndex={episode.parentIndex}, index={episode.index})")
                 continue
-            if (episode.parentIndex > current_season or
-                (episode.parentIndex == current_season and episode.index > current_episode_index)) and len(next_episodes) < number_episodes:
-                next_episodes.append(episode)
-            if len(next_episodes) == number_episodes:
+            if not (episode.parentIndex > current_season or
+                    (episode.parentIndex == current_season and episode.index > current_episode_index)):
+                continue
+            if _target_met():
                 break
+            d_ms = getattr(episode, 'duration', None)
+            ep_minutes = _minutes_from_ms(d_ms)
+            next_episodes.append(episode)
+            total_minutes += ep_minutes
+            if d_ms and d_ms > 0:
+                duration_sum += d_ms / 60000.0
+                duration_count += 1
+            if _target_met():
+                break
+        if prefetch_minimum_minutes > 0:
+            show_name = getattr(next_episodes[0], 'grandparentTitle', '?') if next_episodes else '?'
+            logging.debug(
+                f"Prefetch buffer for {show_name!r}: {len(next_episodes)} eps, "
+                f"total {total_minutes:.1f} min "
+                f"(min count={number_episodes}, min runtime={prefetch_minimum_minutes} min, "
+                f"real durations seen={duration_count})"
+            )
         return next_episodes
 
     def clean_rss_title(self, title: str) -> str:

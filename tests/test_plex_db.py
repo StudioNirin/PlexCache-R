@@ -55,7 +55,8 @@ def _create_schema(conn):
             parent_id INTEGER,
             "index" INTEGER,
             guid TEXT,
-            library_section_id INTEGER
+            library_section_id INTEGER,
+            duration INTEGER
         );
 
         CREATE TABLE metadata_item_views (
@@ -299,6 +300,90 @@ class TestTvOnDeck:
         cutoff = datetime.now() - timedelta(days=30)
         items = _fetch_tv_on_deck(db_conn, 100, "SharedUser", [], cutoff, 3)
         assert len(items) == 0
+
+
+def _set_episode_durations(conn, season, durations_min):
+    """Set duration_ms on consecutive episodes of a season starting at index 1.
+
+    `durations_min` is a list of per-episode runtime in minutes. None means leave
+    the column NULL (simulates missing metadata).
+    """
+    base_id = {1: 100, 2: 200}[season]
+    for ep_idx, minutes in enumerate(durations_min, start=1):
+        ep_id = base_id + ep_idx
+        ms = None if minutes is None else int(minutes * 60_000)
+        conn.execute("UPDATE metadata_items SET duration = ? WHERE id = ?", (ms, ep_id))
+    conn.commit()
+
+
+class TestPrefetchMinimumMinutes:
+    """Test duration-based prefetch (prefetch_minimum_minutes) on the DB path."""
+
+    def test_extends_buffer_when_runtime_target_not_met(self, db_conn):
+        """Short episodes: buffer is extended past number_episodes to meet runtime."""
+        # All 10 S01 episodes are 25 min long.
+        _set_episode_durations(db_conn, season=1, durations_min=[25] * 10)
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_conn.execute(
+            "INSERT INTO metadata_item_views (account_id, grandparent_title, parent_index, \"index\", title, viewed_at, library_section_id) VALUES (100, 'Test Show', 1, 1, 'S01E01', ?, 1)",
+            (now,)
+        )
+        db_conn.commit()
+
+        cutoff = datetime.now() - timedelta(days=30)
+        # number_episodes=3, prefetch=120 min: buffer must cover ≥120 min.
+        # 3 × 25 = 75 < 120 → +1 → 100 < 120 → +1 → 125 ≥ 120 → 5 buffer eps.
+        items = _fetch_tv_on_deck(db_conn, 100, "SharedUser", [1], cutoff, 3,
+                                   prefetch_minimum_minutes=120)
+
+        # 1 OnDeck (S01E02) + 5 prefetch (E03-E07)
+        assert len(items) == 6
+        assert items[0].is_current_ondeck is True
+        assert items[0].episode_info["episode"] == 2
+        assert [i.episode_info["episode"] for i in items[1:]] == [3, 4, 5, 6, 7]
+
+    def test_count_dominates_when_episodes_long(self, db_conn):
+        """Long episodes: number_episodes is the limiter (count > runtime need)."""
+        # 60-min episodes — 3 of them already exceed any reasonable runtime target.
+        _set_episode_durations(db_conn, season=1, durations_min=[60] * 10)
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_conn.execute(
+            "INSERT INTO metadata_item_views (account_id, grandparent_title, parent_index, \"index\", title, viewed_at, library_section_id) VALUES (100, 'Test Show', 1, 1, 'S01E01', ?, 1)",
+            (now,)
+        )
+        db_conn.commit()
+
+        cutoff = datetime.now() - timedelta(days=30)
+        # 3 × 60 = 180 ≥ 120 → 3 buffer eps, count is the limiter.
+        items = _fetch_tv_on_deck(db_conn, 100, "SharedUser", [1], cutoff, 3,
+                                   prefetch_minimum_minutes=120)
+
+        assert len(items) == 4  # 1 OnDeck + 3 prefetch
+        assert [i.episode_info["episode"] for i in items[1:]] == [3, 4, 5]
+
+    def test_null_duration_falls_back_safely(self, db_conn):
+        """Missing duration metadata: 45-min fallback applies, buffer leans larger."""
+        # All durations NULL — fallback (45 min/ep) drives the count.
+        _set_episode_durations(db_conn, season=1, durations_min=[None] * 10)
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_conn.execute(
+            "INSERT INTO metadata_item_views (account_id, grandparent_title, parent_index, \"index\", title, viewed_at, library_section_id) VALUES (100, 'Test Show', 1, 1, 'S01E01', ?, 1)",
+            (now,)
+        )
+        db_conn.commit()
+
+        cutoff = datetime.now() - timedelta(days=30)
+        # 1 × 45 = 45 < 100 → +1 → 90 < 100 → +1 → 135 ≥ 100 → 3 buffer eps.
+        items = _fetch_tv_on_deck(db_conn, 100, "SharedUser", [1], cutoff, 1,
+                                   prefetch_minimum_minutes=100)
+
+        assert len(items) == 4  # 1 OnDeck + 3 prefetch (driven by fallback)
+        # Bias is toward "one too many", never too few.
+        total_assumed = 45 * (len(items) - 1)
+        assert total_assumed >= 100
 
 
 class TestMovieOnDeck:

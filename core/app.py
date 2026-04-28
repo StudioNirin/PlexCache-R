@@ -201,6 +201,13 @@ class PlexCacheApp:
             if self.config_manager.cache.check_hardlinks_on_restore:
                 logging.info("[CONFIG] Hard-link restore check: ENABLED - Hard-linked files in cache will be skipped")
 
+            # Log OnDeck prefetch runtime target
+            if self.config_manager.cache.prefetch_minimum_minutes > 0:
+                logging.info(
+                    f"[CONFIG] OnDeck prefetch minimum runtime: {self.config_manager.cache.prefetch_minimum_minutes} min "
+                    f"(episode count {self.config_manager.plex.number_episodes} treated as minimum)"
+                )
+
             # Log associated files mode
             assoc_mode = self.config_manager.cache.cache_associated_files
             assoc_labels = {"all": "ALL (subtitles, artwork, NFOs, metadata)", "subtitles": "SUBTITLES ONLY", "none": "NONE (video files only)"}
@@ -1026,7 +1033,8 @@ class PlexCacheApp:
             self.config_manager.plex.number_episodes,
             self.config_manager.plex.users_toggle,
             self.config_manager.plex.skip_ondeck or [],
-            per_user_days=self.config_manager.plex.per_user_ondeck_days
+            per_user_days=self.config_manager.plex.per_user_ondeck_days,
+            prefetch_minimum_minutes=self.config_manager.cache.prefetch_minimum_minutes
         )
 
         # Extract just the file paths for path modification

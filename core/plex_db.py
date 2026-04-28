@@ -24,7 +24,8 @@ def fetch_on_deck_from_db(
     days_to_monitor: int,
     number_episodes: int,
     user_id_map: Dict[str, int],
-    per_user_days: Optional[Dict[str, int]] = None
+    per_user_days: Optional[Dict[str, int]] = None,
+    prefetch_minimum_minutes: int = 0
 ) -> List[OnDeckItem]:
     """Fetch OnDeck items for shared users by querying the Plex SQLite database.
 
@@ -37,8 +38,10 @@ def fetch_on_deck_from_db(
         usernames: List of usernames to fetch OnDeck for.
         valid_sections: Plex library section IDs to include.
         days_to_monitor: Only include items viewed within this many days.
-        number_episodes: Number of next episodes to prefetch per show.
+        number_episodes: Minimum number of next episodes to prefetch per show.
         user_id_map: Pre-mapped {username: plex_account_id} from settings.
+        prefetch_minimum_minutes: Minimum total runtime (minutes) the prefetched
+            next episodes must cover. 0 disables the runtime check.
 
     Returns:
         List of OnDeckItem objects, same format as the API-based fetch.
@@ -82,7 +85,8 @@ def fetch_on_deck_from_db(
                 continue
 
             try:
-                tv_items = _fetch_tv_on_deck(conn, account_id, username, valid_sections, cutoff, number_episodes)
+                tv_items = _fetch_tv_on_deck(conn, account_id, username, valid_sections, cutoff,
+                                              number_episodes, prefetch_minimum_minutes)
                 movie_items = _fetch_movie_on_deck(conn, account_id, username, valid_sections, cutoff)
                 results.extend(tv_items)
                 results.extend(movie_items)
@@ -145,7 +149,8 @@ def _fetch_tv_on_deck(
     username: str,
     valid_sections: List[int],
     cutoff: datetime,
-    number_episodes: int
+    number_episodes: int,
+    prefetch_minimum_minutes: int = 0
 ) -> List[OnDeckItem]:
     """Find next unwatched episodes for recently watched shows."""
     items: List[OnDeckItem] = []
@@ -158,14 +163,14 @@ def _fetch_tv_on_deck(
     for show_title, last_season, last_episode, library_section_id in recent_shows:
         next_episodes = _find_next_episodes(
             conn, show_title, last_season, last_episode,
-            library_section_id, number_episodes
+            library_section_id, number_episodes, prefetch_minimum_minutes
         )
 
         if not next_episodes:
             logging.debug(f"[DB FALLBACK] [USER:{username}] {show_title} — caught up, no next episode")
             continue
 
-        for i, (metadata_id, ep_title, season_idx, ep_idx, rating_key) in enumerate(next_episodes):
+        for i, (metadata_id, ep_title, season_idx, ep_idx, rating_key, _duration_ms) in enumerate(next_episodes):
             file_path = _resolve_file_path(conn, metadata_id)
             if not file_path:
                 logging.debug(f"[DB FALLBACK] No file path for metadata_id={metadata_id} ({show_title} S{season_idx:02d}E{ep_idx:02d})")
@@ -236,20 +241,32 @@ def _find_next_episodes(
     last_season: int,
     last_episode: int,
     library_section_id: int,
-    number_episodes: int
-) -> List[Tuple[int, str, int, int, int]]:
+    number_episodes: int,
+    prefetch_minimum_minutes: int = 0
+) -> List[Tuple[int, str, int, int, int, Optional[int]]]:
     """Find the next unwatched episodes after a given season/episode position.
 
     Handles season boundaries naturally (S01 last ep -> S02E01).
 
-    Returns list of (metadata_item_id, episode_title, season_index, episode_index, rating_key).
+    The first returned row corresponds to the next unwatched episode (treated
+    as the "current" OnDeck position by the caller). Subsequent rows are the
+    prefetch buffer. When `prefetch_minimum_minutes` > 0, the buffer is
+    extended past `number_episodes` until the summed runtime of buffer
+    episodes meets or exceeds the target.
+
+    Returns list of (metadata_item_id, episode_title, season_index, episode_index, rating_key, duration_ms).
     """
     # number_episodes is how many to prefetch AFTER the OnDeck episode
-    limit = number_episodes + 1
+    # Use a generous upper bound so we can extend the buffer in Python when a
+    # runtime target is set; episodes far past the target are discarded below.
+    if prefetch_minimum_minutes > 0:
+        limit = number_episodes + 1 + 200
+    else:
+        limit = number_episodes + 1
 
     query = """
         SELECT mi.id, mi.title, season."index" as season_index, mi."index" as episode_index,
-               mi.id as rating_key
+               mi.id as rating_key, mi.duration as duration_ms
         FROM metadata_items mi
         JOIN metadata_items season ON mi.parent_id = season.id
         JOIN metadata_items show ON season.parent_id = show.id
@@ -266,10 +283,55 @@ def _find_next_episodes(
     cursor = conn.execute(query, params)
     rows = cursor.fetchall()
 
-    return [
-        (row["id"], row["title"], int(row["season_index"]), int(row["episode_index"]), row["rating_key"])
+    all_rows = [
+        (row["id"], row["title"], int(row["season_index"]), int(row["episode_index"]),
+         row["rating_key"], row["duration_ms"])
         for row in rows
     ]
+
+    if not all_rows:
+        return all_rows
+
+    # Always include the first row (next unwatched episode = "current" OnDeck).
+    # Trim subsequent rows by minimum count and minimum runtime.
+    selected = all_rows[:1]
+    buffer_rows = all_rows[1:]
+
+    total_minutes = 0.0
+    duration_sum = 0.0
+    duration_count = 0
+    FALLBACK_MINUTES = 45.0
+
+    def _minutes_from_ms(d_ms) -> float:
+        # Plex stores duration in milliseconds. Fall back to the running
+        # average when the column is NULL, or to FALLBACK_MINUTES when no
+        # real duration has been seen yet.
+        if d_ms and d_ms > 0:
+            return d_ms / 60000.0
+        if duration_count > 0:
+            return duration_sum / duration_count
+        return FALLBACK_MINUTES
+
+    for row in buffer_rows:
+        if (len(selected) - 1) >= number_episodes and total_minutes >= prefetch_minimum_minutes:
+            break
+        d_ms = row[5]
+        ep_minutes = _minutes_from_ms(d_ms)
+        selected.append(row)
+        total_minutes += ep_minutes
+        if d_ms and d_ms > 0:
+            duration_sum += d_ms / 60000.0
+            duration_count += 1
+
+    if prefetch_minimum_minutes > 0:
+        logging.debug(
+            f"[DB FALLBACK] Prefetch buffer for {show_title!r}: "
+            f"{len(selected) - 1} eps, total {total_minutes:.1f} min "
+            f"(min count={number_episodes}, min runtime={prefetch_minimum_minutes} min, "
+            f"real durations seen={duration_count})"
+        )
+
+    return selected
 
 
 def _fetch_movie_on_deck(

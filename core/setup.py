@@ -978,6 +978,23 @@ def _setup_advanced_settings():
             hardlink_choice = 'skip'
         settings_data['hardlinked_files'] = hardlink_choice
 
+    # OnDeck prefetch minimum runtime (in minutes)
+    if 'prefetch_minimum_minutes' not in settings_data:
+        print('\n--- OnDeck Prefetch Minimum Runtime ---')
+        print('In addition to the fixed episode count, PlexCache can ensure that')
+        print('the prefetched OnDeck episodes cover a minimum total runtime.')
+        print('Helpful for shows with very short or very long episodes.')
+        print('')
+        print('Episode count is treated as a minimum — at least that many episodes')
+        print('will always be fetched. If the runtime target is not met, additional')
+        print('episodes are added until the total runtime is reached or exceeded.')
+        print('')
+        print('Set to 0 to disable (default, fully backward compatible).')
+        print('')
+        prompt_user_for_number(
+            'Minimum OnDeck prefetch runtime in minutes [0]: ', '0', 'prefetch_minimum_minutes'
+        )
+
     # Hard-linked files on restore (cache → array)
     if 'check_hardlinks_on_restore' not in settings_data:
         print('\n--- Hard-Linked Files on Restore ---')
@@ -1465,6 +1482,7 @@ def check_for_missing_settings(settings: dict) -> list:
         'hardlinked_files',
         'check_hardlinks_on_restore',
         'use_symlinks',
+        'prefetch_minimum_minutes',
     ]
     missing = [s for s in optional_new_settings if s not in settings]
     return missing
