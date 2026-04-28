@@ -209,6 +209,47 @@ def format_cache_age(updated_at) -> Optional[str]:
         return f"{int(age_seconds / 3600)} hr ago"
 
 
+def format_time_of_day(time_str: str, time_format: str) -> str:
+    """Convert an 'HH:MM' string to display form based on time_format ('12h' or '24h').
+
+    Invalid input is returned unchanged.
+    """
+    try:
+        hour, minute = map(int, time_str.split(":"))
+    except (ValueError, AttributeError):
+        return time_str
+    if time_format == "12h":
+        period = "AM" if hour < 12 else "PM"
+        hour_12 = hour % 12 or 12
+        if minute == 0:
+            return f"{hour_12} {period}"
+        return f"{hour_12}:{minute:02d} {period}"
+    return f"{hour}:{minute:02d}"
+
+
+def format_relative_time(target) -> str:
+    """Format a future datetime as relative time (e.g., '12m', '2h 30m', '<1m').
+
+    Returns 'now' if target is in the past. 'target' must be a datetime.
+    """
+    from datetime import datetime
+    now = datetime.now()
+    if target <= now:
+        return "now"
+    total_minutes = int((target - now).total_seconds()) // 60
+    if total_minutes < 1:
+        return "<1m"
+    if total_minutes < 60:
+        return f"{total_minutes}m"
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours}h" if minutes == 0 else f"{hours}h {minutes}m"
+
+
+def get_log_time_datefmt(time_format: str) -> str:
+    """Return a strftime datefmt for log timestamps based on time_format ('12h' or '24h')."""
+    return '%-I:%M:%S %p' if time_format == '12h' else '%H:%M:%S'
+
+
 def translate_container_to_host_path(path: str, path_mappings: list) -> str:
     """Translate container cache path to host path for exclude file.
 

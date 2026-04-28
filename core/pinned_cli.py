@@ -89,7 +89,7 @@ def _connect_plex(config_manager: ConfigManager):
         return None
     try:
         from plexapi.server import PlexServer
-        return PlexServer(plex_url, plex_token, timeout=10)
+        return PlexServer(plex_url, plex_token, timeout=30)
     except Exception as e:
         print(f"Error: Could not connect to Plex server: {e}")
         return None

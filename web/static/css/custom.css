@@ -1,5 +1,14 @@
 /* PlexCache-D Web UI Custom Styles */
 
+/* Icon size utility classes — use on lucide <i> elements to replace
+   inline `style="width:Npx; height:Npx"`. Pair with inline color/margin
+   styles or other utility classes as needed. */
+.icon-xs { width: 12px; height: 12px; }
+.icon-sm { width: 14px; height: 14px; }
+.icon-md { width: 16px; height: 16px; }
+.icon-lg { width: 20px; height: 20px; }
+.icon-xl { width: 32px; height: 32px; }
+
 /* Log viewer - single scroll context for both axes */
 .log-viewer {
     height: 500px;
@@ -255,14 +264,14 @@ footer {
 .associated-files-popup {
     display: none;
     position: fixed;
-    background: var(--plex-surface-elevated, #1f1f1f);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: var(--plex-radius-sm, 8px);
+    background: var(--plex-bg-card);
+    border: 1px solid var(--plex-border-light);
+    border-radius: var(--plex-radius-sm);
     padding: 0.5rem 0.75rem;
     min-width: 280px;
     width: max-content;
     z-index: 1000;
-    box-shadow: var(--plex-shadow-elevated, 0 4px 12px rgba(0, 0, 0, 0.4));
+    box-shadow: var(--plex-shadow-elevated);
     white-space: nowrap;
     pointer-events: none;
 }
@@ -272,7 +281,7 @@ footer {
     gap: 1rem;
     padding: 0.125rem 0;
     font-size: 0.78rem;
-    color: var(--plex-text-muted, #8e8e93);
+    color: var(--plex-text-muted);
 }
 .associated-files-popup .af-popup-name {
     flex: 1;

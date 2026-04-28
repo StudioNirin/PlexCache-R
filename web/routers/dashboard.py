@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse
 from web.config import templates
 from web.services import get_operation_runner
 from core.activity import _get_activity_retention_hours
-from web.services.web_cache import get_web_cache_service, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
+from web.services.web_cache import get_web_cache_service, get_dashboard_stats, CACHE_KEY_DASHBOARD_STATS, CACHE_KEY_MAINTENANCE_HEALTH
 
 router = APIRouter()
 
@@ -46,16 +46,11 @@ def dashboard(request: Request):
 @router.post("/refresh-stats", response_class=HTMLResponse)
 def refresh_stats(request: Request):
     """Force refresh dashboard stats and return updated container"""
-    # Import here to avoid circular dependency
-    from web.routers.api import _get_dashboard_stats_data
-
-    # Invalidate cache first
     web_cache = get_web_cache_service()
     web_cache.invalidate(CACHE_KEY_DASHBOARD_STATS)
     web_cache.invalidate(CACHE_KEY_MAINTENANCE_HEALTH)
 
-    # Get fresh stats
-    stats, cache_age = _get_dashboard_stats_data(use_cache=False)
+    stats, cache_age = get_dashboard_stats(use_cache=False)
 
     return templates.TemplateResponse(
         request,

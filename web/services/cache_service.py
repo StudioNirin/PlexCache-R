@@ -15,6 +15,46 @@ from core.system_utils import get_disk_usage, detect_zfs, get_array_direct_path,
 from core.file_operations import get_media_identity, find_matching_plexcached, save_json_atomically, SUBTITLE_EXTENSIONS, is_video_file
 
 
+def cached_files_to_dicts(files: List["CachedFile"]) -> List[Dict[str, Any]]:
+    """Convert CachedFile dataclasses to plain dicts for template rendering."""
+    return [
+        {
+            "path": f.path,
+            "filename": f.filename,
+            "size": f.size,
+            "size_display": f.size_display,
+            "cache_age_hours": f.cache_age_hours,
+            "source": f.source,
+            "priority_score": f.priority_score,
+            "users": f.users,
+            "is_ondeck": f.is_ondeck,
+            "is_watchlist": f.is_watchlist,
+            "is_pinned": f.is_pinned,
+            "subtitle_count": f.subtitle_count,
+            "sidecar_count": f.sidecar_count,
+            "associated_files": f.associated_files,
+        }
+        for f in files
+    ]
+
+
+def calculate_file_totals(files_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate counts and total size for a filtered list of cached-file dicts."""
+    total_size = sum(f["size"] for f in files_data)
+    return {
+        "total_files": len(files_data),
+        "ondeck_count": sum(1 for f in files_data if f["is_ondeck"]),
+        "watchlist_count": sum(1 for f in files_data if f["is_watchlist"]),
+        "pinned_count": sum(1 for f in files_data if f["is_pinned"]),
+        "other_count": sum(
+            1 for f in files_data
+            if not f["is_ondeck"] and not f["is_watchlist"] and not f["is_pinned"]
+        ),
+        "total_size": total_size,
+        "total_size_display": format_bytes(total_size),
+    }
+
+
 @dataclass
 class CachedFile:
     """Represents a cached file with all its metadata"""
@@ -506,6 +546,224 @@ class CacheService:
         final_score = max(0, min(100, score))
         return final_score, breakdown
 
+    def _classify_cache_paths(
+        self, cached_paths: List[str]
+    ) -> Tuple[List[str], List[str], List[str]]:
+        """Split cached paths into (subtitles, videos, sidecars)."""
+        subtitle_paths: List[str] = []
+        video_paths: List[str] = []
+        sidecar_paths: List[str] = []
+        for cache_path in cached_paths:
+            filename = os.path.basename(cache_path)
+            if self._is_subtitle_file(filename):
+                subtitle_paths.append(cache_path)
+            elif is_video_file(cache_path):
+                video_paths.append(cache_path)
+            else:
+                sidecar_paths.append(cache_path)
+        return subtitle_paths, video_paths, sidecar_paths
+
+    def _build_video_lookup(
+        self, video_paths: List[str]
+    ) -> Tuple[Dict[Tuple[str, str], str], Dict[str, List[str]]]:
+        """Index videos by (directory, basename-lower) and by directory."""
+        video_by_base: Dict[Tuple[str, str], str] = {}
+        videos_by_dir: Dict[str, List[str]] = {}
+        for video_path in video_paths:
+            directory = os.path.dirname(video_path)
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            video_by_base[(directory, base_name.lower())] = video_path
+            videos_by_dir.setdefault(directory, []).append(video_path)
+        return video_by_base, videos_by_dir
+
+    def _group_subtitles(
+        self,
+        subtitle_paths: List[str],
+        video_by_base: Dict[Tuple[str, str], str],
+    ) -> Dict[str, List[str]]:
+        """Attach subtitles to their parent video by matching basename in the same directory."""
+        video_subtitles: Dict[str, List[str]] = {}
+        for sub_path in subtitle_paths:
+            directory = os.path.dirname(sub_path)
+            sub_base = self._get_video_base_name(sub_path).lower()
+            video_path = video_by_base.get((directory, sub_base))
+            if video_path:
+                video_subtitles.setdefault(video_path, []).append(sub_path)
+        return video_subtitles
+
+    def _group_sidecars(
+        self,
+        sidecar_paths: List[str],
+        video_by_base: Dict[Tuple[str, str], str],
+        videos_by_dir: Dict[str, List[str]],
+    ) -> Dict[str, List[str]]:
+        """Attach sidecars to parent video: name match first, then any video in the same dir."""
+        video_sidecars: Dict[str, List[str]] = {}
+        for sidecar_path in sidecar_paths:
+            directory = os.path.dirname(sidecar_path)
+            sidecar_base = os.path.splitext(os.path.basename(sidecar_path))[0].lower()
+            video_path = video_by_base.get((directory, sidecar_base))
+            if not video_path:
+                dir_videos = videos_by_dir.get(directory, [])
+                if dir_videos:
+                    video_path = dir_videos[0]
+            if video_path:
+                video_sidecars.setdefault(video_path, []).append(sidecar_path)
+        return video_sidecars
+
+    def _build_cached_file(
+        self,
+        cache_path: str,
+        *,
+        timestamps: Dict,
+        ondeck: Dict,
+        watchlist: Dict,
+        settings: Dict,
+        pinned_cache_path_map: Dict,
+        pinned_cache_paths: set,
+        video_subtitles: Dict[str, List[str]],
+        video_sidecars: Dict[str, List[str]],
+        source_filter: str,
+        search: str,
+        now: datetime,
+    ) -> Optional[CachedFile]:
+        """Build a CachedFile for a single video path, or None if filtered out."""
+        filename = os.path.basename(cache_path)
+
+        if search and search.lower() not in filename.lower():
+            return None
+
+        try:
+            size = os.path.getsize(cache_path) if os.path.exists(cache_path) else 0
+        except OSError:
+            size = 0
+
+        ts_info = timestamps.get(cache_path, {})
+        if isinstance(ts_info, dict):
+            cached_at_str = ts_info.get("cached_at")
+            source = ts_info.get("source", "unknown")
+        else:
+            cached_at_str = ts_info
+            source = "unknown"
+
+        try:
+            cached_at = datetime.fromisoformat(cached_at_str) if cached_at_str else now
+        except (ValueError, TypeError):
+            cached_at = now
+
+        cache_age_hours = (now - cached_at).total_seconds() / 3600
+
+        is_ondeck = False
+        is_watchlist = False
+        users: set = set()
+        episode_info = None
+        tracker_rating_key: Optional[str] = None
+        tracker_pin_type: Optional[str] = None
+        cache_basename = os.path.basename(cache_path)
+
+        for plex_path, info in ondeck.items():
+            if os.path.basename(plex_path) == cache_basename:
+                is_ondeck = True
+                source = "ondeck"
+                if "users" in info:
+                    users.update(info["users"])
+                episode_info = info.get("episode_info")
+                if info.get("rating_key"):
+                    tracker_rating_key = info["rating_key"]
+                    tracker_pin_type = "episode" if episode_info else "movie"
+                break
+
+        for plex_path, info in watchlist.items():
+            if os.path.basename(plex_path) == cache_basename:
+                is_watchlist = True
+                if not is_ondeck:
+                    source = "watchlist"
+                if "users" in info:
+                    users.update(info["users"])
+                if tracker_rating_key is None and info.get("rating_key"):
+                    tracker_rating_key = info["rating_key"]
+                    # Prefer the watchlist tracker's stored media_type (populated
+                    # at gathering time). Fall back to episode_info, then "movie"
+                    # so legacy entries written before media_type existed still
+                    # behave the way they always did.
+                    wl_media_type = info.get("media_type")
+                    if wl_media_type in ("episode", "movie"):
+                        tracker_pin_type = wl_media_type
+                    else:
+                        tracker_pin_type = "episode" if episode_info else "movie"
+                break
+
+        is_pinned = cache_path in pinned_cache_paths
+
+        if source_filter == "pinned" and not is_pinned:
+            return None
+        if source_filter == "ondeck" and not is_ondeck:
+            return None
+        if source_filter == "watchlist" and not is_watchlist:
+            return None
+        if source_filter == "other" and (is_ondeck or is_watchlist or is_pinned):
+            return None
+
+        if is_pinned:
+            priority = 100
+        else:
+            priority = self.calculate_priority(
+                cache_path, timestamps, ondeck, watchlist, settings
+            )
+
+        # For pinned rows, prefer the pinned-map's rating_key/pin_type —
+        # it's the authoritative source for the unpin button. For unpinned
+        # rows, fall back to the ondeck/watchlist tracker values so the row
+        # can still offer a pin-in-place button.
+        if is_pinned:
+            pinned_meta = pinned_cache_path_map.get(cache_path)
+            if pinned_meta:
+                row_rating_key, row_pin_type = pinned_meta
+            else:
+                row_rating_key, row_pin_type = tracker_rating_key, tracker_pin_type
+        else:
+            row_rating_key, row_pin_type = tracker_rating_key, tracker_pin_type
+
+        subs = video_subtitles.get(cache_path, [])
+        sidecars = video_sidecars.get(cache_path, [])
+
+        assoc_list: Optional[List[Dict[str, str]]] = None
+        all_assoc = subs + sidecars
+        if all_assoc:
+            assoc_list = []
+            for ap in all_assoc:
+                try:
+                    asize = os.path.getsize(ap) if os.path.exists(ap) else 0
+                except OSError:
+                    asize = 0
+                assoc_list.append({
+                    "filename": os.path.basename(ap),
+                    "size": format_bytes(asize),
+                })
+
+        return CachedFile(
+            path=cache_path,
+            filename=filename,
+            size=size,
+            size_display=format_bytes(size),
+            cached_at=cached_at,
+            cache_age_hours=cache_age_hours,
+            source=source,
+            priority_score=priority,
+            users=list(users),
+            is_ondeck=is_ondeck,
+            is_watchlist=is_watchlist,
+            episode_info=episode_info,
+            subtitle_count=len(subs),
+            subtitle_paths=subs if subs else None,
+            sidecar_count=len(sidecars),
+            sidecar_paths=sidecars if sidecars else None,
+            associated_files=assoc_list,
+            is_pinned=is_pinned,
+            rating_key=row_rating_key,
+            pin_type=row_pin_type,
+        )
+
     def get_all_cached_files(
         self,
         source_filter: str = "all",
@@ -548,224 +806,31 @@ class CacheService:
             if isinstance(ts_info, dict) and "associated_files" in ts_info:
                 cached_paths.extend(ts_info["associated_files"])
 
-        # First pass: classify files into three categories
-        subtitle_paths = []
-        video_paths = []
-        sidecar_paths = []
+        subtitle_paths, video_paths, sidecar_paths = self._classify_cache_paths(cached_paths)
+        video_by_base, videos_by_dir = self._build_video_lookup(video_paths)
+        video_subtitles = self._group_subtitles(subtitle_paths, video_by_base)
+        video_sidecars = self._group_sidecars(sidecar_paths, video_by_base, videos_by_dir)
 
-        for cache_path in cached_paths:
-            filename = os.path.basename(cache_path)
-            if self._is_subtitle_file(filename):
-                subtitle_paths.append(cache_path)
-            elif is_video_file(cache_path):
-                video_paths.append(cache_path)
-            else:
-                sidecar_paths.append(cache_path)
-
-        # Build a map of directory + video base name -> video path for subtitle matching
-        # Key: (directory, video_base_without_extension)
-        video_by_base = {}
-        # Also track videos by directory for sidecar fallback matching
-        videos_by_dir = {}
-        for video_path in video_paths:
-            directory = os.path.dirname(video_path)
-            filename = os.path.basename(video_path)
-            # Get base name without extension
-            base_name = os.path.splitext(filename)[0]
-            video_by_base[(directory, base_name.lower())] = video_path
-            videos_by_dir.setdefault(directory, []).append(video_path)
-
-        # Group subtitles with their parent videos
-        # Map video_path -> list of subtitle paths
-        video_subtitles = {}
-        orphan_subtitles = []
-
-        for sub_path in subtitle_paths:
-            directory = os.path.dirname(sub_path)
-            sub_base = self._get_video_base_name(sub_path).lower()
-
-            # Find matching video in same directory
-            video_path = video_by_base.get((directory, sub_base))
-            if video_path:
-                if video_path not in video_subtitles:
-                    video_subtitles[video_path] = []
-                video_subtitles[video_path].append(sub_path)
-            else:
-                # Orphan subtitle - no matching video found
-                orphan_subtitles.append(sub_path)
-
-        # Group sidecar files with their parent videos
-        # Map video_path -> list of sidecar paths
-        video_sidecars = {}
-
-        for sidecar_path in sidecar_paths:
-            directory = os.path.dirname(sidecar_path)
-            sidecar_base = os.path.splitext(os.path.basename(sidecar_path))[0].lower()
-
-            # Try name-prefixed match first (e.g., Movie.nfo → Movie.mkv)
-            video_path = video_by_base.get((directory, sidecar_base))
-            if not video_path:
-                # Fallback: any video in the same directory (for poster.jpg, fanart.jpg, etc.)
-                dir_videos = videos_by_dir.get(directory, [])
-                if dir_videos:
-                    video_path = dir_videos[0]
-
-            if video_path:
-                video_sidecars.setdefault(video_path, []).append(sidecar_path)
-            # If no video found, sidecar is orphaned — skip it
-
-        # Build the file list with grouped subtitles
-        files = []
-
+        files: List[CachedFile] = []
         for cache_path in video_paths:
-            filename = os.path.basename(cache_path)
+            cached_file = self._build_cached_file(
+                cache_path,
+                timestamps=timestamps,
+                ondeck=ondeck,
+                watchlist=watchlist,
+                settings=settings,
+                pinned_cache_path_map=pinned_cache_path_map,
+                pinned_cache_paths=pinned_cache_paths,
+                video_subtitles=video_subtitles,
+                video_sidecars=video_sidecars,
+                source_filter=source_filter,
+                search=search,
+                now=now,
+            )
+            if cached_file is not None:
+                files.append(cached_file)
 
-            # Apply search filter
-            if search and search.lower() not in filename.lower():
-                continue
-
-            # Get file size
-            try:
-                size = os.path.getsize(cache_path) if os.path.exists(cache_path) else 0
-            except OSError:
-                size = 0
-
-            # Get timestamp info
-            ts_info = timestamps.get(cache_path, {})
-            if isinstance(ts_info, dict):
-                cached_at_str = ts_info.get("cached_at")
-                source = ts_info.get("source", "unknown")
-            else:
-                cached_at_str = ts_info
-                source = "unknown"
-
-            # Parse cached_at
-            try:
-                cached_at = datetime.fromisoformat(cached_at_str) if cached_at_str else now
-            except (ValueError, TypeError):
-                cached_at = now
-
-            cache_age_hours = (now - cached_at).total_seconds() / 3600
-
-            # Check ondeck/watchlist trackers
-            is_ondeck = False
-            is_watchlist = False
-            users = set()
-            episode_info = None
-            tracker_rating_key: Optional[str] = None
-            tracker_pin_type: Optional[str] = None
-            cache_basename = os.path.basename(cache_path)
-
-            for plex_path, info in ondeck.items():
-                if os.path.basename(plex_path) == cache_basename:
-                    is_ondeck = True
-                    source = "ondeck"
-                    if "users" in info:
-                        users.update(info["users"])
-                    episode_info = info.get("episode_info")
-                    if info.get("rating_key"):
-                        tracker_rating_key = info["rating_key"]
-                        tracker_pin_type = "episode" if episode_info else "movie"
-                    break
-
-            for plex_path, info in watchlist.items():
-                if os.path.basename(plex_path) == cache_basename:
-                    is_watchlist = True
-                    if not is_ondeck:
-                        source = "watchlist"
-                    if "users" in info:
-                        users.update(info["users"])
-                    if tracker_rating_key is None and info.get("rating_key"):
-                        tracker_rating_key = info["rating_key"]
-                        # Prefer the watchlist tracker's stored media_type (populated
-                        # at gathering time). Fall back to episode_info, then "movie"
-                        # so legacy entries written before media_type existed still
-                        # behave the way they always did.
-                        wl_media_type = info.get("media_type")
-                        if wl_media_type in ("episode", "movie"):
-                            tracker_pin_type = wl_media_type
-                        else:
-                            tracker_pin_type = "episode" if episode_info else "movie"
-                    break
-
-            # Pinned files always score 100 (mirrors core priority manager)
-            is_pinned = cache_path in pinned_cache_paths
-
-            # Apply source filter
-            if source_filter == "pinned" and not is_pinned:
-                continue
-            if source_filter == "ondeck" and not is_ondeck:
-                continue
-            if source_filter == "watchlist" and not is_watchlist:
-                continue
-            if source_filter == "other" and (is_ondeck or is_watchlist or is_pinned):
-                continue
-
-            if is_pinned:
-                priority = 100
-            else:
-                priority = self.calculate_priority(
-                    cache_path, timestamps, ondeck, watchlist, settings
-                )
-
-            # For pinned rows, prefer the pinned-map's rating_key/pin_type —
-            # it's the authoritative source for the unpin button. For
-            # unpinned rows, fall back to whatever the ondeck/watchlist
-            # trackers told us so the row can offer a pin-in-place button.
-            if is_pinned:
-                pinned_meta = pinned_cache_path_map.get(cache_path)
-                if pinned_meta:
-                    row_rating_key, row_pin_type = pinned_meta
-                else:
-                    row_rating_key, row_pin_type = tracker_rating_key, tracker_pin_type
-            else:
-                row_rating_key, row_pin_type = tracker_rating_key, tracker_pin_type
-
-            # Get associated subtitles and sidecars
-            subs = video_subtitles.get(cache_path, [])
-            sidecars = video_sidecars.get(cache_path, [])
-
-            # Build associated files list for template rendering
-            assoc_list = None
-            all_assoc = subs + sidecars
-            if all_assoc:
-                assoc_list = []
-                for ap in all_assoc:
-                    try:
-                        asize = os.path.getsize(ap) if os.path.exists(ap) else 0
-                    except OSError:
-                        asize = 0
-                    assoc_list.append({
-                        "filename": os.path.basename(ap),
-                        "size": format_bytes(asize)
-                    })
-
-            files.append(CachedFile(
-                path=cache_path,
-                filename=filename,
-                size=size,
-                size_display=format_bytes(size),
-                cached_at=cached_at,
-                cache_age_hours=cache_age_hours,
-                source=source,
-                priority_score=priority,
-                users=list(users),
-                is_ondeck=is_ondeck,
-                is_watchlist=is_watchlist,
-                episode_info=episode_info,
-                subtitle_count=len(subs),
-                subtitle_paths=subs if subs else None,
-                sidecar_count=len(sidecars),
-                sidecar_paths=sidecars if sidecars else None,
-                associated_files=assoc_list,
-                is_pinned=is_pinned,
-                rating_key=row_rating_key,
-                pin_type=row_pin_type,
-            ))
-
-        # Sort by specified column
         reverse = (sort_dir == "desc")
-
         sort_keys = {
             "filename": lambda f: f.filename.lower(),
             "size": lambda f: f.size,
@@ -774,7 +839,6 @@ class CacheService:
             "users": lambda f: len(f.users),
             "source": lambda f: (f.is_ondeck, f.is_watchlist),  # OnDeck first, then Watchlist
         }
-
         sort_key = sort_keys.get(sort_by, sort_keys["priority"])
         files.sort(key=sort_key, reverse=reverse)
 

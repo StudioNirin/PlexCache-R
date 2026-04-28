@@ -66,7 +66,7 @@ class PinnedService:
             return None
         try:
             from plexapi.server import PlexServer
-            return PlexServer(plex_url, plex_token, timeout=10)
+            return PlexServer(plex_url, plex_token, timeout=30)
         except Exception as e:
             logger.warning(f"PinnedService: could not connect to Plex: {e}")
             return None

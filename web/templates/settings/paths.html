@@ -13,20 +13,7 @@
             {% include "settings/partials/path_mappings_list.html" %}
         </div>
 
-        <script>
-            function toggleEditMode(index) {
-                const view = document.getElementById('mapping-view-' + index);
-                const edit = document.getElementById('mapping-edit-' + index);
-                if (view.style.display === 'none') {
-                    view.style.display = 'block';
-                    edit.style.display = 'none';
-                } else {
-                    view.style.display = 'none';
-                    edit.style.display = 'block';
-                }
-                lucide.createIcons();
-            }
-        </script>
+        {# toggleEditMode(index) is defined globally in /static/js/app.js #}
 
         <hr style="border-color: var(--plex-border); margin: 1.5rem 0;">
 

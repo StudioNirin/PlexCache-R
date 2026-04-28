@@ -138,18 +138,6 @@
         }
         lucide.createIcons();
     }
-
-    function toggleEditMode(index) {
-        var view = document.getElementById('mapping-view-' + index);
-        var edit = document.getElementById('mapping-edit-' + index);
-        if (view.style.display === 'none') {
-            view.style.display = 'block';
-            edit.style.display = 'none';
-        } else {
-            view.style.display = 'none';
-            edit.style.display = 'block';
-        }
-        lucide.createIcons();
-    }
+    // toggleEditMode(index) is defined globally in /static/js/app.js
 </script>
 {% endblock %}

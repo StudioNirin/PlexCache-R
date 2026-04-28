@@ -502,7 +502,7 @@ function repairAllRepairable(isDryRun = false) {
             </h4>
             <p style="margin: 0 0 1rem 0;">Sonarr/Radarr renamed these backup files and dropped the <code>.mkv</code> extension.</p>
         </div>
-        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: var(--plex-radius-sm); margin-bottom: 1rem;">
             <strong>What will happen:</strong>
             <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
                 <li>Detect the media extension from the sibling file</li>
@@ -690,7 +690,7 @@ function startDuplicateScan() {
             </h4>
             <p style="margin: 0 0 1rem 0;">This will scan all movie and TV show libraries for items with multiple media files.</p>
         </div>
-        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px;">
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: var(--plex-radius-sm);">
             <strong>What will happen:</strong>
             <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
                 <li>Connect to Plex and enumerate all libraries</li>
@@ -750,7 +750,7 @@ function deleteAllOrphanDuplicates(isDryRun) {
             </h4>
             <p style="margin: 0 0 1rem 0;">This will delete all files identified as orphans by Sonarr/Radarr from the last scan.</p>
         </div>
-        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: 6px;">
+        <div class="confirm-section" style="background: var(--plex-surface); padding: 1rem; border-radius: var(--plex-radius-sm);">
             <strong style="color: var(--warning);">Safety:</strong>
             <ul style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
                 <li>Only files NOT tracked by Sonarr/Radarr will be deleted</li>

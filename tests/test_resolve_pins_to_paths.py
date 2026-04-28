@@ -342,3 +342,116 @@ class TestPreferenceRespected:
         assert sorted(p for p, _, _ in lowest) == sorted([
             "/plex/E01.1080p.mkv", "/plex/E02.1080p.mkv"
         ])
+
+
+class TestFetchItemRetryOnTimeout:
+    """Transient local-Plex timeouts should be retried, not surfaced as ERROR."""
+
+    def _patch_sleep(self, monkeypatch):
+        """Don't actually sleep during retry tests."""
+        import core.pinned_media as pm
+        monkeypatch.setattr(pm.time, "sleep", lambda _: None)
+
+    def test_retries_on_timeout_then_succeeds(self, tracker, monkeypatch, caplog):
+        import requests
+        self._patch_sleep(monkeypatch)
+        movie = FakeMovie("Matrix", [FakeMedia("1080", "/plex/Matrix.mkv")])
+
+        calls = {"n": 0}
+
+        class FlakyServer:
+            def fetchItem(self, key):
+                calls["n"] += 1
+                if calls["n"] < 2:
+                    raise requests.Timeout("read timeout")
+                return movie
+
+        tracker.add_pin("100", "movie", "Matrix")
+        with caplog.at_level(logging.WARNING):
+            resolved, orphaned = resolve_pins_to_paths(FlakyServer(), tracker, "highest")
+
+        assert calls["n"] == 2
+        assert orphaned == []
+        assert len(resolved) == 1 and resolved[0][0] == "/plex/Matrix.mkv"
+        assert any("attempt 1/3" in r.message for r in caplog.records)
+        # No ERROR-level record should have been logged for this pin.
+        assert not any(r.levelno == logging.ERROR for r in caplog.records)
+
+    def test_retries_on_connection_error_then_succeeds(self, tracker, monkeypatch):
+        import requests
+        self._patch_sleep(monkeypatch)
+        movie = FakeMovie("Matrix", [FakeMedia("1080", "/plex/Matrix.mkv")])
+
+        calls = {"n": 0}
+
+        class FlakyServer:
+            def fetchItem(self, key):
+                calls["n"] += 1
+                if calls["n"] < 3:
+                    raise requests.ConnectionError("dns")
+                return movie
+
+        tracker.add_pin("100", "movie", "Matrix")
+        resolved, _ = resolve_pins_to_paths(FlakyServer(), tracker, "highest")
+        assert calls["n"] == 3
+        assert len(resolved) == 1
+
+    def test_gives_up_after_max_attempts_logs_error_keeps_pin(self, tracker, monkeypatch, caplog):
+        import requests
+        self._patch_sleep(monkeypatch)
+
+        calls = {"n": 0}
+
+        class BrokenServer:
+            def fetchItem(self, key):
+                calls["n"] += 1
+                raise requests.Timeout("always fails")
+
+        tracker.add_pin("100", "movie", "Matrix")
+        with caplog.at_level(logging.ERROR):
+            resolved, orphaned = resolve_pins_to_paths(BrokenServer(), tracker, "highest")
+
+        assert calls["n"] == 3  # _PIN_FETCH_MAX_ATTEMPTS
+        assert resolved == []
+        assert orphaned == []  # pin is NOT removed on transient failure
+        assert "100" in tracker._data
+        assert any("after 3 attempts" in r.message for r in caplog.records)
+
+    def test_notfound_still_removes_pin_without_retry(self, tracker, monkeypatch):
+        self._patch_sleep(monkeypatch)
+
+        calls = {"n": 0}
+
+        class ServerWithMissingItem:
+            def fetchItem(self, key):
+                calls["n"] += 1
+                raise FakeNotFound("gone")
+
+        tracker.add_pin("999", "movie", "DeletedMovie")
+        resolved, orphaned = resolve_pins_to_paths(ServerWithMissingItem(), tracker, "highest")
+
+        assert calls["n"] == 1  # no retry for NotFound
+        assert orphaned == ["999"]
+        assert resolved == []
+        assert "999" not in tracker._data
+
+    def test_non_retriable_exception_not_retried(self, tracker, monkeypatch):
+        """RuntimeError (or any non-network Exception) exits the retry loop after one attempt."""
+        self._patch_sleep(monkeypatch)
+
+        calls = {"n": 0}
+
+        class WeirdServer:
+            def fetchItem(self, key):
+                calls["n"] += 1
+                raise RuntimeError("unexpected")
+
+        tracker.add_pin("100", "movie", "Matrix")
+        resolved, _ = resolve_pins_to_paths(WeirdServer(), tracker, "highest")
+
+        # Only checking retry count here. Orphan-vs-keep depends on whether
+        # plexapi.exceptions.NotFound resolves to a specific class (production)
+        # or falls back to Exception (test env), which is orthogonal to the
+        # retry logic under test.
+        assert calls["n"] == 1
+        assert resolved == []

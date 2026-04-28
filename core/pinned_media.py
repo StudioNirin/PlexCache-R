@@ -24,10 +24,17 @@ with an optional ``media_id`` field. The global rule remains the default.
 import logging
 import os
 import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from core.file_operations import JSONTracker
+
+# Retry settings for transient local-Plex network errors during pin resolution.
+# Runs inside the audit loop (every ~5 min), so short, bounded retries are
+# preferable to letting a single transient timeout spam the error channel.
+_PIN_FETCH_MAX_ATTEMPTS = 3
+_PIN_FETCH_RETRY_WAIT = 2  # seconds between attempts
 
 
 VALID_PIN_TYPES = {"show", "season", "episode", "movie"}
@@ -255,6 +262,14 @@ def resolve_pins_to_paths(
         _NotFound = Exception
     NotFound = _NotFound
 
+    try:
+        import requests as _requests
+        _Timeout = _requests.Timeout
+        _ConnectionError = _requests.ConnectionError
+    except ImportError:
+        _Timeout = _ConnectionError = Exception
+    TransientNetError = (_Timeout, _ConnectionError)
+
     resolved: List[Tuple[str, str, str]] = []
     orphaned: List[str] = []
 
@@ -263,23 +278,53 @@ def resolve_pins_to_paths(
         pin_type = pin["type"]
         title = pin.get("title", rk)
 
-        try:
-            # plexapi.fetchItem accepts int or str rating_key
-            item = plex_server.fetchItem(int(rk))
-        except (NotFound, ValueError) as e:
-            logging.warning(
-                f"Pinned item no longer in Plex: '{title}' "
-                f"(rating_key={rk}) — removing pin. ({type(e).__name__}: {e})"
-            )
-            tracker.remove_pin(rk)
-            orphaned.append(rk)
-            continue
-        except Exception as e:
-            # Don't remove the pin on transient errors (connection loss, etc.)
-            logging.error(
-                f"Failed to fetch pinned item '{title}' (rating_key={rk}): "
-                f"{type(e).__name__}: {e}. Leaving pin in place."
-            )
+        item = None
+        last_transient_err: Optional[Exception] = None
+        for attempt in range(_PIN_FETCH_MAX_ATTEMPTS):
+            try:
+                # plexapi.fetchItem accepts int or str rating_key
+                item = plex_server.fetchItem(int(rk))
+                break
+            except TransientNetError as e:
+                # Check network errors BEFORE NotFound — some test environments
+                # fall NotFound back to `Exception`, which would otherwise swallow
+                # requests.Timeout/ConnectionError and mark the pin as orphaned.
+                last_transient_err = e
+                if attempt < _PIN_FETCH_MAX_ATTEMPTS - 1:
+                    logging.warning(
+                        f"Pinned item fetch attempt {attempt + 1}/{_PIN_FETCH_MAX_ATTEMPTS} "
+                        f"timed out for '{title}' (rating_key={rk}): {e}. "
+                        f"Retrying in {_PIN_FETCH_RETRY_WAIT}s..."
+                    )
+                    time.sleep(_PIN_FETCH_RETRY_WAIT)
+            except (NotFound, ValueError) as e:
+                logging.warning(
+                    f"Pinned item no longer in Plex: '{title}' "
+                    f"(rating_key={rk}) — removing pin. ({type(e).__name__}: {e})"
+                )
+                tracker.remove_pin(rk)
+                orphaned.append(rk)
+                item = None
+                last_transient_err = None
+                break
+            except Exception as e:
+                # Non-retriable error (e.g. malformed response, unexpected exception)
+                logging.error(
+                    f"Failed to fetch pinned item '{title}' (rating_key={rk}): "
+                    f"{type(e).__name__}: {e}. Leaving pin in place."
+                )
+                last_transient_err = None
+                break
+
+        if item is None:
+            if last_transient_err is not None:
+                # Don't remove the pin — server might be back up next audit cycle.
+                logging.error(
+                    f"Failed to fetch pinned item '{title}' (rating_key={rk}) "
+                    f"after {_PIN_FETCH_MAX_ATTEMPTS} attempts: "
+                    f"{type(last_transient_err).__name__}: {last_transient_err}. "
+                    f"Leaving pin in place."
+                )
             continue
 
         try:

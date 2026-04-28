@@ -56,6 +56,7 @@ body {
     /* Shadows & Radii */
     --plex-shadow-card: 0 2px 12px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04);
     --plex-shadow-elevated: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+    --plex-radius-xs: 4px;
     --plex-radius-sm: 8px;
     --plex-radius-md: 12px;
     --plex-radius-lg: 16px;
