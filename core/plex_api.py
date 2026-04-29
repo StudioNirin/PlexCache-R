@@ -628,10 +628,17 @@ class PlexManager:
                     try:
                         from plexapi.myplex import MyPlexAccount
                         logging.debug(f"[PLEX API] No token for {username}, trying switchHomeUser...")
-                        self._rate_limited_api_call()
-                        admin_account = MyPlexAccount(token=self.plex_token)
-                        self._rate_limited_api_call()
-                        switched = admin_account.switchHomeUser(username)
+
+                        def _switch_to_home_user():
+                            self._rate_limited_api_call()
+                            admin = MyPlexAccount(token=self.plex_token)
+                            self._rate_limited_api_call()
+                            return admin.switchHomeUser(username)
+
+                        switched = _retry_plextv_call(
+                            _switch_to_home_user,
+                            label=f"switchHomeUser for {username}",
+                        )
                         return username, PlexServer(self.plex_url, switched.authenticationToken)
                     except Exception as e:
                         _log_api_error(f"switchHomeUser for {username}", e)
@@ -1180,10 +1187,16 @@ class PlexManager:
             else:
                 # Home/managed user - create fresh admin account then switch to home user
                 try:
-                    self._rate_limited_api_call()
-                    fresh_admin_account = MyPlexAccount(token=self.plex_token, session=fresh_session)
-                    self._rate_limited_api_call()
-                    account = fresh_admin_account.switchHomeUser(current_username)
+                    def _switch_to_home_user():
+                        self._rate_limited_api_call()
+                        admin = MyPlexAccount(token=self.plex_token, session=fresh_session)
+                        self._rate_limited_api_call()
+                        return admin.switchHomeUser(current_username)
+
+                    account = _retry_plextv_call(
+                        _switch_to_home_user,
+                        label=f"switch to home user {current_username}",
+                    )
                     logging.debug(f"[USER:{current_username}] Switched to home user via fresh admin account")
                 except Exception as e:
                     _log_api_error(f"switch to home user {current_username}", e)
