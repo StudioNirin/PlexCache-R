@@ -69,7 +69,14 @@
     </div>
     <div class="card-body" style="padding: 0;">
         <div class="recent-activity-scroll">
-            <table>
+            <table class="recent-activity-table">
+                <colgroup>
+                    <col class="activity-col-time">
+                    <col class="activity-col-action">
+                    <col class="activity-col-file">
+                    <col class="activity-col-users">
+                    <col class="activity-col-size">
+                </colgroup>
                 <thead>
                     <tr>
                         <th>Time</th>
@@ -114,50 +121,187 @@ document.addEventListener('DOMContentLoaded', loadVerbosePreference);
 // Save preference when toggle changes
 document.getElementById('verbose-toggle').addEventListener('change', saveVerbosePreference);
 
-// ── Activity Filter Pills ──────────────────────────────
-const KNOWN_ACTIONS = ['Cached', 'Restored', 'Moved to Array', 'Protected'];
+// ── Activity Runs (Option D run-grouped view) ──────────────────────────
+// Use `var` so re-execution after HTMX swap of recent_activity.html doesn't
+// throw on `const` redeclaration (the partial includes its own <script>).
+var ActivityRuns = window.ActivityRuns || {
+    EXPANDED_RUNS_KEY: 'plexcache_dashboard_expanded_runs',
+    KNOWN_ACTIONS: ['Cached', 'Restored', 'Moved to Array', 'Protected'],
 
-function getActiveFilter() {
-    const active = document.querySelector('.activity-filter-pill.active');
-    return active ? active.getAttribute('data-filter') : 'all';
-}
+    loadExpandedRuns: function() {
+        try {
+            return new Set(JSON.parse(localStorage.getItem(this.EXPANDED_RUNS_KEY) || '[]'));
+        } catch (e) { return new Set(); }
+    },
+    saveExpandedRuns: function(set) {
+        try {
+            localStorage.setItem(this.EXPANDED_RUNS_KEY, JSON.stringify(Array.from(set)));
+        } catch (e) {}
+    },
 
-function applyActivityFilter(filter) {
-    const rows = document.querySelectorAll('#recent-activity tr[data-action]');
-    rows.forEach(row => {
-        const action = row.getAttribute('data-action');
-        if (filter === 'all') {
-            row.style.display = '';
-        } else if (filter === 'other') {
-            row.style.display = KNOWN_ACTIONS.includes(action) ? 'none' : '';
-        } else {
-            row.style.display = (action === filter) ? '' : 'none';
+    getActiveFilter: function() {
+        var active = document.querySelector('.activity-filter-pill.active');
+        return active ? active.getAttribute('data-filter') : 'all';
+    },
+
+    toggleRun: function(headerEl) {
+        var runId = headerEl.getAttribute('data-run-id');
+        if (!runId) return;
+        var isOpen = headerEl.classList.toggle('is-open');
+        var chev = headerEl.querySelector('.run-expandable-chev');
+        if (chev) chev.classList.toggle('open', isOpen);
+
+        var memberSel = '.run-row[data-run-member="' + CSS.escape(runId) + '"]';
+        document.querySelectorAll(memberSel).forEach(function(row) {
+            if (!isOpen) {
+                row.classList.remove('is-visible');
+                return;
+            }
+            // Re-expanding: show-children obey their show-parent's open state
+            var showChild = row.getAttribute('data-show-child');
+            if (showChild) {
+                var parent = document.querySelector('.run-show-parent[data-show-id="' + CSS.escape(showChild) + '"]');
+                row.classList.toggle('is-visible', !!(parent && parent.classList.contains('is-open')));
+            } else {
+                row.classList.add('is-visible');
+            }
+        });
+
+        // Movie sidecars (rendered by the af_expand_rows macro) carry
+        // data-run-member but use the af-visible class. Collapse them too
+        // when the run collapses so they don't visually orphan.
+        if (!isOpen) {
+            var sidecarSel = '.associated-sub-row[data-run-member="' + CSS.escape(runId) + '"]';
+            document.querySelectorAll(sidecarSel).forEach(function(row) {
+                row.classList.remove('af-visible');
+            });
+            // Reset the af-expanded flag on the parent so the badge re-shows
+            document.querySelectorAll('.af-parent[data-run-member="' + CSS.escape(runId) + '"]').forEach(function(parent) {
+                parent.classList.remove('af-expanded');
+            });
         }
-    });
 
-    // Show/hide date group headers based on visible rows in each group
-    document.querySelectorAll('#recent-activity tr.date-group-header').forEach(header => {
-        const dateKey = header.getAttribute('data-date-group');
-        const groupRows = document.querySelectorAll(
-            '#recent-activity tr[data-action][data-date-group="' + dateKey + '"]'
-        );
-        const anyVisible = Array.from(groupRows).some(r => r.style.display !== 'none');
-        header.style.display = anyVisible ? '' : 'none';
-    });
-}
+        var expanded = this.loadExpandedRuns();
+        if (isOpen) { expanded.add(runId); } else { expanded.delete(runId); }
+        this.saveExpandedRuns(expanded);
 
+        this.applyFilter(this.getActiveFilter());
+    },
+
+    toggleShow: function(parentEl) {
+        var showId = parentEl.getAttribute('data-show-id');
+        if (!showId) return;
+        var isOpen = parentEl.classList.toggle('is-open');
+        var sel = '.run-show-child[data-show-child="' + CSS.escape(showId) + '"]';
+        document.querySelectorAll(sel).forEach(function(row) {
+            row.classList.toggle('is-visible', isOpen);
+        });
+        this.applyFilter(this.getActiveFilter());
+    },
+
+    applyFilter: function(filter) {
+        var tbody = document.getElementById('recent-activity');
+        if (!tbody) return;
+        var self = this;
+
+        // Per-row filter decision
+        tbody.querySelectorAll('.run-row[data-action]').forEach(function(row) {
+            var action = row.getAttribute('data-action');
+            var pass = (
+                filter === 'all' ||
+                (filter === 'other' && self.KNOWN_ACTIONS.indexOf(action) === -1) ||
+                action === filter
+            );
+            row.dataset.filterPass = pass ? '1' : '0';
+            // When filtered out, force-hide via inline style (overrides .is-visible)
+            row.style.display = pass ? '' : 'none';
+        });
+
+        // Per-run header: hide if no member passes; dim partial stat pills
+        tbody.querySelectorAll('.run-expandable-header').forEach(function(header) {
+            var runId = header.getAttribute('data-run-id');
+            var members = tbody.querySelectorAll('.run-row[data-run-member="' + CSS.escape(runId) + '"][data-action]');
+            var anyPass = Array.from(members).some(function(r) { return r.dataset.filterPass === '1'; });
+            header.style.display = anyPass ? '' : 'none';
+
+            var filesCached = parseInt(header.getAttribute('data-files-cached') || '0', 10);
+            var filesRestored = parseInt(header.getAttribute('data-files-restored') || '0', 10);
+            header.querySelectorAll('.run-stat-pill[data-stat]').forEach(function(pill) {
+                var stat = pill.getAttribute('data-stat');
+                var dim = false;
+                if (filter === 'Cached') {
+                    dim = (stat !== 'Cached');
+                } else if (filter === 'Restored' || filter === 'Moved to Array') {
+                    dim = (stat !== 'Restored');
+                } else if (filter === 'other') {
+                    dim = (stat === 'Cached' || stat === 'Restored');
+                }
+                pill.classList.toggle('is-dimmed', dim);
+                if (dim) {
+                    var orig = stat === 'Cached' ? filesCached : filesRestored;
+                    pill.setAttribute('title', orig + ' ' + stat.toLowerCase() + ' (filtered out)');
+                } else {
+                    pill.removeAttribute('title');
+                }
+            });
+        });
+
+        // Hide date headers whose runs are all hidden
+        tbody.querySelectorAll('.date-group-header').forEach(function(header) {
+            var dateKey = header.getAttribute('data-date-group');
+            var visibleRuns = false;
+            var node = header.nextElementSibling;
+            while (node && !node.classList.contains('date-group-header')) {
+                if (node.classList.contains('run-expandable-header') && node.style.display !== 'none') {
+                    visibleRuns = true;
+                    break;
+                }
+                node = node.nextElementSibling;
+            }
+            header.style.display = visibleRuns ? '' : 'none';
+        });
+    },
+
+    restoreState: function() {
+        var tbody = document.getElementById('recent-activity');
+        if (!tbody) return;
+        var expanded = this.loadExpandedRuns();
+
+        var headers = tbody.querySelectorAll('.run-expandable-header');
+        headers.forEach(function(header, idx) {
+            var runId = header.getAttribute('data-run-id');
+            // Newest run always starts expanded regardless of stored state
+            var shouldOpen = idx === 0 || expanded.has(runId);
+            header.classList.toggle('is-open', shouldOpen);
+            var chev = header.querySelector('.run-expandable-chev');
+            if (chev) chev.classList.toggle('open', shouldOpen);
+
+            tbody.querySelectorAll('.run-row[data-run-member="' + CSS.escape(runId) + '"]').forEach(function(row) {
+                var showChild = row.getAttribute('data-show-child');
+                if (showChild) {
+                    row.classList.remove('is-visible');  // shows always start collapsed
+                } else {
+                    row.classList.toggle('is-visible', shouldOpen);
+                }
+            });
+        });
+        this.applyFilter(this.getActiveFilter());
+    },
+};
+
+// Filter pill click → apply filter
 document.querySelector('.activity-filter-bar')?.addEventListener('click', function(e) {
-    const pill = e.target.closest('.activity-filter-pill');
+    var pill = e.target.closest('.activity-filter-pill');
     if (!pill) return;
-    document.querySelectorAll('.activity-filter-pill').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.activity-filter-pill').forEach(function(p) { p.classList.remove('active'); });
     pill.classList.add('active');
-    applyActivityFilter(pill.getAttribute('data-filter'));
+    ActivityRuns.applyFilter(pill.getAttribute('data-filter'));
 });
 
-// Re-apply filter after HTMX refreshes activity table
+// Restore expanded-run state after every HTMX swap
 document.body.addEventListener('htmx:afterSwap', function(e) {
     if (e.detail.target && e.detail.target.id === 'recent-activity') {
-        applyActivityFilter(getActiveFilter());
+        ActivityRuns.restoreState();
     }
 });
 </script>

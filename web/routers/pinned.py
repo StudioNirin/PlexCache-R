@@ -118,8 +118,12 @@ def pinned_toggle(
 def _record_pin_activity(cache_paths: list) -> None:
     """Record a Cached activity entry for each pinned path that exists on cache."""
     import os
+    import uuid
     try:
         from core.activity import record_file_activity
+        # One run_id per pin batch so the dashboard groups all paths from a
+        # single pin operation together.
+        pin_run_id = uuid.uuid4().hex
         for path in cache_paths:
             try:
                 if not os.path.exists(path):
@@ -131,6 +135,8 @@ def _record_pin_activity(cache_paths: list) -> None:
                 action="Cached",
                 filename=os.path.basename(path),
                 size_bytes=size_bytes,
+                run_id=pin_run_id,
+                run_source="web",
             )
     except Exception as e:
         logger.warning("Pin activity could not be recorded: %s", e)
@@ -159,7 +165,13 @@ def _start_unpin_eviction(cache_paths: list) -> bool:
         )
         if started:
             return True
-        # Runner is busy; queue if there's room, otherwise give up quietly.
+        # Runner is busy. Try to merge into an existing queued evict-files
+        # first so rapid unpin clicks coalesce into one batch instead of
+        # filling the queue with sibling jobs (and getting silently dropped
+        # at queue overflow).
+        if runner.merge_into_queued("evict-files", cache_paths):
+            return True
+        # No compatible tail item — enqueue normally if there's room.
         if runner.queue_count < runner._max_queue_size:
             item_id = runner.enqueue_action(
                 action_name="evict-files",

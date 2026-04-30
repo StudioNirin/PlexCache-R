@@ -25,6 +25,7 @@ body {
     --plex-warning: #ff9800;
     --plex-error: #FF453A;
     --plex-info: #0A84FF;
+    --plex-purple: #a78bfa;
     --plex-user-admin: var(--plex-orange);
     --plex-user-home: var(--plex-info);
     --plex-user-shared: var(--plex-success);
@@ -79,6 +80,7 @@ body {
     --plex-error: #d70015;
     --plex-warning: #c77c02;
     --plex-info: #0066cc;
+    --plex-purple: #6d4cd8;
     --plex-shadow-card: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.05);
     --plex-shadow-elevated: 0 4px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.07);
 }

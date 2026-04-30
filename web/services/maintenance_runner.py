@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional, Callable, Any, List
+from typing import Optional, Callable, Any, Dict, List
 from dataclasses import dataclass, field
 
 from web.services.maintenance_service import ActionResult
@@ -304,6 +304,14 @@ class MaintenanceRunner:
         self._queue_paused = False
         self._dequeue_timer: Optional[threading.Timer] = None
         self._countdown_started_at: Optional[datetime] = None
+        # Run grouping: minted at start_action(), attached to every FileActivity
+        # so the dashboard's run-grouped Recent Activity view can bucket entries.
+        self._run_id: Optional[str] = None
+        # Pre-action size snapshot: many maintenance actions delete/move the
+        # affected files, so post-action `os.path.getsize` returns 0. Capture
+        # sizes up front (input paths always exist at start) so the activity
+        # feed shows real sizes for "Restored", "Moved to Array", etc.
+        self._path_sizes: Dict[str, int] = {}
 
     @property
     def state(self) -> MaintenanceState:
@@ -366,6 +374,8 @@ class MaintenanceRunner:
 
             self._state = MaintenanceState.RUNNING
             self._stop_requested = False
+            self._run_id = uuid.uuid4().hex
+            self._path_sizes = self._snapshot_path_sizes(method_args, method_kwargs)
 
             display = ACTION_DISPLAY.get(action_name, "Running maintenance action...")
             display = display.format(count=file_count)
@@ -516,6 +526,54 @@ class MaintenanceRunner:
             logger.info(f"Queued maintenance action: {display_name} (#{len(self._queue)})")
             return item_id
 
+    def merge_into_queued(self, action_name: str, additional_paths: List[str]) -> bool:
+        """Append paths to the tail-most queued action of the same name.
+
+        Used when a caller would otherwise create a near-duplicate queue
+        entry (e.g. rapid unpin clicks each spawning their own evict-files
+        job). Merging keeps the queue from filling up with sibling jobs
+        and removes the 10-second countdown gap between each.
+
+        Only merges into queued items, never the currently running action
+        (its path list is being iterated by the service). The merged
+        action keeps the original `max_workers` / `on_complete` /
+        `method_kwargs` — only the path list and `file_count` change.
+
+        Returns True if merged, False if no compatible queue tail item
+        exists (caller should fall back to `enqueue_action`).
+        """
+        if not additional_paths:
+            return False
+
+        with self._lock:
+            for item in reversed(self._queue):
+                if item.action_name != action_name:
+                    continue
+                if not item.method_args or not isinstance(item.method_args[0], list):
+                    continue
+
+                existing = list(item.method_args[0])
+                existing_set = set(existing)
+                added = 0
+                for p in additional_paths:
+                    if p not in existing_set:
+                        existing.append(p)
+                        existing_set.add(p)
+                        added += 1
+
+                if added == 0:
+                    return True  # All paths already in queue — caller can stop
+
+                item.method_args = (existing,) + item.method_args[1:]
+                item.file_count = len(existing)
+                logger.info(
+                    f"Merged {added} path(s) into queued action: {item.display_name} "
+                    f"(now {item.file_count} file(s))"
+                )
+                return True
+
+            return False
+
     def remove_from_queue(self, item_id: str) -> bool:
         """Remove an item from the queue by ID."""
         with self._lock:
@@ -635,6 +693,51 @@ class MaintenanceRunner:
         "cache-pinned": "Cached",
     }
 
+    @staticmethod
+    def _snapshot_path_sizes(method_args: tuple, method_kwargs: dict) -> Dict[str, int]:
+        """Record sizes of input file paths before the action runs.
+
+        Most maintenance actions take the path list as the first positional
+        arg or a `paths`/`cache_paths` kwarg; the files always exist at
+        start (else the action couldn't operate on them). Sampling here
+        gives us authoritative sizes for the activity feed even after the
+        files are deleted, renamed, or moved by the action.
+        """
+        candidates = []
+        if method_args and isinstance(method_args[0], list):
+            candidates = method_args[0]
+        else:
+            for key in ("paths", "cache_paths"):
+                value = (method_kwargs or {}).get(key)
+                if isinstance(value, list):
+                    candidates = value
+                    break
+
+        sizes: Dict[str, int] = {}
+        for path in candidates:
+            if not isinstance(path, str):
+                continue
+            try:
+                sizes[path] = os.path.getsize(path)
+            except OSError:
+                pass
+        return sizes
+
+    def _resolve_size_for_activity(self, path: str) -> int:
+        """Look up the file's size, preferring the pre-action snapshot.
+
+        Falls back to a live `os.path.getsize` for actions that don't pass
+        the path list as an arg (e.g. `cache-pinned` resolves its own
+        targets internally — the cache file exists post-action there).
+        """
+        size = self._path_sizes.get(path, 0)
+        if size:
+            return size
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return 0
+
     def _record_maintenance_activity(self, action_name: str, action_result: ActionResult):
         """Record maintenance file operations to the shared activity feed."""
         if not action_result or not action_result.affected_paths:
@@ -648,17 +751,48 @@ class MaintenanceRunner:
 
         for path in action_result.affected_paths:
             filename = os.path.basename(path)
-            # Try to get file size (file may be gone after delete/move)
-            try:
-                size_bytes = os.path.getsize(path)
-            except OSError:
-                size_bytes = 0
+            size_bytes = self._resolve_size_for_activity(path)
 
             record_file_activity(
                 action=label,
                 filename=filename,
                 size_bytes=size_bytes,
+                run_id=self._run_id,
+                run_source="maintenance",
             )
+
+    def _save_run_summary(self, action_name: str, action_result: Optional[ActionResult]):
+        """Persist a run summary so the dashboard's Recent Activity grouping
+        can display real start/end times for maintenance runs alongside
+        cache and restore runs."""
+        if not self._run_id or not self._result:
+            return
+
+        from core.activity import save_run_summary
+
+        result = self._result
+        if result.error_message:
+            status = "failed"
+        elif self._stop_requested:
+            status = "stopped"
+        else:
+            status = "completed"
+
+        affected_count = action_result.affected_count if action_result else 0
+        error_count = len(action_result.errors) if action_result else 0
+
+        save_run_summary(self._run_id, {
+            "run_source": "maintenance",
+            "status": status,
+            "started_at": result.started_at.isoformat() if result.started_at else datetime.now().isoformat(),
+            "completed_at": result.completed_at.isoformat() if result.completed_at else datetime.now().isoformat(),
+            "duration_seconds": round(result.duration_seconds, 1),
+            "action_name": action_name,
+            "action_display": ACTION_HISTORY_LABELS.get(action_name, action_name),
+            "affected_count": affected_count,
+            "error_count": error_count,
+            "dry_run": False,
+        })
 
     def _record_history(self, action_name: str, action_result: Optional[ActionResult]):
         """Record this action to the persistent maintenance history."""
@@ -763,6 +897,12 @@ class MaintenanceRunner:
 
             # Record to persistent history
             self._record_history(action_name, action_result)
+
+            # Persist run summary for the dashboard's Recent Activity grouping
+            try:
+                self._save_run_summary(action_name, action_result)
+            except Exception as e:
+                logger.error(f"Failed to save maintenance run summary: {e}")
 
             # Call on_complete callback (e.g., cache invalidation)
             if on_complete:

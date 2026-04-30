@@ -97,7 +97,11 @@ class TestFileActivity:
             )
             d = fa.to_dict()
 
-        required_keys = {'timestamp', 'time_display', 'date_key', 'date_display', 'action', 'filename', 'size', 'users'}
+        required_keys = {
+            'timestamp', 'time_display', 'date_key', 'date_display',
+            'action', 'filename', 'size', 'size_bytes', 'users',
+            'run_id', 'run_source',
+        }
         assert required_keys == set(d.keys())
 
 
@@ -439,12 +443,16 @@ class TestLastRunSummaryAtomicWrite:
             OperationRunner, OperationResult, OperationState,
         )
 
-        summary_file = tmp_path / "last_run_summary.json"
+        summary_file = tmp_path / "run_summaries.json"
+        legacy_file = tmp_path / "last_run_summary.json"
 
         with patch('core.activity.load_activity', return_value=[]), \
-             patch('core.activity.LAST_RUN_SUMMARY_FILE', summary_file), \
+             patch('core.activity.RUN_SUMMARIES_FILE', summary_file), \
+             patch('core.activity._LEGACY_RUN_SUMMARY_FILE', legacy_file), \
              patch('core.activity.save_json_atomically') as mock_atomic:
             runner = OperationRunner()
+            runner._run_id = "test-run-id"
+            runner._run_source = "web"
             runner._current_result = OperationResult(
                 state=OperationState.COMPLETED,
                 started_at=datetime.now(),
@@ -456,10 +464,10 @@ class TestLastRunSummaryAtomicWrite:
             )
             runner._save_last_run_summary()
 
-        assert mock_atomic.called, "save_json_atomically was not called for last run summary"
+        assert mock_atomic.called, "save_json_atomically was not called for run summaries"
         call_args = mock_atomic.call_args
         # Check positional or keyword label arg
         positional = call_args[0]
         keyword = call_args[1]
         label = keyword.get("label") if "label" in keyword else (positional[2] if len(positional) > 2 else None)
-        assert label == "last run summary", f"Expected label 'last run summary', got {label!r}"
+        assert label == "run summaries", f"Expected label 'run summaries', got {label!r}"

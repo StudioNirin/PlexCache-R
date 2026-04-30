@@ -403,3 +403,103 @@ class TestOperationRunnerMutualExclusion:
                 # Clean up state
                 with runner._lock:
                     runner._state = runner._state.__class__("idle")
+
+
+# ============================================================================
+# MaintenanceRunner - merge_into_queued
+# ============================================================================
+
+class TestMergeIntoQueued:
+    """Coalesce paths into a queued action of the same name.
+
+    Used by rapid-unpin path so 7+ × clicks don't overflow the queue.
+    """
+
+    def _enqueue(self, runner, action_name, paths):
+        """Helper: enqueue an action with a path list as method_args[0]."""
+        return runner.enqueue_action(
+            action_name=action_name,
+            service_method=lambda **kwargs: ActionResult(success=True),
+            method_args=(list(paths),),
+            method_kwargs={"dry_run": False},
+            file_count=len(paths),
+        )
+
+    def test_returns_false_when_queue_empty(self):
+        runner = MaintenanceRunner()
+        assert runner.merge_into_queued("evict-files", ["/a", "/b"]) is False
+
+    def test_returns_false_when_no_matching_action_in_queue(self):
+        runner = MaintenanceRunner()
+        self._enqueue(runner, "sync-to-array", ["/x"])
+        assert runner.merge_into_queued("evict-files", ["/a"]) is False
+        # Queue unchanged
+        assert runner.queue_count == 1
+        assert runner._queue[0].action_name == "sync-to-array"
+
+    def test_merges_into_matching_tail_item(self):
+        runner = MaintenanceRunner()
+        self._enqueue(runner, "evict-files", ["/a", "/b"])
+
+        merged = runner.merge_into_queued("evict-files", ["/c", "/d"])
+        assert merged is True
+        assert runner.queue_count == 1
+
+        item = runner._queue[0]
+        assert item.method_args[0] == ["/a", "/b", "/c", "/d"]
+        assert item.file_count == 4
+
+    def test_merges_into_tail_when_multiple_actions_queued(self):
+        """Merge target is the tail-most matching item, not the first."""
+        runner = MaintenanceRunner()
+        self._enqueue(runner, "evict-files", ["/a"])
+        self._enqueue(runner, "sync-to-array", ["/x"])
+        self._enqueue(runner, "evict-files", ["/b"])
+
+        merged = runner.merge_into_queued("evict-files", ["/c"])
+        assert merged is True
+
+        # First evict-files entry untouched
+        assert runner._queue[0].method_args[0] == ["/a"]
+        # Tail evict-files absorbed the new path
+        assert runner._queue[2].method_args[0] == ["/b", "/c"]
+        assert runner._queue[2].file_count == 2
+
+    def test_dedupes_paths_already_in_queue(self):
+        runner = MaintenanceRunner()
+        self._enqueue(runner, "evict-files", ["/a", "/b"])
+
+        merged = runner.merge_into_queued("evict-files", ["/b", "/c"])
+        assert merged is True
+
+        item = runner._queue[0]
+        assert item.method_args[0] == ["/a", "/b", "/c"]  # /b not duplicated
+        assert item.file_count == 3
+
+    def test_returns_true_when_all_paths_already_queued(self):
+        """Caller treats this as success — no fallback enqueue needed."""
+        runner = MaintenanceRunner()
+        self._enqueue(runner, "evict-files", ["/a", "/b"])
+
+        merged = runner.merge_into_queued("evict-files", ["/a", "/b"])
+        assert merged is True
+        assert runner._queue[0].file_count == 2  # unchanged
+
+    def test_returns_false_when_paths_empty(self):
+        runner = MaintenanceRunner()
+        self._enqueue(runner, "evict-files", ["/a"])
+        assert runner.merge_into_queued("evict-files", []) is False
+        assert runner._queue[0].file_count == 1
+
+    def test_does_not_merge_when_method_args_lacks_path_list(self):
+        """Defensive: skip items whose first arg isn't a list."""
+        runner = MaintenanceRunner()
+        # Manually queue an item with a non-list first arg
+        runner.enqueue_action(
+            action_name="evict-files",
+            service_method=lambda **kwargs: ActionResult(success=True),
+            method_args=("not-a-list",),
+            method_kwargs={},
+            file_count=0,
+        )
+        assert runner.merge_into_queued("evict-files", ["/a"]) is False

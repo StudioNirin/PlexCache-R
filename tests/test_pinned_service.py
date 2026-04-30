@@ -535,9 +535,42 @@ class TestUnpinMany:
         svc._tracker.add_pin("100", "movie", "Matrix")
         before = svc.resolve_all_to_cache_paths()
         assert "/mnt/cache/media/Movies/Matrix.mkv" in before
-        result = svc.unpin_many(["100"])
+        # evict_paths now filters to paths actually on cache, so pretend the
+        # diff hit exists on disk for this test.
+        with patch(
+            "web.services.pinned_service.os.path.exists",
+            lambda p: p == "/mnt/cache/media/Movies/Matrix.mkv",
+        ):
+            result = svc.unpin_many(["100"])
         # Freshly-released cache path must appear in evict_paths
         assert "/mnt/cache/media/Movies/Matrix.mkv" in result["evict_paths"]
+
+    def test_evict_paths_filters_paths_not_on_cache(self, service_with_plex):
+        # Pinning items but never running "Cache Pinned Now", then unpinning,
+        # used to hand the maintenance runner a non-empty evict list and spin
+        # up an empty eviction. evict_paths must now be empty when nothing is
+        # actually on cache.
+        svc = service_with_plex
+        svc._tracker.add_pin("100", "movie", "Matrix")
+        with patch(
+            "web.services.pinned_service.os.path.exists",
+            lambda p: False,
+        ):
+            result = svc.unpin_many(["100"])
+        assert result["removed"] == 1
+        assert result["evict_paths"] == []
+
+    def test_toggle_unpin_filters_paths_not_on_cache(self, service_with_plex):
+        # Same guarantee as above, via the single-pin toggle path.
+        svc = service_with_plex
+        svc._tracker.add_pin("100", "movie", "Matrix")
+        with patch(
+            "web.services.pinned_service.os.path.exists",
+            lambda p: False,
+        ):
+            result = svc.toggle_pin("100", "movie", "Matrix")
+        assert result["is_pinned"] is False
+        assert result["evict_paths"] == []
 
 
 # ---------------------------------------------------------------------------

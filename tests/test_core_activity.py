@@ -23,11 +23,13 @@ from core.activity import (
     record_file_activity,
     save_last_run_time,
     load_last_run_summary,
+    load_run_summaries,
+    load_run_summary,
     save_run_summary,
     MAX_RECENT_ACTIVITY,
     ACTIVITY_FILE,
     LAST_RUN_FILE,
-    LAST_RUN_SUMMARY_FILE,
+    RUN_SUMMARIES_FILE,
     _get_activity_retention_hours,
 )
 
@@ -115,7 +117,11 @@ class TestFileActivity:
             )
             d = fa.to_dict()
 
-        required_keys = {'timestamp', 'time_display', 'date_key', 'date_display', 'action', 'filename', 'size', 'users'}
+        required_keys = {
+            'timestamp', 'time_display', 'date_key', 'date_display',
+            'action', 'filename', 'size', 'size_bytes', 'users',
+            'run_id', 'run_source',
+        }
         assert required_keys == set(d.keys())
 
 
@@ -391,48 +397,154 @@ class TestLastRunTime:
 # ============================================================================
 
 class TestRunSummary:
-    """Tests for save_run_summary() and load_last_run_summary()."""
+    """Tests for save_run_summary() / load_run_summaries() / load_last_run_summary()."""
 
-    def test_round_trip(self, tmp_path):
-        f = tmp_path / "last_run_summary.json"
+    @staticmethod
+    def _patch_files(tmp_path):
+        """Patch both the run-summaries file and the legacy migration file."""
+        return patch.multiple(
+            'core.activity',
+            RUN_SUMMARIES_FILE=tmp_path / "run_summaries.json",
+            _LEGACY_RUN_SUMMARY_FILE=tmp_path / "last_run_summary.json",
+        )
 
-        summary = {
+    def _summary(self, **overrides):
+        base = {
+            "run_source": "cli",
             "status": "completed",
-            "timestamp": datetime.now().isoformat(),
+            "started_at": datetime.now().isoformat(),
+            "completed_at": datetime.now().isoformat(),
+            "duration_seconds": 10.5,
             "files_cached": 3,
             "files_restored": 1,
             "bytes_cached": 1000,
             "bytes_restored": 500,
-            "duration_seconds": 10.5,
             "error_count": 0,
             "dry_run": False,
         }
+        base.update(overrides)
+        return base
 
-        with patch('core.activity.LAST_RUN_SUMMARY_FILE', f):
-            save_run_summary(summary)
+    def test_round_trip(self, tmp_path):
+        with self._patch_files(tmp_path):
+            save_run_summary("run-1", self._summary())
             loaded = load_last_run_summary()
 
         assert loaded is not None
+        assert loaded["run_id"] == "run-1"
         assert loaded["files_cached"] == 3
-        assert loaded["files_restored"] == 1
         assert loaded["status"] == "completed"
 
+    def test_save_run_summary_requires_run_id(self, tmp_path):
+        with self._patch_files(tmp_path):
+            save_run_summary("", self._summary())
+            assert load_last_run_summary() is None
+
+    def test_multiple_runs_keyed_by_id(self, tmp_path):
+        now = datetime.now()
+        with self._patch_files(tmp_path):
+            save_run_summary("run-1", self._summary(
+                started_at=(now - timedelta(minutes=10)).isoformat(),
+                files_cached=1,
+            ))
+            save_run_summary("run-2", self._summary(
+                started_at=now.isoformat(),
+                files_cached=5,
+            ))
+            summaries = load_run_summaries()
+
+        assert set(summaries.keys()) == {"run-1", "run-2"}
+        assert summaries["run-1"]["files_cached"] == 1
+        assert summaries["run-2"]["files_cached"] == 5
+
+    def test_load_run_summary_by_id(self, tmp_path):
+        with self._patch_files(tmp_path):
+            save_run_summary("run-1", self._summary())
+            assert load_run_summary("run-1") is not None
+            assert load_run_summary("missing") is None
+
+    def test_load_last_run_summary_excludes_maintenance_by_default(self, tmp_path):
+        now = datetime.now()
+        with self._patch_files(tmp_path):
+            # Older caching run, newer maintenance run
+            save_run_summary("cli-1", self._summary(
+                run_source="cli",
+                started_at=(now - timedelta(minutes=10)).isoformat(),
+            ))
+            save_run_summary("maint-1", self._summary(
+                run_source="maintenance",
+                started_at=now.isoformat(),
+            ))
+            loaded = load_last_run_summary()
+
+        # Even though maintenance is newer, the dashboard widget should
+        # surface the most recent caching run.
+        assert loaded is not None
+        assert loaded["run_id"] == "cli-1"
+
+    def test_load_last_run_summary_can_include_all_sources(self, tmp_path):
+        now = datetime.now()
+        with self._patch_files(tmp_path):
+            save_run_summary("cli-1", self._summary(
+                run_source="cli",
+                started_at=(now - timedelta(minutes=10)).isoformat(),
+            ))
+            save_run_summary("maint-1", self._summary(
+                run_source="maintenance",
+                started_at=now.isoformat(),
+            ))
+            loaded = load_last_run_summary(run_sources=())
+
+        assert loaded["run_id"] == "maint-1"
+
+    def test_retention_prunes_old_summaries(self, tmp_path):
+        old = datetime.now() - timedelta(hours=48)
+        with self._patch_files(tmp_path):
+            save_run_summary("ancient", self._summary(
+                started_at=old.isoformat(),
+                completed_at=old.isoformat(),
+            ))
+            save_run_summary("fresh", self._summary())
+            with patch('core.activity._get_activity_retention_hours', return_value=24):
+                summaries = load_run_summaries()
+
+        assert "ancient" not in summaries
+        assert "fresh" in summaries
+
+    def test_legacy_migration(self, tmp_path):
+        legacy_file = tmp_path / "last_run_summary.json"
+        new_file = tmp_path / "run_summaries.json"
+        legacy_payload = {
+            "status": "completed",
+            "timestamp": datetime.now().isoformat(),
+            "files_cached": 7,
+            "duration_seconds": 42.0,
+        }
+        legacy_file.write_text(json.dumps(legacy_payload, indent=2))
+
+        with patch.multiple(
+            'core.activity',
+            RUN_SUMMARIES_FILE=new_file,
+            _LEGACY_RUN_SUMMARY_FILE=legacy_file,
+        ):
+            summaries = load_run_summaries()
+
+        assert len(summaries) == 1
+        only_entry = next(iter(summaries.values()))
+        assert only_entry["files_cached"] == 7
+        assert only_entry["run_source"] == "legacy"
+        # Legacy file removed after migration
+        assert not legacy_file.exists()
+
     def test_missing_file_returns_none(self, tmp_path):
-        f = tmp_path / "nope.json"
-
-        with patch('core.activity.LAST_RUN_SUMMARY_FILE', f):
-            result = load_last_run_summary()
-
-        assert result is None
+        with self._patch_files(tmp_path):
+            assert load_last_run_summary() is None
 
     def test_malformed_json_returns_none(self, tmp_path):
-        f = tmp_path / "summary.json"
+        f = tmp_path / "run_summaries.json"
         f.write_text("{ not valid }")
-
-        with patch('core.activity.LAST_RUN_SUMMARY_FILE', f):
-            result = load_last_run_summary()
-
-        assert result is None
+        with self._patch_files(tmp_path):
+            assert load_last_run_summary() is None
 
 
 # ============================================================================

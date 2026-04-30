@@ -11,6 +11,7 @@ import logging
 import re
 import shutil
 import subprocess
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
@@ -92,6 +93,9 @@ class PlexCacheApp:
         self._stop_requested = False
         # Docker mount validation result (False = unsafe, blocks file moves)
         self._mount_paths_safe = True
+        # Run ID — minted at run start, written into the log header so
+        # `_parse_external_log` can recover it for the dashboard's run-grouped view.
+        self._run_id: Optional[str] = None
 
     def _record_file_activity(self, action: str, filename: str, size_bytes: int) -> None:
         """Record a file operation to the shared activity feed (CLI runs only).
@@ -101,7 +105,13 @@ class PlexCacheApp:
         handles activity recording via log parsing instead).
         """
         from core.activity import record_file_activity
-        record_file_activity(action=action, filename=filename, size_bytes=size_bytes)
+        record_file_activity(
+            action=action,
+            filename=filename,
+            size_bytes=size_bytes,
+            run_id=self._run_id,
+            run_source="cli",
+        )
 
     def request_stop(self) -> None:
         """Request the operation to stop gracefully after current file."""
@@ -362,9 +372,13 @@ class PlexCacheApp:
         )
         self.logging_manager.setup_logging()
         logging.info("")
+        # Mint a stable run_id and write it into the header so the web
+        # dashboard's external-log parser can attach it to per-file entries
+        # for the run-grouped Recent Activity view.
+        self._run_id = uuid.uuid4().hex
         # Log version and build info for debugging
         build_commit = os.environ.get('GIT_COMMIT', 'dev')
-        logging.info(f"=== PlexCache-D v{__version__} (build: {build_commit}) ===")
+        logging.info(f"=== PlexCache-D v{__version__} (build: {build_commit}) run_id={self._run_id} ===")
         # Log file ownership configuration (PUID/PGID)
         self.file_utils.log_ownership_config()
 
@@ -2912,17 +2926,19 @@ class PlexCacheApp:
         # Save last run time and summary to shared activity files
         # so the Web UI dashboard reflects CLI-triggered runs too.
         # Skip in dry-run mode (no real files were moved).
-        if not self.dry_run and self._record_activity:
+        if not self.dry_run and self._record_activity and self._run_id:
             from core.activity import save_last_run_time, save_run_summary
             save_last_run_time()
-            save_run_summary({
+            save_run_summary(self._run_id, {
+                "run_source": "cli",
                 "status": "completed",
-                "timestamp": datetime.now().isoformat(),
+                "started_at": datetime.fromtimestamp(self.start_time).isoformat(),
+                "completed_at": datetime.now().isoformat(),
+                "duration_seconds": round(execution_time_seconds, 1),
                 "files_cached": cached_count,
                 "files_restored": restored_count,
                 "bytes_cached": cached_bytes,
                 "bytes_restored": restored_bytes,
-                "duration_seconds": round(execution_time_seconds, 1),
                 "error_count": 0,
                 "dry_run": False,
             })

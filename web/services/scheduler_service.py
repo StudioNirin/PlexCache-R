@@ -220,7 +220,7 @@ class SchedulerService:
         dry_run = self._config.dry_run if self._config else False
         verbose = self._config.verbose if self._config else False
 
-        runner.start_operation(dry_run=dry_run, verbose=verbose)
+        runner.start_operation(dry_run=dry_run, verbose=verbose, source="scheduled")
         # Note: last_run.txt is updated by operation_runner when operation completes
 
     def _apply_schedule(self):

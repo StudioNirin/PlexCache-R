@@ -169,18 +169,21 @@ def get_status(request: Request):
 
 @router.get("/activity")
 def get_recent_activity(request: Request):
-    """Get recent file activity from operations"""
+    """Get recent file activity from operations, bucketed by run."""
     from web.services import get_settings_service
+    from web.services.activity_grouping import group_activity_into_runs
 
     runner = get_operation_runner()
     activity = runner.recent_activity
+    runs = group_activity_into_runs(activity)
 
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
         from web.services import get_cache_service
         context = {
-            "activity": activity,
+            "runs": runs,
+            "activity": activity,  # kept for empty-state branches
             "user_types": get_cache_service().get_user_types(),
         }
         # Pass extra context when activity is empty for contextual empty states
@@ -195,4 +198,4 @@ def get_recent_activity(request: Request):
             context
         )
 
-    return JSONResponse({"activity": activity})
+    return JSONResponse({"activity": activity, "runs": runs})

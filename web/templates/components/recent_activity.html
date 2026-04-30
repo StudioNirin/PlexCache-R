@@ -1,54 +1,138 @@
-<!-- Recent Activity component - HTMX partial (grouped by date) -->
+<!-- Recent Activity component - HTMX partial (run-grouped Option D layout) -->
 {% from "macros/associated_files.html" import af_expand_badge, af_expand_rows, af_expand_onclick %}
 {% from "macros/user_badge.html" import user_badge %}
-{% if activity %}
-{% for group in activity|groupby('date_key')|reverse %}
-<tr class="date-group-header" data-date-group="{{ group.grouper }}">
+
+{% macro action_badge(action) -%}
+{%- if action in ('Cached', 'Protected', 'Fixed') -%}
+<span class="badge badge-success">{{ action }}</span>
+{%- elif action in ('Restored', 'Moved to Array', 'Restored Backup') -%}
+<span class="badge badge-info">{{ action }}</span>
+{%- elif action == 'Deleted Backup' -%}
+<span class="badge badge-warning">{{ action }}</span>
+{%- else -%}
+<span class="badge badge-muted">{{ action }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro source_icon(source) -%}
+{%- if source == 'scheduled' -%}<i data-lucide="clock" class="run-source-ic"></i>
+{%- elif source == 'web' -%}<i data-lucide="monitor" class="run-source-ic"></i>
+{%- elif source == 'cli' -%}<i data-lucide="terminal" class="run-source-ic"></i>
+{%- elif source == 'maintenance' -%}<i data-lucide="wrench" class="run-source-ic"></i>
+{%- else -%}<i data-lucide="history" class="run-source-ic"></i>
+{%- endif -%}
+{%- endmacro %}
+
+{% if runs %}
+{% set ns = namespace(last_date_key=None) %}
+{% for run in runs %}
+{% set is_newest = loop.first %}
+
+{% if run.date_key != ns.last_date_key %}
+<tr class="date-group-header" data-date-group="{{ run.date_key }}">
     <td colspan="5">
         <div class="date-group-inner">
             <span class="date-group-label">
                 <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                {{ group.list[0].date_display }}
+                {{ run.date_display }}
             </span>
-            <span class="date-group-count">{{ group.list|length }} action{{ 's' if group.list|length != 1 else '' }}</span>
             <span class="date-group-line"></span>
         </div>
     </td>
 </tr>
-{% for item in group.list %}
-<tr data-action="{{ item.action }}" data-date-group="{{ item.date_key }}"{% if item.associated_files %} class="af-parent" {{ af_expand_onclick() }}{% endif %}>
-    <td>{{ item.time_display }}</td>
-    <td>
-        {% if item.action in ('Cached', 'Protected', 'Fixed') %}
-        <span class="badge badge-success">{{ item.action }}</span>
-        {% elif item.action in ('Restored', 'Moved to Array', 'Restored Backup') %}
-        <span class="badge badge-info">{{ item.action }}</span>
-        {% elif item.action == 'Deleted Backup' %}
-        <span class="badge badge-warning">{{ item.action }}</span>
+{% set ns.last_date_key = run.date_key %}
+{% endif %}
+
+<tr class="run-expandable-header{% if is_newest %} is-open{% endif %}"
+    data-run-id="{{ run.run_id }}"
+    data-run-source="{{ run.run_source }}"
+    data-files-cached="{{ run.files_cached }}"
+    data-files-restored="{{ run.files_restored }}"
+    onclick="ActivityRuns.toggleRun(this)">
+    <td colspan="5">
+        <div class="run-expandable-inner">
+            <span class="run-expandable-chev{% if is_newest %} open{% endif %}">&#8250;</span>
+            <span class="run-expandable-title">
+                {{ source_icon(run.run_source) }}
+                {{ run.label }}
+            </span>
+            <span class="run-expandable-meta">{{ run.time_range }}{% if run.duration_display %} &middot; {{ run.duration_display }}{% endif %}</span>
+            <span class="run-expandable-stats">
+                {% if run.files_cached > 0 %}
+                <span class="run-stat-pill run-stat-pill--cached" data-stat="Cached">{{ run.files_cached }} cached</span>
+                {% endif %}
+                {% if run.files_restored > 0 %}
+                <span class="run-stat-pill run-stat-pill--restored" data-stat="Restored">{{ run.files_restored }} restored</span>
+                {% endif %}
+                {% if run.bytes_total_display %}
+                <span class="run-stat-pill run-stat-pill--size">{{ run.bytes_total_display }}</span>
+                {% endif %}
+            </span>
+        </div>
+    </td>
+</tr>
+
+{% for entry in run.entries %}
+{% if entry.is_group %}
+{% set show_id = run.run_id ~ '-show-' ~ loop.index %}
+<tr class="run-row run-show-parent{% if is_newest %} is-visible{% endif %}"
+    data-run-member="{{ run.run_id }}"
+    data-show-id="{{ show_id }}"
+    data-action="{{ entry.action }}"
+    onclick="ActivityRuns.toggleShow(this)">
+    <td>{{ entry.time_display }}</td>
+    <td>{{ action_badge(entry.action) }}</td>
+    <td class="text-muted activity-file-col">
+        <span class="chev">&#8250;</span>{{ entry.show_name }}
+        <span class="badge badge-group badge-sm">{{ entry.episode_count }} eps</span>
+    </td>
+    <td class="user-badges">
+        {% if entry.users and entry.users|length > 0 %}
+            {% for user in entry.users[:3] %}{{ user_badge(user, user_types, classes='badge-sm') }}{% endfor %}
+            {% if entry.users|length > 3 %}<span class="badge badge-muted badge-sm">+{{ entry.users|length - 3 }}</span>{% endif %}
         {% else %}
-        <span class="badge badge-muted">{{ item.action }}</span>
+        <span class="text-muted">-</span>
         {% endif %}
     </td>
-    <td class="text-muted activity-file-col" title="{{ item.filename }}">{{ item.filename }}</td>
+    <td>{{ entry.size }}</td>
+</tr>
+{% for ep in entry.episodes %}
+<tr class="run-row run-show-child"
+    data-run-member="{{ run.run_id }}"
+    data-show-child="{{ show_id }}"
+    data-action="{{ entry.action }}">
+    <td class="text-muted" style="font-variant-numeric: tabular-nums;">{{ ep.time_display }}</td>
+    <td></td>
+    <td class="associated-sub-file" title="{{ ep.filename }}"><span class="associated-sub-arrow">&#8627;</span> {{ ep.filename }}</td>
+    <td></td>
+    <td class="associated-sub-size">{{ ep.size if ep.size else '-' }}</td>
+</tr>
+{% endfor %}
+{% else %}
+<tr class="run-row{% if is_newest %} is-visible{% endif %}{% if entry.associated_files %} af-parent{% endif %}"
+    data-run-member="{{ run.run_id }}"
+    data-action="{{ entry.action }}"
+    {% if entry.associated_files %}{{ af_expand_onclick() }}{% endif %}>
+    <td>{{ entry.time_display }}</td>
+    <td>{{ action_badge(entry.action) }}</td>
+    <td class="text-muted activity-file-col" title="{{ entry.filename }}">{{ entry.filename }}</td>
     <td class="user-badges">
-        {% if item.users and item.users|length > 0 %}
-            {% for user in item.users[:3] %}
-            {{ user_badge(user, user_types, classes='badge-sm') }}
-            {% endfor %}
-            {% if item.users|length > 3 %}
-            <span class="badge badge-muted badge-sm">+{{ item.users|length - 3 }}</span>
-            {% endif %}
+        {% if entry.users and entry.users|length > 0 %}
+            {% for user in entry.users[:3] %}{{ user_badge(user, user_types, classes='badge-sm') }}{% endfor %}
+            {% if entry.users|length > 3 %}<span class="badge badge-muted badge-sm">+{{ entry.users|length - 3 }}</span>{% endif %}
         {% else %}
         <span class="text-muted">-</span>
         {% endif %}
     </td>
     <td>
-        {{ item.size }}
-        {{ af_expand_badge(item.associated_files) }}
+        {{ entry.size }}
+        {{ af_expand_badge(entry.associated_files) }}
     </td>
 </tr>
-{{ af_expand_rows(item.associated_files, {"data-action": item.action, "data-date-group": item.date_key}) }}
+{{ af_expand_rows(entry.associated_files, {"data-run-member": run.run_id, "data-action": entry.action}) }}
+{% endif %}
 {% endfor %}
+
 {% endfor %}
 {% else %}
 <tr>

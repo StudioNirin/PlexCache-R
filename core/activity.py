@@ -1,18 +1,19 @@
-"""Shared activity writer — CLI and Web UI both write here.
+"""Shared activity writer — CLI, Web UI, and Maintenance all write here.
 
 Provides file activity recording, last-run timestamps, and run summaries
 that the Web UI dashboard reads. This module has NO web framework imports
 so it can be used from core/app.py (CLI path) as well as from the web layer.
 
-Both CLI runs and web-triggered runs write to the same files:
+All run paths write to the same files:
   - data/recent_activity.json   (per-file activity feed)
   - data/last_run.txt           (last run timestamp)
-  - data/last_run_summary.json  (run statistics)
+  - data/run_summaries.json     (run statistics keyed by run_id)
 """
 
 import json
 import logging
 import os
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -55,14 +56,21 @@ SETTINGS_FILE = _get_settings_file()
 # File paths
 ACTIVITY_FILE = DATA_DIR / "recent_activity.json"
 LAST_RUN_FILE = DATA_DIR / "last_run.txt"
-LAST_RUN_SUMMARY_FILE = DATA_DIR / "last_run_summary.json"
+RUN_SUMMARIES_FILE = DATA_DIR / "run_summaries.json"
+# Legacy single-dict file; migrated into RUN_SUMMARIES_FILE on first load.
+_LEGACY_RUN_SUMMARY_FILE = DATA_DIR / "last_run_summary.json"
 
 # Defaults
 DEFAULT_ACTIVITY_RETENTION_HOURS = 24
 MAX_RECENT_ACTIVITY = 500
 
-# Thread lock for concurrent access to activity file
+# Run sources excluded from load_last_run_summary() so the dashboard's
+# "PlexCache last run" widget reflects caching runs, not maintenance.
+_LAST_RUN_DEFAULT_SOURCES = ("cli", "web", "scheduled")
+
+# Thread locks
 _activity_file_lock = threading.Lock()
+_run_summaries_lock = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +118,11 @@ class FileActivity:
     size_bytes: int = 0
     users: List[str] = field(default_factory=list)
     associated_files: List[dict] = field(default_factory=list)
+    # Run grouping metadata (added 2026-04 for run-grouped Recent Activity view).
+    # Pre-existing entries on disk lack these fields; loader defaults run_id=None
+    # (treated as legacy, bucketed by 15-min time windows by activity_grouping).
+    run_id: Optional[str] = None
+    run_source: str = "legacy"  # "scheduled" | "web" | "cli" | "maintenance" | "legacy"
 
     def to_dict(self) -> dict:
         fmt = get_time_format()
@@ -136,7 +149,10 @@ class FileActivity:
             "action": self.action,
             "filename": self.filename,
             "size": self._format_size(self.size_bytes),
+            "size_bytes": self.size_bytes,
             "users": self.users,
+            "run_id": self.run_id,
+            "run_source": self.run_source,
         }
         if self.associated_files:
             result["associated_files"] = self.associated_files
@@ -176,7 +192,9 @@ def _load_activity_unlocked() -> List[FileActivity]:
                         filename=item['filename'],
                         size_bytes=item.get('size_bytes', 0),
                         users=item.get('users', []),
-                        associated_files=item.get('associated_files', [])
+                        associated_files=item.get('associated_files', []),
+                        run_id=item.get('run_id'),
+                        run_source=item.get('run_source', 'legacy'),
                     ))
             except (KeyError, ValueError):
                 continue  # Skip malformed entries
@@ -211,6 +229,10 @@ def _save_activity_unlocked(activities: List[FileActivity]) -> None:
                 }
                 if activity.associated_files:
                     entry['associated_files'] = activity.associated_files
+                if activity.run_id:
+                    entry['run_id'] = activity.run_id
+                if activity.run_source and activity.run_source != "legacy":
+                    entry['run_source'] = activity.run_source
                 data.append(entry)
 
         save_json_atomically(str(ACTIVITY_FILE), data, label="activity")
@@ -241,6 +263,8 @@ def record_file_activity(
     size_bytes: int = 0,
     users: Optional[List[str]] = None,
     associated_files: Optional[List[dict]] = None,
+    run_id: Optional[str] = None,
+    run_source: str = "legacy",
 ) -> None:
     """Record a single file activity entry using load-merge-save pattern.
 
@@ -254,12 +278,103 @@ def record_file_activity(
         size_bytes=size_bytes,
         users=users or [],
         associated_files=associated_files or [],
+        run_id=run_id,
+        run_source=run_source,
     )
     with _activity_file_lock:
         activities = _load_activity_unlocked()
         activities.insert(0, entry)
         activities = activities[:MAX_RECENT_ACTIVITY]
         _save_activity_unlocked(activities)
+
+
+# ---------------------------------------------------------------------------
+# Show-episode grouping (shared by completion banner + dashboard)
+# ---------------------------------------------------------------------------
+
+# Matches "<show> - S##E##" — the Sonarr/Plex TV naming convention.
+# Non-TV files (movies, specials without episode numbering) don't match
+# and pass through as singletons.
+_SHOW_EPISODE_PATTERN = re.compile(r'^(.+?) - S\d+E\d+', re.IGNORECASE)
+
+
+def group_episodes_by_show(files: List[dict]) -> List[dict]:
+    """Collapse multi-episode TV runs into a single parent row per show.
+
+    Movies and shows with only one episode in the payload stay as
+    individual rows (grouping a single entry offers no compression).
+    Preserves first-seen order so re-renders don't reshuffle.
+
+    Used by both the completion banner (`OperationRunner`) and the
+    Recent Activity grouping service (`web/services/activity_grouping.py`).
+    """
+    groups: dict = {}
+    order: list = []
+
+    for idx, f in enumerate(files):
+        match = _SHOW_EPISODE_PATTERN.match(f.get("filename", ""))
+        if match:
+            show_name = match.group(1).strip()
+            key = (f.get("action", ""), show_name)
+            if key not in groups:
+                groups[key] = {
+                    "action": f.get("action", ""),
+                    "show_name": show_name,
+                    "episodes": [],
+                    "total_bytes": 0,
+                }
+                order.append(key)
+            # Preserve per-episode metadata the dashboard renders (time, users)
+            # in addition to the fields the completion banner consumes.
+            groups[key]["episodes"].append({
+                "filename": f.get("filename", ""),
+                "size": f.get("size", ""),
+                "size_bytes": f.get("size_bytes", 0),
+                "associated_files": f.get("associated_files", []),
+                "timestamp": f.get("timestamp", ""),
+                "time_display": f.get("time_display", ""),
+                "users": f.get("users", []),
+            })
+            groups[key]["total_bytes"] += f.get("size_bytes", 0)
+        else:
+            key = ("__singleton__", idx)
+            groups[key] = f
+            order.append(key)
+
+    result: List[dict] = []
+    for key in order:
+        entry = groups[key]
+        if key[0] == "__singleton__":
+            result.append(entry)
+        elif len(entry["episodes"]) == 1:
+            ep = entry["episodes"][0]
+            result.append({
+                "action": entry["action"],
+                "filename": ep["filename"],
+                "size": ep.get("size", ""),
+                "size_bytes": ep.get("size_bytes", 0),
+                "associated_files": ep.get("associated_files", []),
+                "timestamp": ep.get("timestamp", ""),
+                "time_display": ep.get("time_display", ""),
+                "users": ep.get("users", []),
+            })
+        else:
+            # Use the newest episode's time as the group's representative time
+            # (episodes arrive newest-first when called from the dashboard path).
+            head_ep = entry["episodes"][0]
+            result.append({
+                "action": entry["action"],
+                "is_group": True,
+                "show_name": entry["show_name"],
+                "episode_count": len(entry["episodes"]),
+                "episodes": entry["episodes"],
+                "size_bytes": entry["total_bytes"],
+                "size": format_bytes(entry["total_bytes"]) if entry["total_bytes"] > 0 else "",
+                "time_display": head_ep.get("time_display", ""),
+                "users": head_ep.get("users", []),
+            })
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -277,24 +392,124 @@ def save_last_run_time() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Run summary
+# Run summaries (keyed by run_id, pruned by activity_retention_hours)
 # ---------------------------------------------------------------------------
 
-def load_last_run_summary() -> Optional[dict]:
-    """Load the last run summary from disk."""
+def _migrate_legacy_run_summary_unlocked(summaries: dict) -> dict:
+    """One-shot migration: fold old single-dict last_run_summary.json into the
+    new keyed-dict file. Idempotent — only runs when the legacy file exists
+    and the new file is empty/missing the same entry. Caller must hold
+    _run_summaries_lock.
+    """
+    if not _LEGACY_RUN_SUMMARY_FILE.exists():
+        return summaries
     try:
-        if LAST_RUN_SUMMARY_FILE.exists():
-            with open(LAST_RUN_SUMMARY_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+        with open(_LEGACY_RUN_SUMMARY_FILE, 'r', encoding='utf-8') as f:
+            old = json.load(f)
+        if not isinstance(old, dict):
+            _LEGACY_RUN_SUMMARY_FILE.unlink(missing_ok=True)
+            return summaries
+        run_id = old.get("run_id") or f"legacy-{old.get('timestamp', datetime.now().isoformat())}"
+        if run_id not in summaries:
+            entry = dict(old)
+            entry.setdefault("run_id", run_id)
+            entry.setdefault("run_source", "legacy")
+            # Old shape stored the completion timestamp as "timestamp"; map
+            # it to completed_at so downstream consumers see a uniform schema.
+            if "completed_at" not in entry and "timestamp" in entry:
+                entry["completed_at"] = entry["timestamp"]
+            entry.setdefault("started_at", entry.get("completed_at", datetime.now().isoformat()))
+            summaries[run_id] = entry
+        _LEGACY_RUN_SUMMARY_FILE.unlink(missing_ok=True)
+        logger.info("Migrated legacy last_run_summary.json into run_summaries.json")
+    except (json.JSONDecodeError, IOError, OSError) as e:
+        logger.debug(f"Legacy run-summary migration skipped: {e}")
+    return summaries
+
+
+def _prune_summaries(summaries: dict) -> dict:
+    """Drop entries older than activity_retention_hours, keyed by started_at."""
+    cutoff = datetime.now() - timedelta(hours=_get_activity_retention_hours())
+    pruned = {}
+    for run_id, entry in summaries.items():
+        ts_str = entry.get("started_at") or entry.get("completed_at")
+        if not ts_str:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str)
+        except ValueError:
+            continue
+        if ts > cutoff:
+            pruned[run_id] = entry
+    return pruned
+
+
+def _load_run_summaries_unlocked() -> dict:
+    """Load run summaries dict from disk, migrate legacy file, prune. Caller
+    must hold _run_summaries_lock.
+    """
+    summaries: dict = {}
+    try:
+        if RUN_SUMMARIES_FILE.exists():
+            with open(RUN_SUMMARIES_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    summaries = data
     except (json.JSONDecodeError, IOError):
-        pass
-    return None
+        summaries = {}
+    summaries = _migrate_legacy_run_summary_unlocked(summaries)
+    return _prune_summaries(summaries)
 
 
-def save_run_summary(summary: dict) -> None:
-    """Save a run summary to disk atomically."""
+def load_run_summaries() -> dict:
+    """All run summaries keyed by run_id, pruned by retention setting."""
+    with _run_summaries_lock:
+        return _load_run_summaries_unlocked()
+
+
+def load_run_summary(run_id: str) -> Optional[dict]:
+    """One run summary by id, or None if not found / pruned."""
+    return load_run_summaries().get(run_id)
+
+
+def save_run_summary(run_id: str, summary: dict) -> None:
+    """Persist a run summary keyed by run_id. Load-merge-save under a lock so
+    concurrent writers (CLI, web/scheduled, maintenance) don't clobber.
+    """
+    if not run_id:
+        logger.debug("save_run_summary called with empty run_id; ignoring")
+        return
     try:
-        LAST_RUN_SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        save_json_atomically(str(LAST_RUN_SUMMARY_FILE), summary, label="last run summary")
+        with _run_summaries_lock:
+            summaries = _load_run_summaries_unlocked()
+            entry = dict(summary)
+            entry["run_id"] = run_id
+            summaries[run_id] = entry
+            summaries = _prune_summaries(summaries)
+            RUN_SUMMARIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+            save_json_atomically(str(RUN_SUMMARIES_FILE), summaries, label="run summaries")
     except IOError:
         pass
+
+
+def load_last_run_summary(run_sources: Optional[tuple] = None) -> Optional[dict]:
+    """Most-recent run summary by started_at. Backward-compat wrapper for the
+    dashboard's "Last Run Summary" widget — defaults to caching runs only
+    (cli/web/scheduled), excluding maintenance so the widget keeps its
+    semantic meaning.
+    """
+    sources = run_sources if run_sources is not None else _LAST_RUN_DEFAULT_SOURCES
+    summaries = load_run_summaries()
+    if not summaries:
+        return None
+    candidates = [
+        entry for entry in summaries.values()
+        if not sources or entry.get("run_source") in sources
+    ]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda e: e.get("started_at") or e.get("completed_at") or "",
+        reverse=True,
+    )
+    return candidates[0]

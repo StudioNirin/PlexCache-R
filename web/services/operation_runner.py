@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -27,10 +28,11 @@ from core.activity import (
     load_last_run_summary,
     save_run_summary,
     record_file_activity,
+    group_episodes_by_show,
     MAX_RECENT_ACTIVITY,
     ACTIVITY_FILE,
     LAST_RUN_FILE,
-    LAST_RUN_SUMMARY_FILE,
+    RUN_SUMMARIES_FILE,
     _activity_file_lock,
     _load_activity_unlocked,
     _save_activity_unlocked,
@@ -122,6 +124,10 @@ class OperationRunner:
         self._stop_requested = False  # Flag to signal operation should stop
         self._app_instance: Optional["PlexCacheApp"] = None  # Reference to running app
         self._current_run_files: List[dict] = []  # Files processed in current run only
+        # Run grouping: minted at start_operation(), attached to every FileActivity
+        # so the dashboard's run-grouped Recent Activity view can bucket entries.
+        self._run_id: Optional[str] = None
+        self._run_source: str = "web"  # "web" | "scheduled"
         # Track current operation type based on headers
         self._current_operation: Optional[str] = None
         # Patterns to match file operation headers and content
@@ -528,7 +534,7 @@ class OperationRunner:
             "error_count": log_state["error_count"],
             "error_messages": log_state["error_messages"][:5],
             "was_stopped": False,
-            "recent_files": self._group_episodes_by_show(log_state["recent_files"])[:15],
+            "recent_files": group_episodes_by_show(log_state["recent_files"])[:15],
             "message": message,
         }
 
@@ -625,20 +631,22 @@ class OperationRunner:
     def _save_last_run_summary(self):
         """Save a summary of the completed operation to disk."""
         result = self._current_result
-        if not result:
+        if not result or not self._run_id:
             return
         summary = {
+            "run_source": self._run_source,
             "status": result.state.value,
-            "timestamp": datetime.now().isoformat(),
+            "started_at": result.started_at.isoformat() if result.started_at else datetime.now().isoformat(),
+            "completed_at": result.completed_at.isoformat() if result.completed_at else datetime.now().isoformat(),
+            "duration_seconds": round(result.duration_seconds, 1),
             "files_cached": result.files_cached,
             "files_restored": result.files_restored,
             "bytes_cached": result.bytes_cached,
             "bytes_restored": result.bytes_restored,
-            "duration_seconds": round(result.duration_seconds, 1),
             "error_count": result.error_count,
             "dry_run": result.dry_run,
         }
-        save_run_summary(summary)
+        save_run_summary(self._run_id, summary)
 
     @property
     def state(self) -> OperationState:
@@ -818,7 +826,9 @@ class OperationRunner:
                 action=action,
                 filename=filename,
                 size_bytes=size_bytes,
-                users=users
+                users=users,
+                run_id=self._run_id,
+                run_source=self._run_source,
             )
             with self._lock:
                 self._recent_activity.insert(0, activity)
@@ -880,13 +890,16 @@ class OperationRunner:
             if queue in self._subscribers:
                 self._subscribers.remove(queue)
 
-    def start_operation(self, dry_run: bool = False, verbose: bool = False) -> bool:
+    def start_operation(self, dry_run: bool = False, verbose: bool = False, source: str = "web") -> bool:
         """
         Start a PlexCache operation in a background thread.
 
         Args:
             dry_run: If True, simulate without moving files
             verbose: If True, enable DEBUG level logging
+            source: Trigger origin for run grouping — "web" (manual UI button) or
+                    "scheduled" (APScheduler). Stored on every FileActivity for
+                    the dashboard's run-grouped Recent Activity view.
 
         Returns:
             True if operation started, False if already running or maintenance is running
@@ -912,6 +925,10 @@ class OperationRunner:
             self._stop_requested = False  # Reset stop flag for new operation
             self._app_instance = None  # Clear previous app reference
             self._current_run_files = []  # Reset per-run file list
+            # Mint a run_id for this operation; every FileActivity emitted from
+            # the log-parser path will carry it so the dashboard can group them.
+            self._run_id = uuid.uuid4().hex
+            self._run_source = source
             # Activity stacks across runs (not cleared) - capped at _max_recent_activity
             self._current_operation = None
             self._current_result = OperationResult(
@@ -1218,72 +1235,9 @@ class OperationRunner:
         if merged_indices:
             self._current_run_files = [f for i, f in enumerate(self._current_run_files) if i not in merged_indices]
 
-    # Matches "<show> - S##E##" — the Sonarr/Plex TV naming convention.
-    # Non-TV files (movies, specials without episode numbering) don't match
-    # and pass through as singletons.
-    _SHOW_EPISODE_PATTERN = re.compile(r'^(.+?) - S\d+E\d+', re.IGNORECASE)
-
-    def _group_episodes_by_show(self, files: List[dict]) -> List[dict]:
-        """Collapse multi-episode TV runs into a single parent row per show.
-
-        Movies and shows with only one episode in the payload stay as
-        individual rows (grouping a single entry offers no compression).
-        Preserves first-seen order so the banner doesn't reshuffle on re-render.
-        """
-        groups: Dict[tuple, dict] = {}
-        order: List[tuple] = []
-
-        for idx, f in enumerate(files):
-            match = self._SHOW_EPISODE_PATTERN.match(f.get("filename", ""))
-            if match:
-                show_name = match.group(1).strip()
-                key = (f.get("action", ""), show_name)
-                if key not in groups:
-                    groups[key] = {
-                        "action": f.get("action", ""),
-                        "show_name": show_name,
-                        "episodes": [],
-                        "total_bytes": 0,
-                    }
-                    order.append(key)
-                groups[key]["episodes"].append({
-                    "filename": f.get("filename", ""),
-                    "size": f.get("size", ""),
-                    "size_bytes": f.get("size_bytes", 0),
-                    "associated_files": f.get("associated_files", []),
-                })
-                groups[key]["total_bytes"] += f.get("size_bytes", 0)
-            else:
-                key = ("__singleton__", idx)
-                groups[key] = f
-                order.append(key)
-
-        result: List[dict] = []
-        for key in order:
-            entry = groups[key]
-            if key[0] == "__singleton__":
-                result.append(entry)
-            elif len(entry["episodes"]) == 1:
-                ep = entry["episodes"][0]
-                result.append({
-                    "action": entry["action"],
-                    "filename": ep["filename"],
-                    "size": ep.get("size", ""),
-                    "size_bytes": ep.get("size_bytes", 0),
-                    "associated_files": ep.get("associated_files", []),
-                })
-            else:
-                result.append({
-                    "action": entry["action"],
-                    "is_group": True,
-                    "show_name": entry["show_name"],
-                    "episode_count": len(entry["episodes"]),
-                    "episodes": entry["episodes"],
-                    "size_bytes": entry["total_bytes"],
-                    "size": self._format_bytes(entry["total_bytes"]) if entry["total_bytes"] > 0 else "",
-                })
-
-        return result
+    # Show-episode grouping helper lives in core.activity (shared with the
+    # Recent Activity dashboard grouping service). Imported as
+    # `group_episodes_by_show` at the top of this module.
 
     def get_status_dict(self) -> dict:
         """Get status as a dictionary for API responses"""
@@ -1432,7 +1386,7 @@ class OperationRunner:
             # Files processed in this run, grouped by show to compress TV runs.
             # Cap at 15 groups so long runs stay readable; overflow links to Recent Activity.
             with self._lock:
-                grouped = self._group_episodes_by_show(list(self._current_run_files))
+                grouped = group_episodes_by_show(list(self._current_run_files))
                 status["recent_files"] = grouped[:15]
 
             if self._stop_requested:

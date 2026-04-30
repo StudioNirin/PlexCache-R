@@ -201,6 +201,18 @@ footer {
 }
 
 /* Activity table column tweaks */
+/* Fixed layout pins column widths via <colgroup> so expanding a run-row
+   doesn't shift column boundaries based on the newly visible filenames. */
+.recent-activity-table {
+    table-layout: fixed;
+    width: 100%;
+}
+.activity-col-time   { width: 130px; }
+.activity-col-action { width: 130px; }
+.activity-col-file   { width: auto; }
+.activity-col-users  { width: 130px; }
+.activity-col-size   { width: 110px; }
+
 .activity-file-col {
     word-break: break-word;
     white-space: normal;
@@ -1258,4 +1270,134 @@ footer {
 
 [data-theme="light"] .activity-filter-pill.active {
     color: #000;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Recent Activity — run-grouped view (Option D)
+   Run header is clickable; member rows hide unless `.is-visible`.
+   Show-group children hide unless `.is-visible`. Movie sidecars keep
+   the existing `.af-parent` / `.af-visible` pattern.
+   ───────────────────────────────────────────────────────────────────── */
+.run-expandable-header {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.run-expandable-header:hover td {
+    background: color-mix(in srgb, var(--plex-purple) 8%, transparent);
+}
+.run-expandable-header td {
+    padding: 0.7rem 0.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--plex-purple) 18%, transparent);
+}
+.run-expandable-inner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.run-expandable-chev {
+    color: color-mix(in srgb, var(--plex-purple) 75%, transparent);
+    font-size: 1rem;
+    line-height: 1;
+    width: 1rem;
+    text-align: center;
+    transition: transform 0.15s;
+}
+.run-expandable-chev.open { transform: rotate(90deg); }
+.run-expandable-title {
+    color: color-mix(in srgb, var(--plex-purple) 95%, transparent);
+    font-weight: 500;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.run-source-ic {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2;
+}
+.run-expandable-meta {
+    color: var(--plex-text-light);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+.run-expandable-stats {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Run-header stat pills */
+.run-stat-pill {
+    padding: 0.18rem 0.55rem;
+    border-radius: var(--plex-radius-xs);
+    font-size: 0.7rem;
+    font-weight: 500;
+    transition: opacity 0.15s;
+}
+.run-stat-pill--cached {
+    background: color-mix(in srgb, var(--plex-success) 15%, transparent);
+    color: var(--plex-success);
+}
+.run-stat-pill--restored {
+    background: color-mix(in srgb, var(--plex-info) 15%, transparent);
+    color: var(--plex-info);
+}
+.run-stat-pill--size {
+    background: var(--plex-bg-hover);
+    color: var(--plex-text-light);
+    font-variant-numeric: tabular-nums;
+}
+/* Dim a stat pill when its action is filtered out (set by JS) */
+.run-stat-pill.is-dimmed {
+    opacity: 0.4;
+}
+
+/* Run member rows — hidden until parent header is open */
+.run-row { display: none; }
+.run-row.is-visible { display: table-row; }
+
+/* Show-group children — separately collapsible, hidden by default */
+.run-show-child { display: none; }
+.run-show-child.is-visible { display: table-row; }
+.run-show-parent {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.run-show-parent:hover td {
+    background: color-mix(in srgb, var(--plex-text) 4%, transparent);
+}
+.run-show-parent .chev {
+    display: inline-block;
+    margin-right: 0.3rem;
+    color: var(--plex-text-muted);
+    font-size: 0.85rem;
+    transition: transform 0.15s;
+}
+.run-show-parent.is-open .chev { transform: rotate(90deg); }
+
+/* Show-group "N eps" badge */
+.badge-group {
+    background: color-mix(in srgb, var(--plex-purple) 18%, transparent);
+    color: var(--plex-purple);
+}
+
+/* Light theme: lower-contrast hover backgrounds */
+[data-theme="light"] .run-expandable-header:hover td {
+    background: color-mix(in srgb, var(--plex-purple) 6%, transparent);
+}
+[data-theme="light"] .run-show-parent:hover td {
+    background: rgba(0, 0, 0, 0.025);
+}
+
+/* Pinned chip — pending unpin (debounce window) */
+.pinned-row-pending-unpin {
+    opacity: 0.45;
+    text-decoration: line-through;
+    text-decoration-color: var(--plex-text-muted);
+    transition: opacity 150ms ease;
+}
+.pinned-row-pending-unpin .pinned-unpin-btn {
+    cursor: default;
 }
