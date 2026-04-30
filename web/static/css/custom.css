@@ -1390,3 +1390,14 @@ footer {
 [data-theme="light"] .run-show-parent:hover td {
     background: rgba(0, 0, 0, 0.025);
 }
+
+/* Pinned chip — pending unpin (debounce window) */
+.pinned-row-pending-unpin {
+    opacity: 0.45;
+    text-decoration: line-through;
+    text-decoration-color: var(--plex-text-muted);
+    transition: opacity 150ms ease;
+}
+.pinned-row-pending-unpin .pinned-unpin-btn {
+    cursor: default;
+}

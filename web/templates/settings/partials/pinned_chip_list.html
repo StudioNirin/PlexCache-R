@@ -86,17 +86,14 @@
                     {% if pin.size_bytes %}
                         <span style="color: var(--plex-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0;">{{ pin.size_display }}</span>
                     {% endif %}
-                    <form hx-post="/api/pinned/toggle"
-                          hx-swap="none"
-                          style="margin: 0; flex-shrink: 0;">
-                        <input type="hidden" name="rating_key" value="{{ pin.rating_key }}">
-                        <input type="hidden" name="pin_type" value="{{ pin.type }}">
-                        <input type="hidden" name="title" value="{{ pin.title }}">
-                        <button type="submit" class="btn-icon" title="Unpin" aria-label="Unpin {{ pin.scope_text }}"
-                                style="background: none; border: 0; cursor: pointer; color: var(--plex-text-muted); padding: 0.1rem 0.3rem; display: inline-flex; align-items: center; border-radius: var(--plex-radius-sm);">
-                            <i data-lucide="x" style="width: 14px; height: 14px;"></i>
-                        </button>
-                    </form>
+                    <button type="button" class="btn-icon pinned-unpin-btn"
+                            title="Unpin"
+                            aria-label="Unpin {{ pin.scope_text }}"
+                            data-rating-key="{{ pin.rating_key }}"
+                            onclick="UnpinDebounce.add(this.dataset.ratingKey, this);"
+                            style="background: none; border: 0; cursor: pointer; color: var(--plex-text-muted); padding: 0.1rem 0.3rem; display: inline-flex; align-items: center; border-radius: var(--plex-radius-sm); flex-shrink: 0;">
+                        <i data-lucide="x" style="width: 14px; height: 14px;"></i>
+                    </button>
                 </li>
             {% endfor %}
             </ul>
@@ -126,5 +123,70 @@
     {% endif %}
 </div>
 <script>
+    // Buffer rapid unpin clicks into a single batch POST so the runner sees
+    // one eviction (one run_id, one Recent Activity entry) instead of N.
+    // Re-declared on every chip list HTMX swap; `window.X || {...}` preserves
+    // the pending set + timer across the swap so a click made just before
+    // a swap still flushes correctly.
+    var UnpinDebounce = window.UnpinDebounce || {
+        pending: new Set(),
+        timer: null,
+        delayMs: 1500,
+
+        add: function(ratingKey, btnEl) {
+            if (!ratingKey) return;
+            this.pending.add(String(ratingKey));
+            var row = btnEl ? btnEl.closest('.pinned-row') : null;
+            if (row) row.classList.add('pinned-row-pending-unpin');
+            if (btnEl) btnEl.disabled = true;
+            if (this.timer) clearTimeout(this.timer);
+            var self = this;
+            this.timer = setTimeout(function() { self.flush(); }, this.delayMs);
+        },
+
+        flush: function() {
+            if (this.pending.size === 0) return;
+            var keys = Array.from(this.pending);
+            this.pending.clear();
+            this.timer = null;
+
+            var fd = new FormData();
+            keys.forEach(function(k) { fd.append('rating_keys', k); });
+
+            fetch('/api/pinned/unpin-group', {
+                method: 'POST',
+                body: fd,
+                headers: {'HX-Request': 'true'}
+            }).then(function(resp) {
+                // Re-dispatch HX-Trigger header events so the chip list
+                // refresh and banner kickoff still fire (htmx.ajax would
+                // do this for us, but it doesn't serialize repeated form
+                // values cleanly).
+                var trigger = resp.headers.get('HX-Trigger');
+                if (trigger) {
+                    try {
+                        var events = JSON.parse(trigger);
+                        Object.keys(events).forEach(function(name) {
+                            document.body.dispatchEvent(new CustomEvent(name, {
+                                detail: events[name],
+                                bubbles: true
+                            }));
+                        });
+                    } catch (e) { /* noop */ }
+                }
+                return resp.text();
+            }).then(function(html) {
+                var target = document.getElementById('settings-alert-container');
+                if (target) {
+                    target.innerHTML = html;
+                    if (typeof htmx !== 'undefined') htmx.process(target);
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
+                }
+            }).catch(function(err) {
+                console.error('Unpin batch failed:', err);
+            });
+        }
+    };
+    window.UnpinDebounce = UnpinDebounce;
     if (typeof lucide !== 'undefined') lucide.createIcons();
 </script>

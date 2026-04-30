@@ -17,6 +17,7 @@ does the grouping), so this service only exposes video cache paths.
 """
 
 import logging
+import os
 import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -356,11 +357,15 @@ class PinnedService:
             self._tracker.remove_pin(rating_key)
             after_paths = self.resolve_all_to_cache_paths()
             freshly_unpinned = sorted(before_paths - after_paths)
+            # Only hand the runner paths that actually exist on cache —
+            # otherwise pinning items without clicking "Cache Pinned Now"
+            # and then unpinning them spins up an empty eviction.
+            evict_paths = [p for p in freshly_unpinned if os.path.exists(p)]
             return {
                 "is_pinned": False,
                 "error": None,
                 "budget": self.budget_check(),
-                "evict_paths": freshly_unpinned,
+                "evict_paths": evict_paths,
                 "pinned_paths": [],
             }
 
@@ -547,9 +552,13 @@ class PinnedService:
                 removed += 1
         after_paths = self.resolve_all_to_cache_paths()
         freshly_unpinned = sorted(before_paths - after_paths)
+        # Only hand the runner paths that actually exist on cache — otherwise
+        # batch-unpinning items that were never cached spins up an empty
+        # eviction.
+        evict_paths = [p for p in freshly_unpinned if os.path.exists(p)]
         return {
             "removed": removed,
-            "evict_paths": freshly_unpinned,
+            "evict_paths": evict_paths,
             "budget": self.budget_check(),
         }
 
